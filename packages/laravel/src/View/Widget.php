@@ -9,6 +9,7 @@ use Illuminate\View\Component;
 /**
  * <x-botguard action="login" />                         embedded widget
  * <x-botguard action="login" mode="popup" bind="#submit" />  verify when the button is clicked
+ * <x-botguard action="login" size="compact" width="100%" image-height="120" />  H5 / app WebView
  *
  * Loads the widget script from the gateway (like Yidun's hosted script); only
  * the public app_key reaches the page.
@@ -23,6 +24,10 @@ final class Widget extends Component
         public string $action,
         public string $mode = 'embed',
         public ?string $bind = null,
+        public ?string $width = null,
+        public ?string $imageHeight = null,
+        public ?string $size = null,
+        public ?string $accent = null,
     ) {
         $this->endpoint = rtrim((string) config('botguard.public_endpoint'), '/');
         $this->appKey = (string) config('botguard.app_key');
@@ -39,10 +44,13 @@ final class Widget extends Component
 <script type="module">
   import { init } from @json($endpoint . '/sdk/v1/botguard.js');
   init({ endpoint: @json($endpoint), appKey: @json($appKey), action: @json($action),
-         fieldName: @json($field), mode: 'popup', bindTo: @json($bind) });
+         fieldName: @json($field), mode: 'popup', bindTo: @json($bind),
+         width: @json($width), imageHeight: @json($imageHeight), size: @json($size), accent: @json($accent) });
 </script>
 @else
-<botguard-widget endpoint="{{ $endpoint }}" app-key="{{ $appKey }}" action="{{ $action }}" field-name="{{ $field }}" mode="{{ $mode }}"></botguard-widget>
+<botguard-widget endpoint="{{ $endpoint }}" app-key="{{ $appKey }}" action="{{ $action }}" field-name="{{ $field }}" mode="{{ $mode }}"
+  @if ($width) width="{{ $width }}" @endif @if ($imageHeight) image-height="{{ $imageHeight }}" @endif
+  @if ($size) size="{{ $size }}" @endif @if ($accent) accent="{{ $accent }}" @endif></botguard-widget>
 @endif
 BLADE;
     }

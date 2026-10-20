@@ -97,6 +97,33 @@ init({ element: '#captcha', endpoint, appKey, action: 'login', onVerify(err, ret
 | `verify()` | 返回 Promise：有 token 直接返回；没有则开始验证，通过后返回 token；用户取消、出错或连续失败时 reject |
 | `token` | 当前 token |
 
+## 尺寸与外观（H5 / App WebView）
+
+组件默认宽度为 100%，最宽 360px；图片高度随宽度按比例变化。宽、高和主色都可以定制。
+
+| 设置 | 属性 / `init()` 选项 / CSS 变量 | 说明 |
+|---|---|---|
+| 最大宽度 | `width="100%"` / `width: '100%'` / `--botguard-width` | 数字表示像素，也可写 `100%`、`20rem` 等 |
+| 图片最大高度 | `image-height="120"` / `imageHeight: 120` / `--botguard-image-height` | 超出时图片按比例变窄，不会变形；最小 100px，以免图片过小看不清 |
+| 紧凑模式 | `size="compact"` / `size: 'compact'` | 收紧边距，隐藏副标题和品牌名；入口框高度约 36px |
+| 主色 | `accent="#ff6a00"` / `accent: '#ff6a00'` / `--botguard-accent` | 按钮、滑块、进度条、点选标记的颜色 |
+
+```html
+<!-- H5 / App 内嵌页面：铺满宽度，图片高度不超过 120px -->
+<botguard-widget size="compact" width="100%" image-height="120" ...></botguard-widget>
+```
+
+```css
+/* 也可以在 App 的样式表里统一设置 */
+botguard-widget { --botguard-width: 100%; --botguard-image-height: 120px; --botguard-accent: #ff6a00; }
+```
+
+- **弹出层**（`mode="popup"`）会自动适配小屏：
+  - 宽度不超过屏幕宽度减 24px，高度不超过可视高度，内容放不下时内部滚动；
+  - 避开 iPhone 刘海和底部安全区；
+  - 图片高度不超过屏幕高度的 38%，横屏手机上也放得下。
+- **实测**：在 375×812（竖屏手机）、375×560（App WebView）、812×375（横屏手机）三种视口下都完整显示、不溢出。紧凑模式下，图形点选的面板高度从 313px 降到 229px。
+
 ## 滑块与风险信号
 
 - 拼图面板支持鼠标、触屏（Pointer Events）和键盘：Tab 聚焦滑块，方向键移动（Shift 加速），回车确认。

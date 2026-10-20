@@ -86,8 +86,28 @@ async function post(url, data) {
   return resp.json();
 }
 
+// Size presets: what an H5 page or app WebView would set on the widget.
+const SIZES = {
+  default: {},
+  compact: { size: 'compact', width: '100%', 'image-height': '120' },
+  popup: { mode: 'popup' },
+};
+document.getElementById('size').addEventListener('change', (e) => {
+  for (const name of ['size', 'width', 'image-height', 'mode']) widget.removeAttribute(name);
+  for (const [name, value] of Object.entries(SIZES[e.target.value])) widget.setAttribute(name, value);
+  widget.reset();
+});
+
 document.getElementById('login').addEventListener('submit', async (e) => {
   e.preventDefault();
+  // Popup mode: verify when the button is pressed, then continue submitting.
+  if (widget.getAttribute('mode') === 'popup' && !widget.token) {
+    try {
+      await widget.verify();
+    } catch {
+      return;
+    }
+  }
   const form = new FormData(e.target);
   const result = await post(e.target.dataset.endpoint, Object.fromEntries(form));
   business.hidden = false;

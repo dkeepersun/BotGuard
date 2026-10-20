@@ -10,7 +10,8 @@
 //   </form>
 //
 // Attributes: endpoint, app-key, action, field-name (default botguard_token),
-// mode ("embed" or "popup"), auto (start without a click). Events (bubbling):
+// mode ("embed" or "popup"), auto (start without a click), width,
+// image-height, size ("compact"), accent. Events (bubbling):
 // botguard:challenge, botguard:verified, botguard:expired, botguard:error,
 // botguard:cancel, botguard:trace.
 //
@@ -35,8 +36,20 @@ const MAX_POINTS = 400;
 // activation, when the page is certainly visible.
 const interaction = trackInteraction();
 
+// Sizing and colour are CSS custom properties, so a host page or app can set
+// them on the element (they inherit into the shadow root):
+//   --botguard-width         max width of the widget and its panel (360px)
+//   --botguard-image-height  max height of puzzle images (unlimited, floor
+//                            100px so puzzles stay readable); images keep
+//                            their aspect ratio and narrow to fit
+//   --botguard-accent        accent colour (#0969da)
+// The width / image-height / accent attributes set the same properties, and
+// size="compact" tightens spacing for H5 pages and app WebViews.
 const STYLE = `
-:host { display: block; font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; max-width: 360px; }
+:host { --bg-accent: var(--botguard-accent, #0969da); --bg-img-h: max(100px, var(--botguard-image-height, 9999px));
+  display: block; width: 100%; max-width: var(--botguard-width, 360px); box-sizing: border-box;
+  font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
+*, *::before, *::after { box-sizing: border-box; }
 .box { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid #d0d7de;
   border-radius: 8px; background: #f6f8fa; cursor: pointer; user-select: none; min-height: 44px; }
 .box[data-state="solving"], .box[data-state="loading"] { cursor: progress; }
@@ -44,8 +57,8 @@ const STYLE = `
 .box[data-state="verified"] { cursor: default; border-color: #1a7f37; background: #f0fff4; }
 .box[data-state="error"], .box[data-state="cooldown"] { border-color: #cf222e; background: #fff5f5; }
 .mark { width: 22px; height: 22px; flex: none; border: 2px solid #8c959f; border-radius: 50%; display: grid; place-items: center; }
-[data-state="loading"] .mark, [data-state="solving"] .mark { border-color: #0969da; border-top-color: transparent; animation: spin .8s linear infinite; }
-[data-state="puzzle"] .mark { border-color: #0969da; }
+[data-state="loading"] .mark, [data-state="solving"] .mark { border-color: var(--bg-accent); border-top-color: transparent; animation: spin .8s linear infinite; }
+[data-state="puzzle"] .mark { border-color: var(--bg-accent); }
 [data-state="verified"] .mark { border-color: #1a7f37; background: #1a7f37; color: #fff; }
 [data-state="verified"] .mark::after { content: "✓"; font-size: 14px; font-weight: 700; }
 [data-state="error"] .mark, [data-state="cooldown"] .mark { border-color: #cf222e; color: #cf222e; }
@@ -55,40 +68,60 @@ const STYLE = `
 .sub { color: #656d76; font-size: 12px; }
 .bar { height: 4px; margin-top: 6px; border-radius: 2px; background: #d0d7de; overflow: hidden; display: none; }
 [data-state="solving"] .bar { display: block; }
-.bar > i { display: block; height: 100%; width: 0; background: #0969da; transition: width .15s; }
+.bar > i { display: block; height: 100%; width: 0; background: var(--bg-accent); transition: width .15s; }
 .brand { font-size: 11px; color: #8c959f; flex: none; }
-.panel { margin-top: 8px; padding: 10px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; }
-.panel[hidden] { display: none; }
+.panel { position: relative; margin-top: 8px; padding: 10px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; }
 .panel.shake { animation: shake .4s; }
-.stage { position: relative; width: 100%; aspect-ratio: 2 / 1; overflow: hidden; border-radius: 4px; background: #eaeef2; touch-action: none; }
+/* Images keep their aspect ratio: capping the height narrows them instead. */
+.stage, .track { width: min(100%, calc(var(--bg-img-h) * 2)); margin-left: auto; margin-right: auto; }
+.stage { position: relative; aspect-ratio: 2 / 1; overflow: hidden; border-radius: 4px; background: #eaeef2; touch-action: none; }
 .stage img { position: absolute; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
 .stage .bg { inset: 0; width: 100%; height: 100%; }
 .stage .piece { left: 0; filter: drop-shadow(0 0 2px rgba(0,0,0,.6)); }
 .track { position: relative; height: 40px; margin-top: 10px; border-radius: 20px; background: #eaeef2; touch-action: none; }
-.track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 20px; background: #ddf4ff; }
-.track .hint { position: absolute; inset: 0; display: grid; place-items: center; color: #656d76; font-size: 13px; pointer-events: none; }
-.track .handle { position: absolute; top: 0; left: 0; height: 40px; border-radius: 20px; background: #0969da; color: #fff;
+.track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 20px; background: color-mix(in srgb, var(--bg-accent) 15%, white); }
+.track .hint { position: absolute; inset: 0; display: grid; place-items: center; color: #656d76; font-size: 13px; pointer-events: none; white-space: nowrap; overflow: hidden; }
+.track .handle { position: absolute; top: 0; left: 0; height: 100%; min-width: 36px; border-radius: 20px; background: var(--bg-accent); color: #fff;
   display: grid; place-items: center; cursor: grab; touch-action: none; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
-.track .handle:focus-visible { outline: 3px solid #54aeff; }
+.track .handle:focus-visible { outline: 3px solid color-mix(in srgb, var(--bg-accent) 50%, white); }
 .track .handle.dragging { cursor: grabbing; }
-.foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; }
-.foot button { border: 0; background: none; color: #0969da; cursor: pointer; padding: 0; font: inherit; }
+.foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; }
+.foot button { border: 0; background: none; color: var(--bg-accent); cursor: pointer; padding: 4px 0; font: inherit; }
 .msg { min-height: 18px; font-size: 12px; color: #cf222e; margin-top: 4px; }
 .prompt { font-size: 14px; color: #1f2328; margin-bottom: 8px; font-weight: 600; }
-.cstage { position: relative; width: 100%; aspect-ratio: 8 / 5; overflow: hidden; border-radius: 4px; background: #eaeef2; cursor: crosshair; touch-action: manipulation; }
+.cstage { position: relative; width: min(100%, calc(var(--bg-img-h) * 1.6)); margin: 0 auto; aspect-ratio: 8 / 5; overflow: hidden;
+  border-radius: 4px; background: #eaeef2; cursor: crosshair; touch-action: manipulation; }
 .cstage img { position: absolute; inset: 0; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; pointer-events: none; }
-.cstage .mark-dot { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%; background: #0969da;
+.cstage .mark-dot { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%; background: var(--bg-accent);
   color: #fff; font: 600 13px/24px sans-serif; text-align: center; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
 .foot .left button { margin-right: 12px; }
 [hidden] { display: none !important; }
+
+/* Compact: for H5 pages and app WebViews where vertical space is tight. */
+:host([size="compact"]) { font-size: 13px; }
+:host([size="compact"]) .box { padding: 6px 10px; gap: 8px; min-height: 36px; }
+:host([size="compact"]) .mark { width: 18px; height: 18px; }
+:host([size="compact"]) .sub, :host([size="compact"]) .brand { display: none; }
+:host([size="compact"]) .panel { padding: 8px; margin-top: 6px; }
+:host([size="compact"]) .track { height: 32px; margin-top: 6px; }
+:host([size="compact"]) .prompt { font-size: 13px; margin-bottom: 6px; }
+:host([size="compact"]) .foot { margin-top: 4px; }
+:host([size="compact"]) .msg { min-height: 14px; margin-top: 2px; }
+
+/* Popup: centred without transforms (the shake animation owns transform),
+   inside the safe area, never taller than the viewport; images shrink on
+   short screens such as landscape phones or small app WebViews. */
+:host([mode="popup"]) { --bg-img-h: max(100px, min(var(--botguard-image-height, 9999px), 38vh)); }
 :host([mode="popup"]) .box { display: none; }
-:host([mode="popup"]) .panel { position: fixed; z-index: 2147483001; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  width: min(360px, calc(100vw - 32px)); margin: 0; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
+:host([mode="popup"]) .panel { position: fixed; z-index: 2147483001; margin: auto; height: fit-content;
+  inset: max(12px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+  width: min(var(--botguard-width, 360px), calc(100vw - 24px)); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
+  overflow: auto; padding-top: 28px; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
 .backdrop { display: none; }
 :host([mode="popup"]) .panel:not([hidden]) + .backdrop { display: block; position: fixed; inset: 0; z-index: 2147483000; background: rgba(0,0,0,.35); }
-.close { display: none; position: absolute; right: 8px; top: 4px; border: 0; background: none; font-size: 20px; color: #656d76; cursor: pointer; }
+.close { display: none; position: absolute; right: 6px; top: 2px; border: 0; background: none; font-size: 20px; line-height: 24px;
+  padding: 2px 6px; color: #656d76; cursor: pointer; }
 :host([mode="popup"]) .close { display: block; }
-:host([mode="popup"]) .panel { padding-top: 26px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes shake { 0%, 100% { transform: none; } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
 `;
@@ -117,7 +150,20 @@ async function postJSON(url, body) {
 
 const round1 = (v) => Math.round(v * 10) / 10;
 
+// Accepts "320", "320px", "100%", "20rem": bare numbers mean pixels.
+function cssLength(v) {
+  return /^\d+(\.\d+)?$/.test(v) ? `${v}px` : v;
+}
+
 export class BotGuardWidget extends HTMLElement {
+  static observedAttributes = ['width', 'image-height', 'accent'];
+
+  attributeChangedCallback(name, _old, value) {
+    const prop = { width: '--botguard-width', 'image-height': '--botguard-image-height', accent: '--botguard-accent' }[name];
+    if (value) this.style.setProperty(prop, name === 'accent' ? value : cssLength(value));
+    else this.style.removeProperty(prop);
+  }
+
   #root;
   #box;
   #panel;
@@ -661,6 +707,10 @@ if (!customElements.get('botguard-widget')) customElements.define('botguard-widg
  *   mode      "embed" (default) or "popup"
  *   bindTo    popup mode: a submit button; clicking it verifies first, then
  *             submits the button's form with the token and clears it
+ *   width       max width, e.g. 320 or "100%" (default 360px)
+ *   imageHeight max puzzle image height in px; images narrow to keep ratio
+ *   size        "compact" for H5 pages and app WebViews
+ *   accent      accent colour
  *   onVerify(err, ret)  ret = { token, kind }
  * Returns { verify(), reset(), destroy(), token, element }.
  */
@@ -673,6 +723,11 @@ export function init(config) {
   const mode = config.mode === 'popup' ? 'popup' : 'embed';
   w.setAttribute('mode', mode);
   if (config.auto) w.setAttribute('auto', '');
+  // Sizing for H5 pages and app WebViews: see the CSS custom properties above.
+  if (config.width != null) w.setAttribute('width', String(config.width));
+  if (config.imageHeight != null) w.setAttribute('image-height', String(config.imageHeight));
+  if (config.size) w.setAttribute('size', config.size);
+  if (config.accent) w.setAttribute('accent', config.accent);
 
   const button = config.bindTo ? (typeof config.bindTo === 'string' ? document.querySelector(config.bindTo) : config.bindTo) : null;
   let host = config.element ? (typeof config.element === 'string' ? document.querySelector(config.element) : config.element) : null;

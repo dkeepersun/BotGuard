@@ -39,6 +39,12 @@ BOTGUARD_SECRET_KEY=xxxxxxxx                            # 只放服务端，不�
 <x-botguard action="login" mode="popup" bind="#login-btn" />
 ```
 
+H5 页面或 App 内嵌页面，可以压缩高度、改主色：
+
+```blade
+<x-botguard action="login" size="compact" width="100%" image-height="120" accent="#ff6a00" />
+```
+
 ## 后端：三种写法
 
 ```php
