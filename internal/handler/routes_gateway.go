@@ -14,6 +14,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/errx"
 	"github.com/dkeepersun/BotGuard/internal/logic"
 	"github.com/dkeepersun/BotGuard/internal/response"
+	"github.com/dkeepersun/BotGuard/internal/sdkassets"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
 	"github.com/dkeepersun/BotGuard/internal/service/risk"
 	"github.com/dkeepersun/BotGuard/internal/service/signature"
@@ -51,6 +52,9 @@ func (g *Gateway) Register(s *rest.Server) {
 		{Method: http.MethodOptions, Path: "/v1/solutions", Handler: preflight},
 		{Method: http.MethodPost, Path: "/v1/verify", Handler: g.verify},
 	})
+	for _, name := range sdkassets.Files() {
+		s.AddRoute(rest.Route{Method: http.MethodGet, Path: "/sdk/v1/" + name, Handler: sdkassets.Handler(name)})
+	}
 }
 
 func (g *Gateway) readiness(w http.ResponseWriter, r *http.Request) {

@@ -157,12 +157,12 @@ switch ($scenario) {
             json_out(['scenario' => $scenario, 'error' => "签发失败 HTTP $status（可能刚运行过「刷签发接口」，等一分钟再试）", 'calls' => $rec->calls]);
         }
         $work = fn(array $c) => number_format($c['data']['params']['puzzles'] * round(2 ** 48 / max(1, hexdec(substr($c['data']['params']['target'], 0, 12)))));
-        $kinds = ['invisible' => '无感', 'slider' => '滑块', 'fallback' => '备用'];
+        $kinds = ['invisible' => '无感', 'slider' => '滑块', 'click_text' => '文字点选', 'click_shape' => '图形点选', 'fallback' => '备用'];
         $r = $scenario === 'no_signals'
-            ? ['title' => '脚本直接调签发接口，不带任何浏览器信号', 'expect' => '正常浏览器：无感；脚本：升级为滑块',
-                'explain' => '没有信号本身就是信号（NO_SIGNALS +40）：真实浏览器里的组件一定会上报。风险分不会返回给浏览器，脚本只能看到自己被要求做滑块。']
-            : ['title' => '无头浏览器特征（webdriver、HeadlessChrome UA、软件渲染 WebGL）', 'expect' => '正常浏览器：无感；无头浏览器：滑块 + PoW 难度 ×4',
-                'explain' => '命中 WEBDRIVER、HEADLESS_UA、SOFTWARE_GL，风险分 100，进入高风险档：不仅要做滑块，PoW 计算量也翻 4 倍。注意这些信号都能伪造，熟练的攻击者会把它们改掉，所以它们只是提高成本。'];
+            ? ['title' => '脚本直接调签发接口，不带任何浏览器信号', 'expect' => '正常浏览器：无感；脚本：随机一种交互题',
+                'explain' => '没有信号本身就是信号（NO_SIGNALS +40）：真实浏览器里的组件一定会上报。中等风险从题型列表里随机出题，攻击者没法只针对一种题优化。风险分不会返回给浏览器。']
+            : ['title' => '无头浏览器特征（webdriver、HeadlessChrome UA、软件渲染 WebGL）', 'expect' => '正常浏览器：无感；无头浏览器：图形点选 + PoW ×4',
+                'explain' => '命中 WEBDRIVER、HEADLESS_UA、SOFTWARE_GL，风险分 100，进入高风险档：出列表中最难的图形点选，PoW 计算量也翻 4 倍。注意这些信号都能伪造，熟练的攻击者会把它们改掉，所以它们只是提高成本。'];
         $r['outcome'] = ['category' => 'Rejected', 'label' => '已升级',
             'reason' => "正常浏览器：{$kinds[$a['data']['kind']]}、约 {$work($a)} 次哈希；本次：{$kinds[$b['data']['kind']]}、约 {$work($b)} 次哈希"];
         break;
@@ -182,10 +182,35 @@ switch ($scenario) {
                 'nonces' => array_fill(0, $ch['data']['params']['puzzles'], '0'), 'answer' => ['x' => 0, 'trajectory' => []]]);
         }
         [, $after] = $rec->browserCall("$base/v1/challenges", $origin, ['app_key' => $cfg['BG_APP_KEY'], 'action' => 'login', 'signals' => $clean]);
-        $r = ['title' => '同一 IP 连续 3 次求解失败后再来', 'expect' => '之前：无感；之后：滑块',
+        $r = ['title' => '同一 IP 连续 3 次求解失败后再来', 'expect' => '之前：无感；之后：交互题（随机）',
             'explain' => 'gateway 按 IP 记录 10 分钟内的失败次数（IP_RECENT_FAILURES，每次 +10，最多 +30），这是攻击者无法伪造的服务端信号。即使浏览器信号完全正常，也会被升级。这里的 IP 是 PHP 容器，不影响你自己的浏览器。',
             'outcome' => ['category' => 'Rejected', 'label' => '已升级', 'reason' => "之前：{$before['data']['kind']}，之后：{$after['data']['kind']}"]];
         $rec->calls = array_merge(array_slice($rec->calls, 0, 1), array_slice($rec->calls, 1, 2), array_slice($rec->calls, -1));
+        break;
+
+    case 'random_click':
+        // A script that cannot read the image clicks at random, but with
+        // plausible timing, against the shape-counting puzzle.
+        $base = $cfg['internal_endpoint'];
+        $origin = 'http://localhost:8080';
+        $clean = ['ms_to_click' => 2600, 'pointer_moves_before_click' => 40, 'pointer_type' => 'mouse'];
+        [$st, $ch] = $rec->browserCall("$base/v1/challenges", $origin, ['app_key' => $cfg['BG_APP_KEY'], 'action' => 'pay', 'signals' => $clean]);
+        if ($st !== 200) {
+            json_out(['scenario' => $scenario, 'error' => "签发失败 HTTP $st（可能刚运行过「刷签发接口」，等一分钟再试）", 'calls' => $rec->calls]);
+        }
+        $c = $ch['data'];
+        $pow = BotSolver::solve($c['algorithm'], $c['challenge_id'], $c['params']);
+        $clicks = [];
+        $t = 900;
+        for ($i = 0; $i < $c['click']['targets']; $i++) {
+            $t += random_int(500, 1200);
+            $clicks[] = [$t, random_int(10, $c['click']['width'] - 10), random_int(10, $c['click']['height'] - 10)];
+        }
+        [$st] = $rec->browserCall("$base/v1/solutions", $origin, ['app_key' => $cfg['BG_APP_KEY'], 'challenge' => $c['challenge'], 'nonces' => $pow['nonces'],
+            'answer' => ['clicks' => $clicks, 'moves_between' => array_fill(0, count($clicks), 12)], 'signals' => $clean]);
+        $r = ['title' => '脚本对图形点选题随机点击', 'expect' => 'ANSWER_INVALID',
+            'explain' => "题目是「{$c['click']['prompt']}」。脚本读得懂文字提示，但不会数点数和边数、也找不到位置，随机点 {$c['click']['targets']} 下几乎不可能全中（还要顺序正确）。这道题对通用多模态大模型也最难；但专门训练的检测模型可以攻破它，所以它仍然只是提高成本。",
+            'outcome' => ['category' => $st === 200 ? 'Passed' : 'Rejected', 'label' => $st === 200 ? '意外通过' : '拒绝（solve 阶段）', 'http' => $st, 'reason' => $st === 422 ? 'ANSWER_INVALID' : null]];
         break;
 
     case 'verify_token':

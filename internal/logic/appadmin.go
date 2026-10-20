@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -83,8 +84,20 @@ func (a *AppAdmin) SetAction(ctx context.Context, appKey, action string, p domai
 	if !domain.ValidAction(action) {
 		return invalid("action 只能包含小写字母、数字和下划线，长度 1–32")
 	}
+	if p.Mode == domain.ModeSlider {
+		// Phase-one alias: always the slider.
+		p.Mode, p.Kinds = domain.ModeInteractive, []string{domain.KindSlider}
+	}
 	if !domain.ValidMode(p.Mode) {
-		return invalid("mode 只能是 invisible、slider 或 adaptive")
+		return invalid("mode 只能是 invisible、interactive、adaptive（或 slider，等同 interactive 且只出滑块）")
+	}
+	if len(p.Kinds) == 0 {
+		return invalid("kinds 至少要有一种题型")
+	}
+	for _, k := range p.Kinds {
+		if !domain.ValidInteractiveKind(k) {
+			return invalid("未知题型 %q，可选：%s", k, strings.Join(domain.InteractiveKinds, "、"))
+		}
 	}
 	if p.Puzzles < 1 || p.Puzzles > pow.MaxPuzzles {
 		return invalid("puzzles 须在 1–%d 之间", pow.MaxPuzzles)

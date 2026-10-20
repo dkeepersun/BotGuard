@@ -63,8 +63,10 @@ func newHarness(t *testing.T) *harness {
 	policy := map[string]domain.ActionPolicy{
 		"login":    {Enabled: true, Mode: domain.ModeInvisible, Puzzles: 4, Difficulty: 16},
 		"off":      {Enabled: false, Mode: domain.ModeInvisible, Puzzles: 4, Difficulty: 16},
-		"adaptive": {Enabled: true, Mode: domain.ModeAdaptive, Puzzles: 2, Difficulty: 16},
-		"slide":    {Enabled: true, Mode: domain.ModeSlider, Puzzles: 2, Difficulty: 16},
+		"adaptive": {Enabled: true, Mode: domain.ModeAdaptive, Kinds: []string{domain.KindSlider}, Puzzles: 2, Difficulty: 16},
+		"slide":    {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindSlider}, Puzzles: 2, Difficulty: 16},
+		"clicks":   {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindClickShape}, Puzzles: 2, Difficulty: 16},
+		"mixed":    {Enabled: true, Mode: domain.ModeAdaptive, Kinds: domain.InteractiveKinds, Puzzles: 2, Difficulty: 16},
 	}
 	apps := &fakeApps{
 		apps: map[string]*domain.App{

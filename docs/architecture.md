@@ -72,7 +72,7 @@ BotGuard/
 │   ├── browser/                   # 已建立：<botguard-widget> + Worker 求解（原生 ES 模块，未发布）
 │   ├── go/                        # 仅说明；P1 独立 Go module
 │   ├── php/                       # 已建立：签名 verify 客户端，仅依赖 ext-curl（未发布）
-│   └── laravel/                   # 仅说明；P2 Laravel 适配包
+│   └── laravel/                   # 已建立：Laravel 适配包（未发布）
 ├── examples/demo/                 # 已建立：Docker 一键演示（浏览器组件 + PHP SDK + gateway）
 ├── docs/                          # 本次架构、发布、验收文档
 └── Makefile                       # 已建立 build / test / check / admin / gateway
@@ -88,7 +88,7 @@ BotGuard/
 |---|---|
 | `bg_app` | id、app_key UNIQUE（对应易盾 captchaId，公开）、name、status、active_policy_version、timestamps |
 | `bg_app_origin` | id、app_id、origin；UNIQUE(app_id, origin)；精确 scheme+host+port，不允许含糊后缀匹配 |
-| `bg_app_action` | app_id、action、enabled、challenge_mode（invisible / slider / adaptive，0003 加入）、pow_puzzles、pow_difficulty（每题期望尝试次数）；UNIQUE(app_id, action) |
+| `bg_app_action` | app_id、action、enabled、challenge_mode（invisible / interactive / adaptive）、challenge_kinds（slider、click_text、click_shape 的逗号列表；0003、0004 加入）、pow_puzzles、pow_difficulty（每题期望尝试次数）；UNIQUE(app_id, action) |
 | `bg_app_secret` | id、app_id、secret_id UNIQUE、secret_ciphertext（AES-256-GCM，附加数据为 secret_id）、kek_id、status、expires_at、rotated_from；secret_key 仅创建时展示一次 |
 | `bg_policy_version` | id、app_id、version、schema_version、rules_json、status、created_by；UNIQUE(app_id, version) |
 | `bg_list_entry` | id、app_id、kind、value_hash 或 CIDR、action、expires_at；固定类型，禁止任意脚本规则 |
@@ -138,7 +138,7 @@ PoW 采用“多题 + 数值阈值”结构：一个 challenge 含 k 道独立�
 
 浏览器在 Web Worker 中求解，支持取消和超时；默认 k 与难度在真实低端手机、电池和无障碍场景评估后确定。挑战中所有参数来自服务器签名，客户端回传的副本不被读取。限制 nonce 长度与数量、body、并发、签发速率，先限流再运算。
 
-验证题型与风险信号（第一期已实现）：每个 action 选 invisible / slider / adaptive 模式；浏览器上报环境与交互信号，gateway 结合 IP 近期失败、请求速率、UA 一致性等服务端信号做可解释的规则打分，决定出无感、滑块还是加难度；滑块答案与风险分封存在签名 challenge 的加密字段里，服务端仍无状态；verify 向业务方返回题型、风险等级和原因码。详见 `docs/challenge-types.md`。
+验证题型与风险信号（第一期已实现）：每个 action 选 invisible / interactive / adaptive 模式并配置交互题型列表（滑块、文字点选、图形计数点选，见 `docs/click-challenges.md`）；浏览器上报环境与交互信号，gateway 结合 IP 近期失败、请求速率、UA 一致性等服务端信号做可解释的规则打分，决定出无感、滑块还是加难度；滑块答案与风险分封存在签名 challenge 的加密字段里，服务端仍无状态；verify 向业务方返回题型、风险等级和原因码。详见 `docs/challenge-types.md`。
 
 PoW 只增加自动化成本，不证明“真人”。MVP 无法替代成熟厂商的设备情报、代理网络识别、行为模型或攻击规模防护。Origin/CORS 是浏览器约束，非浏览器可以伪造 Origin，不作为身份认证。信誉、风险评分和行为采集放在后续阶段，不编造命中率。
 

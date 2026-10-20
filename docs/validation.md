@@ -88,3 +88,49 @@
 - **真人用鼠标和手指拖动尚未实测**，轨迹阈值是按经验和合成样例定的，需要你在演示站上实际拖几次，并在手机上试，再据此调整。
 - 只在 Chromium 内核的内置浏览器中验证过，未测 Safari、Firefox、微信内置浏览器。
 - 风险信号与权重未经真实流量校准。
+
+## 2026-10-20：第二期（点选题型与随机出题）
+
+已通过：
+- 临时 MySQL 8.4.9 与 Redis 8.4.0 上 `go test -p 1 ./...` 全部通过（19 个包），含：迁移 0004 把第一期的 `slider` 模式转为 `interactive` + `[slider]`；`-kinds` 校验；新建 action 默认 adaptive + 全部题型。
+- 新增单测：点选规则（正确、顺序错、点偏、读题过快、点击过快、等间隔、瞬移、触屏放宽）；选题（interactive 能选到列表中每一种；高风险选列表中最难的；fallback）；点选 solve 全流程；挑战 payload 中不含目标坐标。
+- 生成器：图形点选 300 个种子、文字点选 200 个种子，均满足目标在图内、互不重叠、描述唯一（图形）或字在字表内（文字）；字表无重复、无形近字。单张生成约 2.4 毫秒（图形）和 3.8 毫秒（文字）。
+- `php packages/php/tests/run.php`：27 项；`node --test packages/browser/test/`：16 项。
+- Docker 演示与内置浏览器实测：发帖（文字点选）按顺序点 4 个字通过；支付（图形点选）数清点数后点 3 个图形通过；“脚本随机点击图形题”被拒；业务端分别看到 `click_text`、`click_shape`。实测发现小号骰子的点太小，已改为骰子一律大号、点半径至少 3 像素。
+
+边界：
+- 真人（尤其手机）点选未实测；点击行为规则未经真实流量校准。
+- 文字点选已有专门的识别工具和打码服务；图形点选目前对通用多模态大模型最难，但可以被专门训练的模型攻破。两者都只提高成本。
+
+## 2026-10-20：SDK 易盾式用法与发布前安装验证
+
+改动：
+- 浏览器组件新增 `BotGuard.init()` / `initBotGuard(config, onload, onerror)`（对应易盾的 `initNECaptcha`）、`mode="popup"`、`bindTo`（点击提交按钮时验证，对应易盾的 bind 模式）、Promise 形式的 `verify()`；新增经典脚本 `load.js`（对应 `load.min.js`）；gateway 在 `/sdk/v1/` 托管这些脚本并返回 CORS 头。
+- 修复跨域部署的问题：从 gateway 加载脚本时，浏览器不允许跨域创建 Worker。现在会改用同源 blob Worker；CSP 禁止 blob 时退回主线程计算。
+- PHP SDK 新增 `verifyToken($token, $action)`；新增 Laravel 包 `botguard/laravel`（自动发现、Facade、`botguard:action` 规则、Rule 对象、`<x-botguard>` 组件、`botguard()` 辅助函数，按请求作用域缓存，避免同一请求重复消耗 token）。
+- 发布准备：`package.json` 去掉 private 并补全元数据；两个 `composer.json` 补全元数据和 branch-alias；新增 CI、npm 发布、PHP 镜像拆分三个 GitHub Actions 工作流；新增 `docs/release.md`。
+
+发布前验证（均在临时目录中进行，未提交进仓库）：
+- **npm**：`npm pack` 打出 `botguard-browser-0.1.0.tgz`（7 个文件，15.9 kB），装进全新的 npm 项目；子路径导出 `@botguard/browser/solver`、`@botguard/browser/signals` 可以正常导入。
+- **Composer + Laravel**：`composer create-project laravel/laravel` 新建 Laravel 13.37 项目；以 path 仓库（复制模式，不用软链接）安装 `botguard/laravel` 和 `botguard/php-sdk`，依赖 `^0.1` 通过 branch-alias 正确解析，ServiceProvider 被自动发现。
+- **浏览器端到端**：测试站在 `127.0.0.1:8081`，gateway 在 `localhost:8090`，属于跨域。
+
+  | 方式 | 结果 |
+  |---|---|
+  | Blade `<x-botguard action="pay">` + 规则 `botguard:pay` | 通过，`click_shape / low` |
+  | 弹出模式绑定提交按钮 + `BotGuardToken` 规则对象 | 验证后自动提交并通过，`click_text / low` |
+  | 易盾式 `load.js` + `initBotGuard` + `botguard()->passes()` | 通过，`invisible / low` |
+  | npm 包文件自托管 + `BotGuard.init()` + `BotGuard::verify()` | 通过，`slider / medium`（键盘完成，带 `KEYBOARD_INPUT`） |
+
+  跨域时 trace 显示 `workers: 8`，blob Worker 方案生效；浏览器控制台无错误。
+- **反例**：
+  - 空 token → `TOKEN_INVALID`；伪造 token → 验证规则失败；
+  - 错误 secret_key → `passes()` 返回 false 并写错误日志，`verify()` 抛 `CallerErrorException 401 UNAUTHORIZED`；
+  - 这一步发现 Facade 会缓存实例，在 Octane 等常驻进程下可能跨请求复用，已改为不缓存。
+- **Laravel 9 兼容性**：只读检查了 yihuipay（Laravel 9.52.22）的 vendor，包依赖的 `scoped()`、Facade 缓存开关、Rule 接口、`@once` 都存在。没有在 Laravel 9 上实际运行。
+- 测试用的 8081 来源已从演示应用中移除。
+
+边界：
+- **三个包都还没发布**，`npm install @botguard/browser` 和 `composer require botguard/laravel` 目前都会失败。发布需要你完成 `docs/release.md` 里的账号和令牌步骤；发布后再在干净环境里做一次真实安装验证。
+- 许可证尚未确定（目前为 `UNLICENSED` / `proprietary`），见 `docs/release.md`。
+- 用打包工具（Vite、webpack）打包浏览器组件的情况未验证。

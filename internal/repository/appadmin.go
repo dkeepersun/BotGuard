@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
@@ -115,11 +116,11 @@ func (r *AppAdmin) UpsertAction(ctx context.Context, appKey, action string, p do
 		if err != nil {
 			return err
 		}
-		if _, err := s.ExecCtx(ctx, `INSERT INTO bg_app_action (app_id, action, enabled, challenge_mode, pow_puzzles, pow_difficulty)
-VALUES (?, ?, ?, ?, ?, ?)
+		if _, err := s.ExecCtx(ctx, `INSERT INTO bg_app_action (app_id, action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty)
+VALUES (?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), challenge_mode = VALUES(challenge_mode),
-  pow_puzzles = VALUES(pow_puzzles), pow_difficulty = VALUES(pow_difficulty)`,
-			id, action, p.Enabled, p.Mode, p.Puzzles, p.Difficulty); err != nil {
+  challenge_kinds = VALUES(challenge_kinds), pow_puzzles = VALUES(pow_puzzles), pow_difficulty = VALUES(pow_difficulty)`,
+			id, action, p.Enabled, p.Mode, strings.Join(p.Kinds, ","), p.Puzzles, p.Difficulty); err != nil {
 			return err
 		}
 		return bumpPolicy(ctx, s, id)
@@ -221,6 +222,7 @@ type ActionDetail struct {
 	Action     string `db:"action"`
 	Enabled    bool   `db:"enabled"`
 	Mode       string `db:"challenge_mode"`
+	Kinds      string `db:"challenge_kinds"`
 	Puzzles    int    `db:"pow_puzzles"`
 	Difficulty uint64 `db:"pow_difficulty"`
 }
@@ -259,7 +261,7 @@ func (r *AppAdmin) AppDetail(ctx context.Context, appKey string) (*AppDetail, er
 		return nil, err
 	}
 	if err := r.conn.QueryRowsCtx(ctx, &d.Actions,
-		"SELECT action, enabled, challenge_mode, pow_puzzles, pow_difficulty FROM bg_app_action WHERE app_id = ? ORDER BY action", id); err != nil {
+		"SELECT action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty FROM bg_app_action WHERE app_id = ? ORDER BY action", id); err != nil {
 		return nil, err
 	}
 	if err := r.conn.QueryRowsCtx(ctx, &d.Secrets,

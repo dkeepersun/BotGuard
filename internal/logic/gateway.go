@@ -17,6 +17,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/errx"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/challenge"
+	"github.com/dkeepersun/BotGuard/internal/service/click"
 	"github.com/dkeepersun/BotGuard/internal/service/signature"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -63,8 +64,9 @@ type Gateway struct {
 	Keys     *challenge.Keyring
 	Settings Settings
 	Now      func() time.Time
-	// Puzzles generates slider puzzles; nil uses a crypto-seeded generator.
+	// Puzzles and Clicks generate challenges; nil uses crypto-seeded generators.
 	Puzzles func() (slider.Puzzle, error)
+	Clicks  func(kind string) (click.Puzzle, error)
 	// puzzleSlots bounds concurrent image generation; created lazily.
 	puzzleSlots chan struct{}
 	slotsOnce   sync.Once

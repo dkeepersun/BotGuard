@@ -1,4 +1,4 @@
-.PHONY: test test-integration test-sdk check build admin gateway demo demo-down
+.PHONY: test test-integration test-sdk sync-sdk check build admin gateway demo demo-down
 
 test:
 	go test ./...
@@ -35,3 +35,8 @@ demo:
 
 demo-down:
 	docker compose -f examples/demo/docker-compose.yml down
+
+# The gateway serves the browser widget at /sdk/v1/; refresh its copy.
+sync-sdk:
+	rm -f internal/sdkassets/v1/*.js
+	cp packages/browser/src/*.js internal/sdkassets/v1/

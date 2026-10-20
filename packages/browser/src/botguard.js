@@ -10,10 +10,19 @@
 //   </form>
 //
 // Attributes: endpoint, app-key, action, field-name (default botguard_token),
-// auto (start without a click). Events (bubbling): botguard:challenge,
-// botguard:verified, botguard:expired, botguard:error, botguard:trace.
+// mode ("embed" or "popup"), auto (start without a click). Events (bubbling):
+// botguard:challenge, botguard:verified, botguard:expired, botguard:error,
+// botguard:cancel, botguard:trace.
+//
+// Yidun-style function API (see init() below):
+//
+//   const bg = BotGuard.init({ element: '#captcha', endpoint, appKey, action: 'login',
+//     onVerify(err, ret) { if (!err) form.botguard_token.value = ret.token } });
+//   // or popup mode bound to the submit button, like Yidun's "bind" mode:
+//   BotGuard.init({ mode: 'popup', bindTo: '#submit', endpoint, appKey, action: 'login' });
 
 import { collectEnvironment, trackInteraction } from './signals.js';
+import { solvePuzzle } from './solver.js';
 
 const WORKER_URL = new URL('./worker.js', import.meta.url);
 const SOLVE_TIMEOUT_MS = 60_000;
@@ -65,6 +74,21 @@ const STYLE = `
 .foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; }
 .foot button { border: 0; background: none; color: #0969da; cursor: pointer; padding: 0; font: inherit; }
 .msg { min-height: 18px; font-size: 12px; color: #cf222e; margin-top: 4px; }
+.prompt { font-size: 14px; color: #1f2328; margin-bottom: 8px; font-weight: 600; }
+.cstage { position: relative; width: 100%; aspect-ratio: 8 / 5; overflow: hidden; border-radius: 4px; background: #eaeef2; cursor: crosshair; touch-action: manipulation; }
+.cstage img { position: absolute; inset: 0; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; pointer-events: none; }
+.cstage .mark-dot { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%; background: #0969da;
+  color: #fff; font: 600 13px/24px sans-serif; text-align: center; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
+.foot .left button { margin-right: 12px; }
+[hidden] { display: none !important; }
+:host([mode="popup"]) .box { display: none; }
+:host([mode="popup"]) .panel { position: fixed; z-index: 2147483001; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: min(360px, calc(100vw - 32px)); margin: 0; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
+.backdrop { display: none; }
+:host([mode="popup"]) .panel:not([hidden]) + .backdrop { display: block; position: fixed; inset: 0; z-index: 2147483000; background: rgba(0,0,0,.35); }
+.close { display: none; position: absolute; right: 8px; top: 4px; border: 0; background: none; font-size: 20px; color: #656d76; cursor: pointer; }
+:host([mode="popup"]) .close { display: block; }
+:host([mode="popup"]) .panel { padding-top: 26px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes shake { 0%, 100% { transform: none; } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
 `;
@@ -114,19 +138,32 @@ export class BotGuardWidget extends HTMLElement {
         <span class="text"><div class="title"></div><div class="sub"></div><div class="bar"><i></i></div></span>
         <span class="brand">BotGuard</span>
       </div>
-      <div class="panel" part="panel" hidden>
-        <div class="stage"><img class="bg" alt="拼图背景"><img class="piece" alt="拼图块"></div>
-        <div class="track"><div class="fill"></div><div class="hint">向右拖动滑块，将拼图块对准缺口</div>
-          <div class="handle" role="slider" tabindex="0" aria-label="拖动滑块完成拼图，也可以用左右方向键移动、回车确认" aria-valuemin="0">➜</div></div>
+      <div class="panel" part="panel" hidden role="dialog" aria-label="人机验证">
+        <button type="button" class="close" aria-label="关闭">×</button>
+        <div class="slider-ui">
+          <div class="stage"><img class="bg" alt="拼图背景"><img class="piece" alt="拼图块"></div>
+          <div class="track"><div class="fill"></div><div class="hint">向右拖动滑块，将拼图块对准缺口</div>
+            <div class="handle" role="slider" tabindex="0" aria-label="拖动滑块完成拼图，也可以用左右方向键移动、回车确认" aria-valuemin="0">➜</div></div>
+        </div>
+        <div class="click-ui" hidden>
+          <div class="prompt" aria-live="polite"></div>
+          <div class="cstage"><img class="cimg" alt="点选图片"><div class="marks"></div></div>
+        </div>
         <div class="msg" aria-live="polite"></div>
-        <div class="foot"><button type="button" class="refresh">换一张</button><button type="button" class="fallback">无法完成拼图？</button></div>
-      </div>`;
+        <div class="foot"><span class="left"><button type="button" class="clear" hidden>重置</button><button type="button" class="refresh">换一张</button></span>
+          <button type="button" class="fallback">无法完成验证？</button></div>
+      </div>
+      <div class="backdrop"></div>`;
     this.#box = this.#root.querySelector('.box');
     this.#panel = this.#root.querySelector('.panel');
     this.#box.addEventListener('click', (e) => this.start({ trigger: e }));
     this.#box.addEventListener('keydown', (e) => (e.key === 'Enter' || e.key === ' ') && (e.preventDefault(), this.start({ trigger: e })));
     this.#root.querySelector('.refresh').addEventListener('click', (e) => this.#restart({ trigger: e }));
     this.#root.querySelector('.fallback').addEventListener('click', (e) => this.#restart({ trigger: e, fallback: true }));
+    this.#root.querySelector('.close').addEventListener('click', () => {
+      this.reset();
+      this.#emit('botguard:cancel', {});
+    });
     // The hidden field lives in light DOM so the surrounding form submits it.
     this.#input = document.createElement('input');
     this.#input.type = 'hidden';
@@ -158,6 +195,34 @@ export class BotGuardWidget extends HTMLElement {
     const state = this.#box.dataset.state;
     if (!['idle', 'error'].includes(state)) return;
     this.#begin(opts);
+  }
+
+  /**
+   * Resolves with a token, starting verification if needed; rejects on
+   * errors, cancellation (popup closed) or too many failed answers. This is
+   * what popup mode and bound submit buttons use.
+   */
+  verify() {
+    if (this.#token) return Promise.resolve(this.#token);
+    return new Promise((resolve, reject) => {
+      const done = () => {
+        this.removeEventListener('botguard:verified', ok);
+        this.removeEventListener('botguard:error', bad);
+        this.removeEventListener('botguard:cancel', cancel);
+      };
+      const ok = (e) => { done(); resolve(e.detail.token); };
+      const bad = (e) => {
+        if (e.detail.code === 'ANSWER_INVALID') return; // the widget retries by itself
+        done();
+        reject(Object.assign(new Error(e.detail.message), e.detail));
+      };
+      const cancel = () => { done(); reject(Object.assign(new Error('已取消验证'), { code: 'CANCELLED' })); };
+      this.addEventListener('botguard:verified', ok);
+      this.addEventListener('botguard:error', bad);
+      this.addEventListener('botguard:cancel', cancel);
+      const state = this.#box.dataset.state;
+      if (['idle', 'error'].includes(state)) this.start({});
+    });
   }
 
   #restart(opts) {
@@ -199,11 +264,18 @@ export class BotGuardWidget extends HTMLElement {
       work.catch(() => {});
       let answer;
       let drag = {};
+      const clicking = ch.kind === 'click_text' || ch.kind === 'click_shape';
       if (slider) {
         const result = await this.#puzzle(run, ch.slider);
         if (!result || run !== this.#run) return;
         ({ answer, drag } = result);
         this.#trace('drag', { points: answer.trajectory.length, ms: Math.round(answer.trajectory.at(-1)[0]), x: answer.x, pointer_type: drag.pointer_type });
+        this.#show('loading', '正在校验…', '');
+      } else if (clicking) {
+        const result = await this.#clicks(run, ch.click);
+        if (!result || run !== this.#run) return;
+        ({ answer, drag } = result);
+        this.#trace('clicks', { count: answer.clicks.length, ms: Math.round(answer.clicks.at(-1)[0]), moves_between: answer.moves_between, pointer_type: drag.pointer_type });
         this.#show('loading', '正在校验…', '');
       } else if (ch.kind === 'fallback') {
         this.#show('solving', '正在进行无障碍验证，需要几秒…', '');
@@ -222,8 +294,8 @@ export class BotGuardWidget extends HTMLElement {
       this.#failures = 0;
       this.#panel.hidden = true;
       this.#setToken(sol.token);
-      const how = slider ? '拼图完成' : ch.kind === 'fallback' ? '无障碍验证完成' : `本机计算 ${attempts.toLocaleString()} 次`;
-      const took = slider ? performance.now() - t1 : solveMs;
+      const how = slider ? '拼图完成' : clicking ? '点选完成' : ch.kind === 'fallback' ? '无障碍验证完成' : `本机计算 ${attempts.toLocaleString()} 次`;
+      const took = slider || clicking ? performance.now() - t1 : solveMs;
       this.#show('verified', '验证通过', `${how}，用时 ${(took / 1000).toFixed(2)} 秒`);
       this.#emit('botguard:verified', { token: sol.token, expiresAt: sol.expires_at, kind: ch.kind, attempts, solveMs });
       const ttl = sol.expires_at * 1000 - Date.now() - EXPIRY_MARGIN_MS;
@@ -253,6 +325,7 @@ export class BotGuardWidget extends HTMLElement {
       this.#root.querySelector('.msg').textContent = '';
       this.#panel.hidden = true;
       this.#show('cooldown', `失败次数过多，请 ${COOLDOWN_MS / 1000} 秒后重试`, '');
+      this.#emit('botguard:error', { code: 'TOO_MANY_FAILURES', message: `失败次数过多，请 ${COOLDOWN_MS / 1000} 秒后重试` });
       setTimeout(() => {
         if (run !== this.#run) return;
         this.#failures = 0;
@@ -260,7 +333,7 @@ export class BotGuardWidget extends HTMLElement {
       }, COOLDOWN_MS);
       return;
     }
-    this.#root.querySelector('.msg').textContent = '没有对准，请再试一次';
+    this.#root.querySelector('.msg').textContent = this.#root.querySelector('.click-ui').hidden ? '没有对准，请再试一次' : '点击位置或顺序不正确，请再试一次';
     setTimeout(() => run === this.#run && this.#restart({}), 900);
   }
 
@@ -276,6 +349,9 @@ export class BotGuardWidget extends HTMLElement {
     bg.src = s.background;
     piece.src = s.piece;
     msg.textContent = '';
+    this.#root.querySelector('.slider-ui').hidden = false;
+    this.#root.querySelector('.click-ui').hidden = true;
+    this.#root.querySelector('.clear').hidden = true;
     this.#panel.hidden = false;
     this.#show('puzzle', '请完成下方拼图', '拖动滑块，使拼图块与缺口对齐');
 
@@ -376,6 +452,84 @@ export class BotGuardWidget extends HTMLElement {
     });
   }
 
+  // Shows the click puzzle and resolves once the user has clicked as many
+  // points as there are targets; resolves null if the run is abandoned.
+  #clicks(run, c) {
+    const stage = this.#root.querySelector('.cstage');
+    const img = this.#root.querySelector('.cimg');
+    const marks = this.#root.querySelector('.marks');
+    const clear = this.#root.querySelector('.clear');
+    this.#root.querySelector('.slider-ui').hidden = true;
+    this.#root.querySelector('.click-ui').hidden = false;
+    this.#root.querySelector('.prompt').textContent = c.prompt;
+    this.#root.querySelector('.msg').textContent = '';
+    clear.hidden = false;
+    img.src = c.image;
+    marks.replaceChildren();
+    this.#panel.hidden = false;
+    this.#show('puzzle', '请按提示依次点击', `共 ${c.targets} 处`);
+    const shownAt = performance.now();
+
+    return new Promise((resolve) => {
+      let clicks = [];
+      let movesBetween = [];
+      let moves = 0;
+      let pointerType = '';
+      let untrusted = false;
+      let done = false;
+      const reset = () => {
+        clicks = [];
+        movesBetween = [];
+        marks.replaceChildren();
+      };
+      const move = (e) => {
+        untrusted ||= !e.isTrusted;
+        moves++;
+      };
+      const down = (e) => {
+        if (done || clicks.length >= c.targets) return;
+        e.preventDefault();
+        untrusted ||= !e.isTrusted;
+        pointerType ||= e.pointerType || 'mouse';
+        const rect = stage.getBoundingClientRect();
+        const scale = rect.width / c.width;
+        const x = (e.clientX - rect.left) / scale;
+        const y = (e.clientY - rect.top) / scale;
+        clicks.push([round1(e.timeStamp - shownAt), round1(x), round1(y)]);
+        movesBetween.push(moves);
+        moves = 0;
+        const dot = document.createElement('div');
+        dot.className = 'mark-dot';
+        dot.textContent = String(clicks.length);
+        dot.style.left = `${(x / c.width) * 100}%`;
+        dot.style.top = `${(y / c.height) * 100}%`;
+        marks.appendChild(dot);
+        if (clicks.length === c.targets) {
+          done = true;
+          // Let the last mark show before the panel turns into "checking".
+          setTimeout(() => {
+            cleanup();
+            resolve({ answer: { clicks, moves_between: movesBetween }, drag: { pointer_type: pointerType || 'mouse', untrusted_event: untrusted } });
+          }, 250);
+        }
+      };
+      const cleanup = () => {
+        stage.removeEventListener('pointermove', move);
+        stage.removeEventListener('pointerdown', down);
+        clear.removeEventListener('click', reset);
+        this.#abortPuzzle = null;
+      };
+      stage.addEventListener('pointermove', move);
+      stage.addEventListener('pointerdown', down);
+      clear.addEventListener('click', reset);
+      this.#abortPuzzle = () => {
+        cleanup();
+        resolve(null);
+      };
+      if (run !== this.#run) this.#abortPuzzle();
+    });
+  }
+
   #solve(run, ch, perPuzzle, quiet) {
     const k = ch.params.puzzles;
     const count = Math.max(1, Math.min(k, navigator.hardwareConcurrency || 2, 8));
@@ -388,8 +542,19 @@ export class BotGuardWidget extends HTMLElement {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => { this.#stopWorkers(); reject(Object.assign(new Error('验证计算超时'), { code: 'TIMEOUT' })); }, SOLVE_TIMEOUT_MS);
       const finish = (fn) => { clearTimeout(timer); this.#stopWorkers(); fn(); };
+      let fellBack = false;
+      const inline = () => {
+        // Workers unavailable (e.g. a CSP without blob: for a cross-origin
+        // script): solve on the main thread. Slower, but never stuck.
+        if (fellBack) return;
+        fellBack = true;
+        this.#stopWorkers();
+        this.#solveInline(run, ch).then((r) => finish(() => resolve({ ...r, ms: Math.round(performance.now() - t0) })),
+          (err) => finish(() => reject(err)));
+      };
       for (let w = 0; w < count; w++) {
-        const worker = new Worker(WORKER_URL, { type: 'module' });
+        const worker = spawnWorker();
+        if (!worker) return inline();
         this.#workers.push(worker);
         worker.onmessage = ({ data }) => {
           if (run !== this.#run) return finish(() => {});
@@ -404,12 +569,24 @@ export class BotGuardWidget extends HTMLElement {
           if (!quiet && this.#box.dataset.state === 'solving') this.#progress(solved, k, Math.min(1, (solved / k + attempts / expected) / 2));
           if (solved === k) finish(() => resolve({ nonces, attempts, workers: count, ms: Math.round(performance.now() - t0) }));
         };
-        worker.onerror = (e) => finish(() => reject(Object.assign(new Error(e.message || 'Worker 加载失败'), { code: 'SOLVER' })));
+        worker.onerror = () => (solved === 0 && attempts === 0 ? inline() : finish(() => reject(Object.assign(new Error('Worker 出错'), { code: 'SOLVER' }))));
         const indices = [];
         for (let i = w; i < k; i += count) indices.push(i);
         worker.postMessage({ type: 'solve', algorithm: ch.algorithm, challengeId: ch.challenge_id, target: ch.params.target, indices });
       }
     });
+  }
+
+  async #solveInline(run, ch) {
+    const nonces = [];
+    let attempts = 0;
+    for (let i = 0; i < ch.params.puzzles; i++) {
+      const r = await solvePuzzle(ch.algorithm, ch.challenge_id, i, ch.params.target, { shouldStop: () => run !== this.#run });
+      if (!r) throw Object.assign(new Error('已取消'), { code: 'CANCELLED' });
+      nonces.push(r.nonce);
+      attempts += r.attempts;
+    }
+    return { nonces, attempts, workers: 0 };
   }
 
   #fail(run, err) {
@@ -424,7 +601,7 @@ export class BotGuardWidget extends HTMLElement {
   }
 
   #idle() {
-    this.#show('idle', '点击进行人机验证', '大多数情况下无需操作，必要时会出现拼图');
+    this.#show('idle', '点击进行人机验证', '大多数情况下无需操作，必要时会出现拼图或点选题');
   }
 
   #stopWorkers() {
@@ -461,4 +638,92 @@ export class BotGuardWidget extends HTMLElement {
   }
 }
 
+// Browsers refuse cross-origin worker URLs, so when this script is served by
+// the gateway (like Yidun's hosted load.min.js) a same-origin blob worker
+// imports the CORS-enabled worker module instead. Returns null when neither
+// is allowed (e.g. CSP without blob:), and the caller solves inline.
+function spawnWorker() {
+  try {
+    if (WORKER_URL.origin === globalThis.location?.origin) return new Worker(WORKER_URL, { type: 'module' });
+    const blob = new Blob([`import ${JSON.stringify(WORKER_URL.href)};`], { type: 'text/javascript' });
+    return new Worker(URL.createObjectURL(blob), { type: 'module' });
+  } catch {
+    return null;
+  }
+}
+
 if (!customElements.get('botguard-widget')) customElements.define('botguard-widget', BotGuardWidget);
+
+/**
+ * Function-style setup, modelled on Yidun's initNECaptcha. Options:
+ *   element   container (selector or node) for embed mode
+ *   endpoint, appKey, action, fieldName
+ *   mode      "embed" (default) or "popup"
+ *   bindTo    popup mode: a submit button; clicking it verifies first, then
+ *             submits the button's form with the token and clears it
+ *   onVerify(err, ret)  ret = { token, kind }
+ * Returns { verify(), reset(), destroy(), token, element }.
+ */
+export function init(config) {
+  const w = document.createElement('botguard-widget');
+  w.setAttribute('endpoint', config.endpoint || '');
+  w.setAttribute('app-key', config.appKey || '');
+  w.setAttribute('action', config.action || '');
+  if (config.fieldName) w.setAttribute('field-name', config.fieldName);
+  const mode = config.mode === 'popup' ? 'popup' : 'embed';
+  w.setAttribute('mode', mode);
+  if (config.auto) w.setAttribute('auto', '');
+
+  const button = config.bindTo ? (typeof config.bindTo === 'string' ? document.querySelector(config.bindTo) : config.bindTo) : null;
+  let host = config.element ? (typeof config.element === 'string' ? document.querySelector(config.element) : config.element) : null;
+  // The hidden token field must sit inside the form that gets submitted.
+  host ||= button?.form || document.body;
+  if (!host) throw new Error('BotGuard.init: 找不到 element 或 bindTo 指定的元素');
+  host.appendChild(w);
+
+  w.addEventListener('botguard:verified', (e) => config.onVerify?.(null, { token: e.detail.token, kind: e.detail.kind }));
+  w.addEventListener('botguard:error', (e) => e.detail.code !== 'ANSWER_INVALID' && config.onVerify?.(e.detail, null));
+
+  let onClick = null;
+  if (button) {
+    onClick = (e) => {
+      if (w.token) return; // verified: let this submit through
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      w.verify().then(() => {
+        const form = button.form;
+        if (form) {
+          form.requestSubmit(button);
+          // Tokens are single-use; the submission has already read it.
+          w.reset();
+        }
+      }, () => {});
+    };
+    button.addEventListener('click', onClick, true);
+  }
+  return {
+    element: w,
+    get token() { return w.token; },
+    verify: () => w.verify(),
+    reset: () => w.reset(),
+    destroy() {
+      if (onClick) button.removeEventListener('click', onClick, true);
+      w.remove();
+    },
+  };
+}
+
+/** Same signature as Yidun's initNECaptcha(config, onload, onerror). */
+export function initBotGuard(config, onload, onerror) {
+  try {
+    const instance = init(config);
+    onload?.(instance);
+    return instance;
+  } catch (err) {
+    onerror?.(err);
+    return null;
+  }
+}
+
+globalThis.BotGuard = { init, initBotGuard };
+globalThis.initBotGuard = initBotGuard;

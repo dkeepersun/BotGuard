@@ -5,13 +5,13 @@
 **当前还不是可交付的防护产品。** 已实现：
 
 - gateway：`/v1/challenges`、`/v1/solutions`、`/v1/verify`。包括 SHA-256 多题 PoW、无状态签名 challenge、一次性 token、verify 幂等，以及参考易盾的多应用 + 密钥对 HMAC 签名认证；
-- 验证题型与风险：每个 action 可选无感 / 滑块 / 按风险自适应，浏览器信号与服务端信号做可解释的风险打分，滑块拼图带轨迹校验，并提供无障碍备用路径（见 [docs/challenge-types.md](docs/challenge-types.md)）；
+- 验证题型与风险：每个 action 可选无感 / 交互（从题型列表随机出题）/ 按风险自适应；交互题型有滑块拼图、文字点选和图形计数点选；浏览器信号与服务端信号做可解释的风险打分，并提供无障碍备用路径（见 [docs/challenge-types.md](docs/challenge-types.md)、[docs/click-challenges.md](docs/click-challenges.md)）；
 - 运维命令行 `botguard-ctl`；
-- 浏览器组件 `packages/browser`；
-- PHP SDK `packages/php`；
+- 浏览器组件 `packages/browser`：标签、`BotGuard.init()` / `initBotGuard()`（易盾式）、弹出与绑定提交按钮；gateway 同时在 `/sdk/v1/load.js` 托管脚本；
+- PHP SDK `packages/php` 与 Laravel 适配包 `packages/laravel`（Facade、`botguard:action` 验证规则、`<x-botguard>` Blade 组件、`botguard()` 辅助函数）；
 - Docker 一键演示 `examples/demo`。
 
-尚未实现：管理后台认证与网页管理、Go SDK、Laravel 适配、审计与事件记录（命令行变更目前没有审计记录）。
+尚未实现：管理后台认证与网页管理、Go SDK、审计与事件记录（命令行变更目前没有审计记录）。三个包**尚未发布**到 npm / Packagist，发布步骤见 [docs/release.md](docs/release.md)。
 
 ## 先看演示
 
@@ -19,7 +19,7 @@
 examples/demo/start.sh   # 然后打开 http://localhost:8080
 ```
 
-详见 [examples/demo/README.md](examples/demo/README.md)：在浏览器里完成验证，看 PHP SDK 签名核验的完整请求，并逐个触发 16 种攻击、误用和风险场景。
+详见 [examples/demo/README.md](examples/demo/README.md)：在浏览器里完成验证，看 PHP SDK 签名核验的完整请求，并逐个触发 17 种攻击、误用和风险场景。
 
 ## 本地运行
 
@@ -47,7 +47,7 @@ make build
 bin/botguard-ctl migrate up
 bin/botguard-ctl app create -name 商城               # 输出 app_key（前端用，相当于易盾 captchaId）
 bin/botguard-ctl origin add -app app_xxx -origin https://shop.example.com
-bin/botguard-ctl action set -app app_xxx -action login   # 新建默认 adaptive；-mode invisible|slider|adaptive
+bin/botguard-ctl action set -app app_xxx -action login   # 新建默认 adaptive + 全部题型；-mode invisible|interactive|adaptive，-kinds slider,click_text,click_shape
 bin/botguard-ctl secret create -app app_xxx          # 输出 secret_id + secret_key，secret_key 只显示这一次
 bin/botguard-ctl app show -app app_xxx
 ```

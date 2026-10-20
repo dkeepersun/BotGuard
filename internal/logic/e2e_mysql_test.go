@@ -38,7 +38,7 @@ func TestEndToEndWithMySQL(t *testing.T) {
 	if _, err := admin.AddOrigin(ctx, app, origin); err != nil {
 		t.Fatal(err)
 	}
-	if err := admin.SetAction(ctx, app, "login", domain.ActionPolicy{Enabled: true, Mode: domain.ModeInvisible, Puzzles: 3, Difficulty: 20}); err != nil {
+	if err := admin.SetAction(ctx, app, "login", domain.ActionPolicy{Enabled: true, Mode: domain.ModeInvisible, Kinds: domain.InteractiveKinds, Puzzles: 3, Difficulty: 20}); err != nil {
 		t.Fatal(err)
 	}
 	oldKey, _, err := admin.CreateSecret(ctx, app, 0)

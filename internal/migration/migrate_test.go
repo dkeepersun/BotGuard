@@ -172,7 +172,19 @@ func TestUpgradeFromV1(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A phase-one slider action (0003) must become interactive + [slider] (0004).
+	run(all[:3])
+	if _, err := db.ExecContext(ctx, "UPDATE bg_app_action SET challenge_mode = 'slider'"); err != nil {
+		t.Fatal(err)
+	}
 	run(all)
+	var mode, kinds string
+	if err := db.QueryRowContext(ctx, "SELECT challenge_mode, challenge_kinds FROM bg_app_action").Scan(&mode, &kinds); err != nil {
+		t.Fatal(err)
+	}
+	if mode != "interactive" || kinds != "slider" {
+		t.Fatalf("slider mode after 0004: %s %s", mode, kinds)
+	}
 
 	var appKey, origin, action string
 	if err := db.QueryRowContext(ctx, `SELECT a.app_key, o.origin, x.action FROM bg_app a

@@ -138,5 +138,13 @@ check($t->calls[0]['headers']['X-BG-Nonce'] !== $t->calls[2]['headers']['X-BG-No
 
 check(thrown(fn() => new Client('http://gw', '', 'k')) instanceof InvalidArgumentException, 'empty secret id');
 
+// One-line form with a configured app_key.
+$t1 = new FakeTransport([ok(['success' => true, 'app_key' => 'app_demo', 'action' => 'login', 'verified_at' => 9])]);
+$c1 = new Client('http://gw', 'sid_demo1234', 'key', ['transport' => $t1, 'app_key' => 'app_demo']);
+$res = $c1->verifyToken('tok', 'login');
+$sent = json_decode($t1->calls[0]['body'], true);
+check($res->passed() && $sent['app_key'] === 'app_demo' && strlen($sent['request_id']) === 36, 'verifyToken');
+check(thrown(fn() => (new Client('http://gw', 's', 'k'))->verifyToken('t', 'login')) instanceof LogicException, 'verifyToken needs app_key');
+
 echo $failures === 0 ? "OK ($count checks)\n" : "FAILED $failures of $count\n";
 exit($failures === 0 ? 0 : 1);

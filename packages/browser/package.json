@@ -1,14 +1,44 @@
 {
   "name": "@botguard/browser",
   "version": "0.1.0",
-  "description": "BotGuard 浏览器验证组件：<botguard-widget>，Web Worker 求解 PoW，换取一次性 token",
+  "description": "BotGuard 浏览器验证组件：<botguard-widget> 与 BotGuard.init()，无感 PoW、滑块、文字点选、图形点选，换取一次性 token",
   "type": "module",
-  "private": true,
+  "license": "UNLICENSED",
+  "keywords": [
+    "captcha",
+    "bot",
+    "anti-bot",
+    "proof-of-work",
+    "web-component",
+    "botguard"
+  ],
+  "homepage": "https://github.com/dkeepersun/BotGuard/tree/main/packages/browser",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dkeepersun/BotGuard.git",
+    "directory": "packages/browser"
+  },
+  "bugs": {
+    "url": "https://github.com/dkeepersun/BotGuard/issues"
+  },
   "exports": {
     ".": "./src/botguard.js",
-    "./solver": "./src/solver.js"
+    "./signals": "./src/signals.js",
+    "./solver": "./src/solver.js",
+    "./worker": "./src/worker.js",
+    "./load": "./src/load.js"
   },
-  "files": ["src/"],
+  "files": [
+    "src/",
+    "README.md"
+  ],
+  "sideEffects": [
+    "./src/botguard.js",
+    "./src/load.js"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "test": "node --test test/"
   }

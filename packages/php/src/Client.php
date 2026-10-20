@@ -28,9 +28,11 @@ final class Client
     private readonly string $url;
     private readonly TransportInterface $transport;
     private readonly int $retries;
+    private readonly ?string $appKey;
 
     /**
-     * @param array{timeout?: float, connect_timeout?: float, retries?: int, transport?: TransportInterface} $options
+     * @param array{app_key?: string, timeout?: float, connect_timeout?: float, retries?: int, transport?: TransportInterface} $options
+     *   app_key: default app for verifyToken().
      *   retries: extra attempts after an unknown result (network error, 5xx),
      *   each re-signed with the same request_id. 429 is never retried here.
      */
@@ -46,6 +48,20 @@ final class Client
         $this->url = rtrim($endpoint, '/') . Signer::VERIFY_PATH;
         $this->transport = $options['transport'] ?? new CurlTransport($options['timeout'] ?? 3.0, $options['connect_timeout'] ?? 1.0);
         $this->retries = max(0, (int) ($options['retries'] ?? 0));
+        $this->appKey = isset($options['app_key']) && $options['app_key'] !== '' ? (string) $options['app_key'] : null;
+    }
+
+    /**
+     * One-line form, like Yidun's verify($validate): uses the app_key given
+     * at construction and a fresh request_id. Pass a request_id derived from
+     * your own operation when you need to retry after an unknown result.
+     */
+    public function verifyToken(string $token, string $action, ?string $requestId = null): VerifyResult
+    {
+        if ($this->appKey === null) {
+            throw new \LogicException('verifyToken 需要在构造 Client 时传入 app_key 选项');
+        }
+        return $this->verify(new VerifyRequest($this->appKey, $token, $action, $requestId ?? VerifyRequest::newRequestId()));
     }
 
     public function verify(VerifyRequest $request): VerifyResult

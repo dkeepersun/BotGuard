@@ -1,0 +1,34 @@
+{
+    "name": "botguard/laravel",
+    "description": "BotGuard 的 Laravel 适配：配置、Facade、表单验证规则 botguard:action、Blade 组件 <x-botguard>",
+    "type": "library",
+    "license": "proprietary",
+    "keywords": ["laravel", "captcha", "bot", "anti-bot", "botguard"],
+    "homepage": "https://github.com/dkeepersun/BotGuard",
+    "support": {
+        "issues": "https://github.com/dkeepersun/BotGuard/issues",
+        "source": "https://github.com/dkeepersun/BotGuard"
+    },
+    "require": {
+        "php": ">=8.1",
+        "botguard/php-sdk": "^0.1",
+        "illuminate/support": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/validation": "^9.0|^10.0|^11.0|^12.0|^13.0",
+        "illuminate/view": "^9.0|^10.0|^11.0|^12.0|^13.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "BotGuard\\Laravel\\": "src/"
+        },
+        "files": ["src/helpers.php"]
+    },
+    "extra": {
+        "laravel": {
+            "providers": ["BotGuard\\Laravel\\BotGuardServiceProvider"],
+            "aliases": {"BotGuard": "BotGuard\\Laravel\\Facades\\BotGuard"}
+        },
+        "branch-alias": {
+            "dev-main": "0.1.x-dev"
+        }
+    }
+}

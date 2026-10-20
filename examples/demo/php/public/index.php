@@ -36,10 +36,12 @@ $ready = demo_ready();
   <section class="card">
     <h2>① 模拟登录 / 注册</h2>
     <div class="tabs" role="tablist">
-      <button type="button" class="tab active" data-action="login" data-endpoint="/login.php" data-submit="登录">登录 · 按风险自适应</button>
-      <button type="button" class="tab" data-action="register" data-endpoint="/register.php" data-submit="注册">注册 · 固定滑块</button>
+      <button type="button" class="tab active" data-action="login" data-endpoint="/login.php" data-submit="登录">登录 · 自适应</button>
+      <button type="button" class="tab" data-action="register" data-endpoint="/register.php" data-submit="注册">注册 · 滑块</button>
+      <button type="button" class="tab" data-action="post" data-endpoint="/post.php" data-submit="发帖">发帖 · 文字点选</button>
+      <button type="button" class="tab" data-action="pay" data-endpoint="/pay.php" data-submit="支付">支付 · 图形点选</button>
     </div>
-    <p class="hint" id="mode-hint">登录用 adaptive 模式：正常浏览器通常无感通过；信号可疑或该 IP 最近有失败时，会出现滑块拼图。演示站不校验密码。</p>
+    <p class="hint" id="mode-hint">登录用 adaptive 模式：正常浏览器通常无感通过；风险中等时随机出滑块、文字点选或图形点选，风险高时出最难的图形点选。演示站不校验密码。</p>
     <form id="login" autocomplete="off" data-endpoint="/login.php">
       <label>用户名 <input name="username" value="demo"></label>
       <label>密码 <input name="password" type="password" value="demo123"></label>
@@ -68,13 +70,14 @@ $ready = demo_ready();
     </div>
 
     <h2>③ 风险信号与滑块</h2>
-    <p class="hint">前三个由 PHP 服务端模拟脚本请求；后两个在本页面里运行，模拟 AI 或脚本在真实浏览器中操作：用 canvas 分析图片找缺口，再提交拖动轨迹。</p>
+    <p class="hint">「无头浏览器特征」「不带信号」「同一 IP 连续失败」「随机点击」由 PHP 服务端模拟脚本请求；「脚本找缺口」两个在本页面里运行，模拟 AI 或脚本在真实浏览器中用 canvas 分析图片、提交拖动轨迹。</p>
     <div class="attacks">
       <button data-scenario="headless_signals">无头浏览器特征</button>
       <button data-scenario="no_signals">不带信号直接调接口</button>
       <button data-scenario="failures_escalate">同一 IP 连续失败</button>
       <button data-bot="line">脚本找缺口 + 直线拖动</button>
       <button data-bot="human">脚本找缺口 + 仿人轨迹</button>
+      <button data-scenario="random_click">脚本随机点击图形题</button>
     </div>
   </section>
 

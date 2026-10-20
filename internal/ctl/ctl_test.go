@@ -87,10 +87,15 @@ func TestOperatorWorkflow(t *testing.T) {
 		t.Fatalf("new action defaults to adaptive: %s", out)
 	}
 	r.run(0, "action", "set", "-app", app, "-action", "login", "-mode", "slider")
-	if out := r.run(0, "action", "set", "-app", app, "-action", "login", "-enabled=false"); !strings.Contains(out, "模式 slider") {
+	if out := r.run(0, "action", "set", "-app", app, "-action", "login", "-enabled=false"); !strings.Contains(out, "模式 interactive，题型 slider，") {
 		t.Fatalf("unspecified mode must be kept: %s", out)
 	}
 	r.run(1, "action", "set", "-app", app, "-action", "login", "-mode", "puzzle")
+	r.run(1, "action", "set", "-app", app, "-action", "login", "-kinds", "rotate")
+	r.run(1, "action", "set", "-app", app, "-action", "login", "-kinds", "")
+	if out := r.run(0, "action", "set", "-app", app, "-action", "post", "-mode", "interactive", "-kinds", "click_text, click_shape"); !strings.Contains(out, "题型 click_text,click_shape") {
+		t.Fatalf("kinds: %s", out)
+	}
 	r.run(1, "action", "set", "-app", app, "-action", "login", "-puzzles", "33")
 	r.run(1, "action", "set", "-app", app, "-action", "Bad")
 
@@ -117,7 +122,7 @@ func TestOperatorWorkflow(t *testing.T) {
 	r.run(0, "app", "disable", "-app", app)
 	show := r.run(0, "app", "show", "-app", app)
 	flat := strings.Join(strings.Fields(show), " ")
-	for _, want := range []string{"（停用）", "https://a.example", "login 停用 slider 8 3000",
+	for _, want := range []string{"（停用）", "https://a.example", "login 停用 interactive slider 8 3000", "post 启用 interactive click_text,click_shape",
 		// Rotation shortened the old pair's 720h life to the 1h grace.
 		key + " 已吊销 2026-10-20T01:00:00Z", newKey + " 启用 永不 " + key} {
 		if !strings.Contains(flat, want) {
@@ -127,8 +132,8 @@ func TestOperatorWorkflow(t *testing.T) {
 	if strings.Contains(show, secretKey) || strings.Contains(show, "secret_key") {
 		t.Error("app show must not reveal secret keys")
 	}
-	// origin add, three action sets, rotate does not touch policy: 1 + 1 + 3.
-	if !strings.Contains(show, "策略版本：5") {
+	// origin add, four action sets, rotate does not touch policy: 1 + 1 + 4.
+	if !strings.Contains(show, "策略版本：6") {
 		t.Errorf("policy version:\n%s", show)
 	}
 	if out := r.run(0, "migrate", "status"); !strings.Contains(out, "已执行") {

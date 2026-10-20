@@ -30,15 +30,16 @@ function short(token) {
   return token ? `${token.slice(0, 28)}…` : '（空）';
 }
 
-const KIND = { invisible: '无感', slider: '滑块', fallback: '无障碍备用' };
+const KIND = { invisible: '无感', slider: '滑块', click_text: '文字点选', click_shape: '图形点选', fallback: '无障碍备用' };
 
 const TRACE = {
   challenge: (d) => `获取 challenge（${d.ms} ms）：服务端决定出「${KIND[d.kind] || d.kind}」题，PoW ${d.puzzles} 道子题，预计约 ${Math.round(d.expected_attempts).toLocaleString()} 次哈希`,
   drag: (d) => `用户拖动滑块：${d.points} 个采样点，用时 ${d.ms} ms，停在 x=${d.x}（${d.pointer_type}）`,
+  clicks: (d) => `用户点选 ${d.count} 处，用时 ${d.ms} ms，点击间的指针移动次数 ${d.moves_between.join(' / ')}（${d.pointer_type}）`,
   solve: (d) => `浏览器完成 PoW：${d.workers} 个 Worker 并行，实际 ${d.attempts.toLocaleString()} 次哈希，用时 ${d.ms} ms`,
   solution: (d) => `提交答案换取 token（${d.ms} ms）：${short(d.token)}，${Math.max(0, d.expires_at - Math.floor(Date.now() / 1000))} 秒内有效、只能用一次`,
   error: (d) => d.code === 'ANSWER_INVALID'
-    ? `服务端拒绝了这次拼图（ANSWER_INVALID，第 ${d.failures} 次）：位置没对准或轨迹不像人，具体原因不告诉浏览器`
+    ? `服务端拒绝了这次答案（ANSWER_INVALID，第 ${d.failures} 次）：位置、顺序或操作轨迹不对，具体原因不告诉浏览器`
     : `组件出错：${d.code} ${d.message}`,
 };
 
@@ -114,8 +115,10 @@ document.getElementById('clear').addEventListener('click', () => timeline.replac
 // Login (adaptive) and register (slider) are separate server handlers with
 // their own fixed actions; the widget follows the selected tab.
 const HINTS = {
-  login: '登录用 adaptive 模式：正常浏览器通常无感通过；信号可疑或该 IP 最近有失败时，会出现滑块拼图。演示站不校验密码。',
-  register: '注册用 slider 模式：每次都出滑块拼图。拼图面板下方的「无法完成拼图？」是无障碍备用路径。',
+  login: '登录用 adaptive 模式：正常浏览器通常无感通过；风险中等时随机出滑块、文字点选或图形点选，风险高时出最难的图形点选。演示站不校验密码。',
+  register: '注册固定出滑块拼图，也可以 Tab 到滑块用方向键操作。面板下方的「无法完成验证？」是无障碍备用路径。',
+  post: '发帖固定出文字点选：按提示的顺序点击图中的汉字，点错了可以「重置」。',
+  pay: '支付固定出图形点选：要数清骰子的点数、多边形的边数，再按顺序点击。这类题对多模态大模型最难。',
 };
 for (const tab of document.querySelectorAll('.tab')) {
   tab.addEventListener('click', () => {

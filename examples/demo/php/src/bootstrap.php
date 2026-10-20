@@ -131,7 +131,7 @@ function handle_form(string $action, callable $onSuccess): never
 /** @param array<string, mixed> $detail */
 function risk_note(array $detail): string
 {
-    $kinds = ['invisible' => '无感验证', 'slider' => '滑块验证', 'fallback' => '无障碍备用验证'];
+    $kinds = ['invisible' => '无感验证', 'slider' => '滑块验证', 'click_text' => '文字点选', 'click_shape' => '图形点选', 'fallback' => '无障碍备用验证'];
     $kind = $kinds[$detail['challenge_kind'] ?? ''] ?? '未知方式';
     $note = "。本次通过方式：{$kind}，风险等级：" . ($detail['risk_level'] ?? '-');
     if (($detail['risk_level'] ?? '') === 'high' || ($detail['challenge_kind'] ?? '') === 'fallback') {

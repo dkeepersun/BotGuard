@@ -7,6 +7,7 @@ require (
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/zeromicro/go-zero v1.10.3
+	golang.org/x/image v0.47.0
 )
 
 require (
@@ -50,8 +51,8 @@ require (
 	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.yaml.in/yaml/v2 v2.4.2 // indirect
 	golang.org/x/net v0.50.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
-	golang.org/x/text v0.34.0 // indirect
+	golang.org/x/sys v0.49.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260128011058-8636f8732409 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260128011058-8636f8732409 // indirect
 	google.golang.org/grpc v1.80.0 // indirect

@@ -9,11 +9,14 @@ botguard-ctl migrate up
 
 field() { sed -n "s/^$1: //p"; }
 
-# Login adapts to risk; register always shows the slider. Re-applied on every
-# start so an existing demo database picks up mode changes.
+# One action per challenge style: login adapts to risk across every kind;
+# register, post and pay always show the slider, text clicks and shape clicks.
+# Re-applied on every start so an existing demo database picks up changes.
 set_modes() {
-  botguard-ctl action set -app "$1" -action login -mode adaptive -puzzles 8 -difficulty 3000 >/dev/null
-  botguard-ctl action set -app "$1" -action register -mode slider -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action login -mode adaptive -kinds slider,click_text,click_shape -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action register -mode interactive -kinds slider -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action post -mode interactive -kinds click_text -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action pay -mode interactive -kinds click_shape -puzzles 8 -difficulty 3000 >/dev/null
 }
 
 if [ -f "$out" ]; then

@@ -12,5 +12,22 @@
         "psr-4": {
             "BotGuard\\": "src/"
         }
+    },
+    "homepage": "https://github.com/dkeepersun/BotGuard",
+    "keywords": [
+        "captcha",
+        "bot",
+        "anti-bot",
+        "verification",
+        "botguard"
+    ],
+    "support": {
+        "issues": "https://github.com/dkeepersun/BotGuard/issues",
+        "source": "https://github.com/dkeepersun/BotGuard"
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-main": "0.1.x-dev"
+        }
     }
 }

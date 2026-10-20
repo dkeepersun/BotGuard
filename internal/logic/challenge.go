@@ -14,6 +14,9 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/errx"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/challenge"
+	"github.com/dkeepersun/BotGuard/internal/service/click"
+	"github.com/dkeepersun/BotGuard/internal/service/clickshape"
+	"github.com/dkeepersun/BotGuard/internal/service/clicktext"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
 	"github.com/dkeepersun/BotGuard/internal/service/risk"
@@ -26,9 +29,10 @@ const dimFallback = "fallback"
 // sealedState travels inside the signed challenge, encrypted: the browser
 // carries it back on solve but can neither read nor change it.
 type sealedState struct {
-	X       int      `json:"x,omitempty"`
-	Score   int      `json:"s"`
-	Reasons []string `json:"r,omitempty"`
+	X       int            `json:"x,omitempty"`
+	Targets []click.Target `json:"t,omitempty"`
+	Score   int            `json:"s"`
+	Reasons []string       `json:"r,omitempty"`
 }
 
 type IssueInput struct {
@@ -51,6 +55,14 @@ type SliderRender struct {
 	PieceSize  int    `json:"piece_size"`
 }
 
+type ClickRender struct {
+	Width   int    `json:"width"`
+	Height  int    `json:"height"`
+	Image   string `json:"image"`
+	Prompt  string `json:"prompt"`
+	Targets int    `json:"targets"`
+}
+
 type IssueOutput struct {
 	Kind        string        `json:"kind"`
 	Challenge   string        `json:"challenge"`
@@ -59,44 +71,90 @@ type IssueOutput struct {
 	Params      pow.Params    `json:"params"`
 	ExpiresAt   int64         `json:"expires_at"`
 	Slider      *SliderRender `json:"slider,omitempty"`
+	Click       *ClickRender  `json:"click,omitempty"`
 }
 
-// chooseKind applies the action mode to the risk level. Every kind also
-// carries proof of work; high risk and the fallback path make it costlier.
-func (g *Gateway) chooseKind(mode, level string, fallback bool) (kind string, factor uint64) {
+// chooseKind applies the action policy to the risk level. Interactive mode
+// and medium risk pick at random from the action's kinds, so an attacker
+// cannot tune for one style; high risk gets the hardest kind offered. Every
+// kind also carries proof of work; high risk and the fallback path make it
+// costlier.
+func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback bool, pick func(int) int) (kind string, factor uint64) {
 	factor = 1
 	if level == risk.LevelHigh {
 		factor = max(1, g.Settings.HighDifficultyFactor)
 	}
+	kinds := policy.Kinds
+	if len(kinds) == 0 {
+		kinds = []string{domain.KindSlider}
+	}
 	switch {
-	case mode == domain.ModeInvisible:
+	case policy.Mode == domain.ModeInvisible:
 		return domain.KindInvisible, factor
 	case fallback:
 		return domain.KindFallback, max(factor, g.Settings.FallbackDifficultyFactor)
-	case mode == domain.ModeSlider || level != risk.LevelLow:
-		return domain.KindSlider, factor
+	case level == risk.LevelHigh:
+		return domain.Hardest(kinds), factor
+	case policy.Mode == domain.ModeInteractive || level == risk.LevelMedium:
+		return kinds[pick(len(kinds))], factor
 	default:
 		return domain.KindInvisible, factor
 	}
 }
 
-func (g *Gateway) newPuzzle() (slider.Puzzle, error) {
+// reserveSlot bounds concurrent image generation; release must be called.
+func (g *Gateway) reserveSlot() (release func(), ok bool) {
 	g.slotsOnce.Do(func() { g.puzzleSlots = make(chan struct{}, runtime.NumCPU()) })
 	select {
 	case g.puzzleSlots <- struct{}{}:
-		defer func() { <-g.puzzleSlots }()
+		return func() { <-g.puzzleSlots }, true
 	default:
 		// Never queue image generation behind a flood; shed instead.
+		return nil, false
+	}
+}
+
+func cryptoRand() (*rand.Rand, error) {
+	var seed [32]byte
+	if _, err := cryptorand.Read(seed[:]); err != nil {
+		return nil, err
+	}
+	return rand.New(rand.NewChaCha8(seed)), nil
+}
+
+func (g *Gateway) newClickPuzzle(kind string) (click.Puzzle, error) {
+	release, ok := g.reserveSlot()
+	if !ok {
+		return click.Puzzle{}, errors.New("click generation saturated")
+	}
+	defer release()
+	if g.Clicks != nil {
+		return g.Clicks(kind)
+	}
+	r, err := cryptoRand()
+	if err != nil {
+		return click.Puzzle{}, err
+	}
+	if kind == domain.KindClickText {
+		return clicktext.Generate(r)
+	}
+	return clickshape.Generate(r)
+}
+
+func (g *Gateway) newPuzzle() (slider.Puzzle, error) {
+	release, ok := g.reserveSlot()
+	if !ok {
 		return slider.Puzzle{}, errors.New("slider generation saturated")
 	}
+	defer release()
 	if g.Puzzles != nil {
 		return g.Puzzles()
 	}
-	var seed [32]byte
-	if _, err := cryptorand.Read(seed[:]); err != nil {
+	r, err := cryptoRand()
+	if err != nil {
 		return slider.Puzzle{}, err
 	}
-	return slider.Generate(rand.New(rand.NewChaCha8(seed)))
+	return slider.Generate(r)
 }
 
 // Issue scores the request, picks the challenge kind and signs a challenge
@@ -149,7 +207,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		Fallback:       in.Fallback && policy.Mode != domain.ModeInvisible,
 	})
 	level := risk.Level(assessment.Score, g.Settings.RiskMedium, g.Settings.RiskHigh)
-	kind, factor := g.chooseKind(policy.Mode, level, in.Fallback)
+	kind, factor := g.chooseKind(policy, level, in.Fallback, rand.IntN)
 
 	difficulty := min(policy.Difficulty*factor, g.Settings.MaxDifficulty)
 	params, err := pow.NewParams(policy.Puzzles, difficulty)
@@ -172,6 +230,17 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		state.X = puzzle.X
 		render = &SliderRender{Width: slider.Width, Height: slider.Height, Background: puzzle.Background,
 			Piece: puzzle.Piece, PieceY: puzzle.Y, PieceSize: slider.PieceSize}
+	}
+	var clickRender *ClickRender
+	if kind == domain.KindClickText || kind == domain.KindClickShape {
+		puzzle, err := g.newClickPuzzle(kind)
+		if err != nil {
+			logx.WithContext(ctx).Errorf("%s: %v", kind, err)
+			return nil, origin, errx.ErrUnavailable
+		}
+		state.Targets = puzzle.Targets
+		clickRender = &ClickRender{Width: puzzle.Width, Height: puzzle.Height, Image: puzzle.Image,
+			Prompt: puzzle.Prompt, Targets: len(puzzle.Targets)}
 	}
 	private, err := json.Marshal(state)
 	if err != nil {
@@ -196,14 +265,18 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		return nil, origin, errx.ErrUnavailable
 	}
 	return &IssueOutput{Kind: kind, Challenge: signed, ChallengeID: id, Algorithm: p.Algorithm, Params: params,
-		ExpiresAt: p.ExpiresAt, Slider: render}, origin, nil
+		ExpiresAt: p.ExpiresAt, Slider: render, Click: clickRender}, origin, nil
 }
 
-// SliderAnswer is the final piece position and the drag that produced it,
-// each trajectory point being [ms since pointer down, x, y].
+// SliderAnswer carries the interactive answer. For the slider: the final
+// piece position and the drag that produced it ([ms since pointer down, x, y]).
+// For click kinds: each click as [ms since the panel appeared, x, y] and the
+// pointer moves seen before each click.
 type SliderAnswer struct {
-	X          float64      `json:"x"`
-	Trajectory [][3]float64 `json:"trajectory"`
+	X            float64      `json:"x"`
+	Trajectory   [][3]float64 `json:"trajectory"`
+	Clicks       [][3]float64 `json:"clicks"`
+	MovesBetween []int        `json:"moves_between"`
 }
 
 type SolveInput struct {
@@ -283,6 +356,10 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		return nil, origin, errx.InvalidRequest("nonces 数量或格式错误")
 	}
 	var points []slider.Point
+	isClick := p.Kind == domain.KindClickText || p.Kind == domain.KindClickShape
+	if isClick && (in.Answer == nil || len(in.Answer.Clicks) > click.MaxClicks || len(in.Answer.MovesBetween) > click.MaxClicks) {
+		return nil, origin, errx.InvalidRequest("点选题需要 answer.clicks，且不超过 8 次点击")
+	}
 	if p.Kind == domain.KindSlider {
 		if in.Answer == nil || len(in.Answer.Trajectory) > slider.MaxPoints {
 			return nil, origin, errx.InvalidRequest("滑块题需要 answer，且轨迹不超过 400 个点")
@@ -314,6 +391,17 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		if reason := slider.Check(float64(state.X), in.Answer.X, g.Settings.SliderTolerance, points, input); reason != "" {
 			// One public code for every failure; the specific reason stays in our logs.
 			logx.WithContext(ctx).Infof("slider rejected: %s (app %d, %s)", reason, app.ID, input)
+			return nil, origin, g.fail(ctx, ipBucket, errx.ErrAnswerInvalid)
+		}
+	}
+
+	if isClick {
+		input := "mouse"
+		if in.Signals != nil && in.Signals.PointerType != "" {
+			input = in.Signals.PointerType
+		}
+		if reason := click.Check(state.Targets, in.Answer.Clicks, in.Answer.MovesBetween, input); reason != "" {
+			logx.WithContext(ctx).Infof("%s rejected: %s (app %d, %s)", p.Kind, reason, app.ID, input)
 			return nil, origin, g.fail(ctx, ipBucket, errx.ErrAnswerInvalid)
 		}
 	}

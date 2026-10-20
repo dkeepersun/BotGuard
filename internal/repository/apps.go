@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
@@ -45,6 +47,7 @@ type actionRow struct {
 	Action     string `db:"action"`
 	Enabled    bool   `db:"enabled"`
 	Mode       string `db:"challenge_mode"`
+	Kinds      string `db:"challenge_kinds"`
 	Puzzles    int    `db:"pow_puzzles"`
 	Difficulty uint64 `db:"pow_difficulty"`
 }
@@ -76,7 +79,7 @@ func (r *MySQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, e
 	}
 	var actions []actionRow
 	if err := r.conn.QueryRowsCtx(ctx, &actions,
-		"SELECT action, enabled, challenge_mode, pow_puzzles, pow_difficulty FROM bg_app_action WHERE app_id = ?", row.ID); err != nil {
+		"SELECT action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty FROM bg_app_action WHERE app_id = ?", row.ID); err != nil {
 		return nil, err
 	}
 	app := &domain.App{
@@ -101,7 +104,8 @@ func (r *MySQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, e
 			logx.WithContext(ctx).Errorf("app %d action %s has unknown mode %q, using invisible", row.ID, a.Action, mode)
 			mode = domain.ModeInvisible
 		}
-		app.Actions[a.Action] = domain.ActionPolicy{Enabled: a.Enabled, Mode: mode, Puzzles: a.Puzzles, Difficulty: a.Difficulty}
+		app.Actions[a.Action] = domain.ActionPolicy{Enabled: a.Enabled, Mode: mode, Kinds: ParseKinds(a.Kinds),
+			Puzzles: a.Puzzles, Difficulty: a.Difficulty}
 	}
 	return app, nil
 }
@@ -183,4 +187,20 @@ func (c *CachedApps) AppByKey(ctx context.Context, appKey string) (*domain.App, 
 
 func (c *CachedApps) SecretPair(ctx context.Context, secretID string) (*domain.SecretPair, error) {
 	return take(c.keys, secretID, func() (*domain.SecretPair, error) { return c.src.SecretPair(ctx, secretID) })
+}
+
+// ParseKinds reads a stored kind list, dropping unknown kinds and falling
+// back to the slider so an action can always show an interactive challenge.
+func ParseKinds(stored string) []string {
+	var out []string
+	for _, k := range strings.Split(stored, ",") {
+		k = strings.TrimSpace(k)
+		if domain.ValidInteractiveKind(k) && !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	if len(out) == 0 {
+		return []string{domain.KindSlider}
+	}
+	return out
 }

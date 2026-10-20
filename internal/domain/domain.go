@@ -29,21 +29,54 @@ func ValidSecretID(s string) bool  { return secretIDPattern.MatchString(s) }
 
 // Challenge modes (per action) and kinds (per issued challenge).
 const (
-	ModeInvisible = "invisible"
-	ModeSlider    = "slider"
-	ModeAdaptive  = "adaptive"
+	ModeInvisible   = "invisible"
+	ModeInteractive = "interactive"
+	ModeAdaptive    = "adaptive"
+	// ModeSlider is the phase-one mode name, kept as an input alias for
+	// interactive with only the slider (migration 0004 converts stored rows).
+	ModeSlider = "slider"
 
-	KindInvisible = "invisible"
-	KindSlider    = "slider"
-	KindFallback  = "fallback"
+	KindInvisible  = "invisible"
+	KindSlider     = "slider"
+	KindClickText  = "click_text"
+	KindClickShape = "click_shape"
+	KindFallback   = "fallback"
 )
 
-func ValidMode(m string) bool { return m == ModeInvisible || m == ModeSlider || m == ModeAdaptive }
+func ValidMode(m string) bool { return m == ModeInvisible || m == ModeInteractive || m == ModeAdaptive }
+
+// InteractiveKinds lists the kinds an action may offer, easiest first: the
+// order is the hardness ranking adaptive mode uses at high risk.
+var InteractiveKinds = []string{KindSlider, KindClickText, KindClickShape}
+
+func ValidInteractiveKind(k string) bool {
+	for _, v := range InteractiveKinds {
+		if v == k {
+			return true
+		}
+	}
+	return false
+}
+
+// Hardest returns the hardest kind in kinds by the InteractiveKinds ranking.
+func Hardest(kinds []string) string {
+	best, rank := KindSlider, -1
+	for _, k := range kinds {
+		for i, v := range InteractiveKinds {
+			if v == k && i > rank {
+				best, rank = k, i
+			}
+		}
+	}
+	return best
+}
 
 // ActionPolicy is the per-action challenge configuration.
 type ActionPolicy struct {
-	Enabled    bool
-	Mode       string
+	Enabled bool
+	Mode    string
+	// Kinds are the interactive kinds this action may show; never empty.
+	Kinds      []string
 	Puzzles    int
 	Difficulty uint64
 }

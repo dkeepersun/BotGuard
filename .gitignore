@@ -9,3 +9,4 @@ vendor/
 *.log
 .DS_Store
 .idea/
+/third_party/fonts/*.otf

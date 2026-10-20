@@ -48,7 +48,7 @@ try {
 通过时，`VerifyResult` 还带有这个 token 是怎么拿到的：
 
 ```php
-$result->challengeKind;  // invisible / slider / fallback（旧版 gateway 为 null）
+$result->challengeKind;  // invisible / slider / click_text / click_shape / fallback（旧版 gateway 为 null）
 $result->riskLevel;      // low / medium / high
 $result->riskReasons;    // 例如 ['NO_SIGNALS', 'IP_RECENT_FAILURES', 'FALLBACK_CHOSEN']
 
@@ -58,6 +58,17 @@ if ($result->passed() && ($result->riskLevel === 'high' || $result->challengeKin
 ```
 
 这些字段不改变“通过”这一结论，只供业务方二次决策。
+
+## 一行式调用
+
+和易盾的 `verify($validate)` 一样，可以只传 token 和 action：
+
+```php
+$client = new Client($endpoint, $secretId, $secretKey, ['app_key' => 'app_xxx']);
+$result = $client->verifyToken($_POST['botguard_token'] ?? '', 'login');
+```
+
+Laravel 项目请直接用 `botguard/laravel`（见 packages/laravel/README.md）。
 
 ## 和易盾 NECaptchaVerifier 的区别
 

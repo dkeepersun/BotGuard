@@ -44,15 +44,21 @@ SHA-256 在原生代码/GPU 上比浏览器快 2–3 个数量级，所以难度
 
 ## 验证题型（kind）
 
-每个 action 配置一种模式（`invisible` / `slider` / `adaptive`），gateway 结合风险分决定本次出什么题，题型写入签名 challenge 的 `kind` 字段。所有题型都附带 PoW。设计与规则见 `docs/challenge-types.md`。
+每个 action 配置一种模式（`invisible` / `interactive` / `adaptive`）和一个交互题型列表（`slider`、`click_text`、`click_shape` 的任意组合），gateway 结合风险分决定本次出什么题，题型写入签名 challenge 的 `kind` 字段。所有题型都附带 PoW。设计与规则见 `docs/challenge-types.md`、`docs/click-challenges.md`。
 
 | kind | 浏览器要做什么 | 何时出现 |
 |---|---|---|
 | `invisible` | 只在后台算 PoW | invisible 模式；adaptive 模式且风险低 |
-| `slider` | 拖动拼图对准缺口，同时后台算 PoW | slider 模式；adaptive 模式且风险中/高 |
+| `slider` | 拖动拼图对准缺口，同时后台算 PoW | 题型列表中含 slider，且被选中 |
+| `click_text` | 按顺序点击图中的汉字，同时后台算 PoW | 题型列表中含 click_text，且被选中 |
+| `click_shape` | 按顺序点击描述的图形（要数点数、边数），同时后台算 PoW | 题型列表中含 click_shape，且被选中 |
 | `fallback` | 只算 PoW，难度 × 8，独立限流 | 用户在滑块面板选择“无法完成拼图？”（invisible 模式下无此路径） |
 
-风险为高时，任何题型的 PoW 难度 × 4。风险分和原因码只通过 verify 返回给业务服务器，不返回给浏览器。
+interactive 模式每次从列表随机选题；adaptive 模式中风险随机选、高风险选列表中最难的（click_shape > click_text > slider）。风险为高时，任何题型的 PoW 难度 × 4。风险分和原因码只通过 verify 返回给业务服务器，不返回给浏览器。
+
+## GET /sdk/v1/{file}（浏览器组件脚本）
+
+gateway 托管浏览器组件：`load.js`（经典脚本，提供 `initBotGuard`，对应易盾的 `load.min.js`）、`botguard.js`、`signals.js`、`solver.js`、`worker.js`。这些是公开文件，返回 `Access-Control-Allow-Origin: *`，因为模块脚本和跨域 Worker 导入都要求 CORS；`Cache-Control: public, max-age=300`。不兼容的改动发布到新的路径版本（`/sdk/v2/`）。
 
 ## POST /v1/challenges（浏览器）
 
@@ -72,6 +78,8 @@ SHA-256 在原生代码/GPU 上比浏览器快 2–3 个数量级，所以难度
   "expires_at": 1790000120
 }
 ```
+
+`kind` 为 `click_text` / `click_shape` 时响应带 `click` 对象：`width`、`height`（320×200）、`image`（JPEG data URL）、`prompt`（纯文本提示，如“请依次点击：有 5 个点的方块、六边形、红色的三角形”）、`targets`（需点击的个数，3 或 4）。
 
 `kind` 为 `slider` 时响应还带 `slider` 对象：`width`、`height`（原图尺寸 320×160）、`background`（JPEG data URL）、`piece`（PNG data URL）、`piece_y`、`piece_size`。正确答案不在响应里。
 
@@ -94,7 +102,7 @@ SHA-256 在原生代码/GPU 上比浏览器快 2–3 个数量级，所以难度
 {"x": 172.4, "trajectory": [[0, 0, 0], [16.7, 3.2, 0.5], [33.4, 9.8, 1.1]]}
 ```
 
-`x` 是拼块左边缘在原图坐标中的位置；`trajectory` 每项为 `[自按下起的毫秒数, x, y]`，最多 400 个点。位置容差 ±4 像素（`Slider.Tolerance`）；轨迹规则（时长、点数、瞬移、等间隔、匀速、纯直线、终点不一致）见 `docs/challenge-types.md` §6.3。位置错和轨迹不像人都返回同一个 422 `ANSWER_INVALID`，具体原因只记服务端日志。用键盘完成的滑块（`pointer_type: "keyboard"`）走宽松规则，并在 verify 中带上 `KEYBOARD_INPUT` 原因码。PoW 或滑块失败都会计入该 IP 的失败次数（10 分钟窗口），提高其后续风险分。
+`x` 是拼块左边缘在原图坐标中的位置；`trajectory` 每项为 `[自按下起的毫秒数, x, y]`，最多 400 个点。位置容差 ±4 像素（`Slider.Tolerance`）；轨迹规则（时长、点数、瞬移、等间隔、匀速、纯直线、终点不一致）见 `docs/challenge-types.md` §6.3。位置错和轨迹不像人都返回同一个 422 `ANSWER_INVALID`，具体原因只记服务端日志。点选题的 `answer` 为 `{"clicks": [[ms, x, y], ...], "moves_between": [n, ...]}`：`clicks` 按点击顺序、坐标为原图坐标、时间自面板显示起；`moves_between[i]` 为第 i 次点击前的指针移动次数。校验数量、位置（目标半径 + 4 像素）、顺序、读题时间、点击间隔和鼠标移动，规则见 `docs/click-challenges.md` §5。用键盘完成的滑块（`pointer_type: "keyboard"`）走宽松规则，并在 verify 中带上 `KEYBOARD_INPUT` 原因码。PoW 或滑块失败都会计入该 IP 的失败次数（10 分钟窗口），提高其后续风险分。
 
 服务端按从廉价到昂贵的顺序校验，任一步失败即返回：
 
@@ -160,10 +168,10 @@ HTTP 状态码只描述“这次调用是否被正确处理”，`data.success` 
 通过：
 ```json
 {"code":"OK","data":{"success":true,"app_key":"...","action":"login","verified_at":1790000030,
- "challenge_kind":"slider","risk_level":"medium","risk_reasons":["NO_SIGNALS","IP_RECENT_FAILURES"]},"request_id":"..."}
+ "challenge_kind":"click_shape","risk_level":"medium","risk_reasons":["NO_SIGNALS","IP_RECENT_FAILURES"]},"request_id":"..."}
 ```
 
-`challenge_kind`（invisible / slider / fallback）、`risk_level`（low / medium / high）、`risk_reasons` 是新增字段，告诉业务方这个 token 是怎么拿到的，便于对高风险或 fallback 追加验证。它们不改变通过与否；旧版 SDK 忽略即可。
+`challenge_kind`（invisible / slider / click_text / click_shape / fallback）、`risk_level`（low / medium / high）、`risk_reasons` 是新增字段，告诉业务方这个 token 是怎么拿到的，便于对高风险或 fallback 追加验证。它们不改变通过与否；旧版 SDK 忽略即可。
 
 拒绝：
 ```json

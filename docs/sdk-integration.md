@@ -28,9 +28,9 @@
 
 ## 首批接入约定
 
-浏览器组件和 PHP SDK 已实现（未发布），可运行示例见 `examples/demo`；Go SDK 与 Laravel 适配仍是提案。
+浏览器组件、PHP SDK 和 Laravel 适配包已实现，并做过发布前的真实安装验证，但**尚未发布**（发布步骤见 `docs/release.md`）。可运行示例见 `examples/demo`；Go SDK 仍是提案。
 
-浏览器（`packages/browser`，已实现）：业务页引入 `<botguard-widget>` 并配置 endpoint/app-key/action；题型由服务端决定（无感 / 滑块 / 无障碍备用），组件自动处理，业务页不需要改；组件拿到 token 后交给业务表单的 `botguard_token` 字段。token 到期、业务拒绝、页面 reset 后清理。Worker 不能冻结主线程；超时可取消。不能只隐藏提交按钮作为防护。
+浏览器（`packages/browser`，已实现）：业务页引入 `<botguard-widget>` 并配置 endpoint/app-key/action；题型由服务端决定（无感 / 滑块 / 文字点选 / 图形点选 / 无障碍备用），组件自动处理，业务页不需要改；组件拿到 token 后交给业务表单的 `botguard_token` 字段。token 到期、业务拒绝、页面 reset 后清理。Worker 不能冻结主线程；超时可取消。不能只隐藏提交按钮作为防护。
 
 服务端 SDK 统一结果分类（判定规则以 `api/contract-v1.md` 的“verify 结果语义”为准，各语言共用同一组 fixtures）：
 
@@ -50,7 +50,7 @@ Go（待实现）：`client.Verify(ctx, VerifyRequest{AppKey, Token, Action, Req
 
 PHP（`packages/php`，已实现）：`Client::verify(VerifyRequest): VerifyResult`，按 BG1-HMAC-SHA256 签名，传输可注入，可选按原 request_id 重新签名重试。Passed 与 Rejected 通过 `VerifyResult` 返回；CallerError 与 Unknown 抛出不同的异常类型（ProtocolError 为 Unknown 异常的子类）。secret_key 由业务服务器配置注入，不进入 Blade/JavaScript/HTML。
 
-Laravel：ServiceProvider 注入 PHP client，发布配置，支持 config cache；只在配置读取 env。默认推荐 controller/service 显式验证，便于控制消费时机。若提供 Validation Rule，只在普通字段验证全部成功后调用，且每个请求最多一次；不要让通用多次校验提前消耗 token。`request_id` 与业务幂等键由服务端建立稳定映射。Validation Rule 只把 Rejected 转为表单验证错误；CallerError 与 Unknown 不得伪装成验证错误，应抛出异常交给应用的错误处理（如返回 503）。
+Laravel（`packages/laravel`，已实现，见其 README）：ServiceProvider 注入 PHP client，发布配置，支持 config cache；只在配置读取 env。默认推荐 controller/service 显式验证，便于控制消费时机。若提供 Validation Rule，只在普通字段验证全部成功后调用，且每个请求最多一次；不要让通用多次校验提前消耗 token。`request_id` 与业务幂等键由服务端建立稳定映射。Validation Rule 只把 Rejected 转为表单验证错误；CallerError 与 Unknown 不得伪装成验证错误，应抛出异常交给应用的错误处理（如返回 503）。
 
 未来发布后安装命令：
 ```sh
