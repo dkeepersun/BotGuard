@@ -30,6 +30,7 @@ var (
 	ErrChallengeExpired = New(http.StatusGone, "CHALLENGE_EXPIRED", "验证已过期，请重试")
 	ErrChallengeUsed    = New(http.StatusConflict, "CHALLENGE_USED", "验证已提交，请重试")
 	ErrProofInvalid     = New(http.StatusUnprocessableEntity, "PROOF_INVALID", "验证计算结果无效，请重试")
+	ErrAnswerInvalid    = New(http.StatusUnprocessableEntity, "ANSWER_INVALID", "验证未通过，请重试")
 	ErrOriginNotAllowed = New(http.StatusForbidden, "ORIGIN_NOT_ALLOWED", "当前来源未被允许")
 	ErrAppForbidden     = New(http.StatusForbidden, "APP_FORBIDDEN", "应用不可用")
 	ErrActionForbidden  = New(http.StatusForbidden, "ACTION_FORBIDDEN", "该操作未启用验证")

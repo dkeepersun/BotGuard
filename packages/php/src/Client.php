@@ -105,6 +105,11 @@ final class Client
             || !is_int($data['verified_at'] ?? null)) {
             throw new ProtocolException('BotGuard 通过结果与请求的 app_key/action 不符', 200, null, $request->requestId);
         }
-        return VerifyResult::ofPass($data['app_key'], $data['action'], $data['verified_at'], $request->requestId);
+        // Risk fields are additive: absent on older gateways, never trusted to change the outcome.
+        $reasons = array_values(array_filter((array) ($data['risk_reasons'] ?? []), 'is_string'));
+        return VerifyResult::ofPass($data['app_key'], $data['action'], $data['verified_at'], $request->requestId,
+            is_string($data['challenge_kind'] ?? null) ? $data['challenge_kind'] : null,
+            is_string($data['risk_level'] ?? null) ? $data['risk_level'] : null,
+            $reasons);
     }
 }

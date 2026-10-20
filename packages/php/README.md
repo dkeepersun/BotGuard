@@ -43,6 +43,22 @@ try {
 }
 ```
 
+## 风险信息
+
+通过时，`VerifyResult` 还带有这个 token 是怎么拿到的：
+
+```php
+$result->challengeKind;  // invisible / slider / fallback（旧版 gateway 为 null）
+$result->riskLevel;      // low / medium / high
+$result->riskReasons;    // 例如 ['NO_SIGNALS', 'IP_RECENT_FAILURES', 'FALLBACK_CHOSEN']
+
+if ($result->passed() && ($result->riskLevel === 'high' || $result->challengeKind === 'fallback')) {
+    // 业务自行决定是否追加验证，例如短信验证码
+}
+```
+
+这些字段不改变“通过”这一结论，只供业务方二次决策。
+
 ## 和易盾 NECaptchaVerifier 的区别
 
 - **认证方式**：与易盾一样，`secret_key` 不随请求发送。签名改用 HMAC-SHA256 覆盖整个请求体，并带时间戳和 nonce；同一个已签名请求重发会被拒（401 `NONCE_REUSED`）。

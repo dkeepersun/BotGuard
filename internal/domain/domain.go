@@ -27,9 +27,23 @@ func ValidAction(s string) bool    { return actionPattern.MatchString(s) }
 func ValidRequestID(s string) bool { return requestIDPattern.MatchString(s) }
 func ValidSecretID(s string) bool  { return secretIDPattern.MatchString(s) }
 
-// ActionPolicy is the per-action PoW configuration.
+// Challenge modes (per action) and kinds (per issued challenge).
+const (
+	ModeInvisible = "invisible"
+	ModeSlider    = "slider"
+	ModeAdaptive  = "adaptive"
+
+	KindInvisible = "invisible"
+	KindSlider    = "slider"
+	KindFallback  = "fallback"
+)
+
+func ValidMode(m string) bool { return m == ModeInvisible || m == ModeSlider || m == ModeAdaptive }
+
+// ActionPolicy is the per-action challenge configuration.
 type ActionPolicy struct {
 	Enabled    bool
+	Mode       string
 	Puzzles    int
 	Difficulty uint64
 }

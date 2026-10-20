@@ -5,6 +5,7 @@
 **当前还不是可交付的防护产品。** 已实现：
 
 - gateway：`/v1/challenges`、`/v1/solutions`、`/v1/verify`。包括 SHA-256 多题 PoW、无状态签名 challenge、一次性 token、verify 幂等，以及参考易盾的多应用 + 密钥对 HMAC 签名认证；
+- 验证题型与风险：每个 action 可选无感 / 滑块 / 按风险自适应，浏览器信号与服务端信号做可解释的风险打分，滑块拼图带轨迹校验，并提供无障碍备用路径（见 [docs/challenge-types.md](docs/challenge-types.md)）；
 - 运维命令行 `botguard-ctl`；
 - 浏览器组件 `packages/browser`；
 - PHP SDK `packages/php`；
@@ -18,7 +19,7 @@
 examples/demo/start.sh   # 然后打开 http://localhost:8080
 ```
 
-详见 [examples/demo/README.md](examples/demo/README.md)：在浏览器里完成验证，看 PHP SDK 签名核验的完整请求，并逐个触发 11 种攻击和误用场景。
+详见 [examples/demo/README.md](examples/demo/README.md)：在浏览器里完成验证，看 PHP SDK 签名核验的完整请求，并逐个触发 16 种攻击、误用和风险场景。
 
 ## 本地运行
 
@@ -46,7 +47,7 @@ make build
 bin/botguard-ctl migrate up
 bin/botguard-ctl app create -name 商城               # 输出 app_key（前端用，相当于易盾 captchaId）
 bin/botguard-ctl origin add -app app_xxx -origin https://shop.example.com
-bin/botguard-ctl action set -app app_xxx -action login
+bin/botguard-ctl action set -app app_xxx -action login   # 新建默认 adaptive；-mode invisible|slider|adaptive
 bin/botguard-ctl secret create -app app_xxx          # 输出 secret_id + secret_key，secret_key 只显示这一次
 bin/botguard-ctl app show -app app_xxx
 ```
@@ -65,7 +66,7 @@ make test-integration
 
 ## 设计与交付
 
-- [架构、PayHub 对照、目录和实施任务](docs/architecture.md)
+- [架构、PearAdmin 后台模式、目录和实施任务](docs/architecture.md)
 - [v1 API 与安全契约草案](api/contract-v1.md)
 - [SDK 与发布方案](docs/sdk-integration.md)
 - [验证记录与边界](docs/validation.md)

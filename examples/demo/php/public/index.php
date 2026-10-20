@@ -34,16 +34,20 @@ $ready = demo_ready();
 
 <main>
   <section class="card">
-    <h2>① 模拟登录</h2>
-    <p class="hint">像真实用户一样操作：点击验证组件，等它在后台算完，再点登录。演示站不校验密码。</p>
-    <form id="login" autocomplete="off">
+    <h2>① 模拟登录 / 注册</h2>
+    <div class="tabs" role="tablist">
+      <button type="button" class="tab active" data-action="login" data-endpoint="/login.php" data-submit="登录">登录 · 按风险自适应</button>
+      <button type="button" class="tab" data-action="register" data-endpoint="/register.php" data-submit="注册">注册 · 固定滑块</button>
+    </div>
+    <p class="hint" id="mode-hint">登录用 adaptive 模式：正常浏览器通常无感通过；信号可疑或该 IP 最近有失败时，会出现滑块拼图。演示站不校验密码。</p>
+    <form id="login" autocomplete="off" data-endpoint="/login.php">
       <label>用户名 <input name="username" value="demo"></label>
       <label>密码 <input name="password" type="password" value="demo123"></label>
       <botguard-widget id="widget"
         endpoint="<?= h($cfg['public_endpoint']) ?>"
         app-key="<?= h($cfg['BG_APP_KEY'] ?? '') ?>"
         action="login"></botguard-widget>
-      <button type="submit">登录</button>
+      <button type="submit" id="submit">登录</button>
     </form>
     <div id="business" class="business" hidden></div>
 
@@ -61,6 +65,16 @@ $ready = demo_ready();
       <button data-scenario="stale_signature">过期的签名时间戳</button>
       <button data-scenario="flood">刷签发接口 40 次</button>
       <button data-scenario="bot_solve">脚本自动求解 PoW</button>
+    </div>
+
+    <h2>③ 风险信号与滑块</h2>
+    <p class="hint">前三个由 PHP 服务端模拟脚本请求；后两个在本页面里运行，模拟 AI 或脚本在真实浏览器中操作：用 canvas 分析图片找缺口，再提交拖动轨迹。</p>
+    <div class="attacks">
+      <button data-scenario="headless_signals">无头浏览器特征</button>
+      <button data-scenario="no_signals">不带信号直接调接口</button>
+      <button data-scenario="failures_escalate">同一 IP 连续失败</button>
+      <button data-bot="line">脚本找缺口 + 直线拖动</button>
+      <button data-bot="human">脚本找缺口 + 仿人轨迹</button>
     </div>
   </section>
 

@@ -140,6 +140,62 @@ switch ($scenario) {
             'outcome' => $verify($app1(), $cfg['BG_APP_KEY'], $token, 'login')];
         break;
 
+    case 'headless_signals':
+    case 'no_signals':
+        // The same adaptive "login" action, asked for by a clean browser and by a script.
+        $base = $cfg['internal_endpoint'] . '/v1/challenges';
+        $clean = ['user_agent' => 'Mozilla/5.0 (Macintosh) Chrome/140', 'ms_to_click' => 2600,
+            'pointer_moves_before_click' => 40, 'pointer_type' => 'mouse'];
+        $bad = $scenario === 'no_signals' ? null : $clean + ['webdriver' => true, 'headless_ua' => true, 'software_gl' => true];
+        [, $a] = $rec->browserCall($base, 'http://localhost:8080', ['app_key' => $cfg['BG_APP_KEY'], 'action' => 'login', 'signals' => $clean]);
+        $payload = ['app_key' => $cfg['BG_APP_KEY'], 'action' => 'login'];
+        if ($bad !== null) {
+            $payload['signals'] = $bad;
+        }
+        [$status, $b] = $rec->browserCall($base, 'http://localhost:8080', $payload);
+        if ($status !== 200) {
+            json_out(['scenario' => $scenario, 'error' => "签发失败 HTTP $status（可能刚运行过「刷签发接口」，等一分钟再试）", 'calls' => $rec->calls]);
+        }
+        $work = fn(array $c) => number_format($c['data']['params']['puzzles'] * round(2 ** 48 / max(1, hexdec(substr($c['data']['params']['target'], 0, 12)))));
+        $kinds = ['invisible' => '无感', 'slider' => '滑块', 'fallback' => '备用'];
+        $r = $scenario === 'no_signals'
+            ? ['title' => '脚本直接调签发接口，不带任何浏览器信号', 'expect' => '正常浏览器：无感；脚本：升级为滑块',
+                'explain' => '没有信号本身就是信号（NO_SIGNALS +40）：真实浏览器里的组件一定会上报。风险分不会返回给浏览器，脚本只能看到自己被要求做滑块。']
+            : ['title' => '无头浏览器特征（webdriver、HeadlessChrome UA、软件渲染 WebGL）', 'expect' => '正常浏览器：无感；无头浏览器：滑块 + PoW 难度 ×4',
+                'explain' => '命中 WEBDRIVER、HEADLESS_UA、SOFTWARE_GL，风险分 100，进入高风险档：不仅要做滑块，PoW 计算量也翻 4 倍。注意这些信号都能伪造，熟练的攻击者会把它们改掉，所以它们只是提高成本。'];
+        $r['outcome'] = ['category' => 'Rejected', 'label' => '已升级',
+            'reason' => "正常浏览器：{$kinds[$a['data']['kind']]}、约 {$work($a)} 次哈希；本次：{$kinds[$b['data']['kind']]}、约 {$work($b)} 次哈希"];
+        break;
+
+    case 'failures_escalate':
+        // Three failed solves from this IP (the PHP container), then a clean browser request.
+        $base = $cfg['internal_endpoint'];
+        $origin = 'http://localhost:8080';
+        $clean = ['ms_to_click' => 2600, 'pointer_moves_before_click' => 40, 'pointer_type' => 'mouse'];
+        [, $before] = $rec->browserCall("$base/v1/challenges", $origin, ['app_key' => $cfg['BG_APP_KEY'], 'action' => 'login', 'signals' => $clean]);
+        for ($i = 0; $i < 3; $i++) {
+            [$st, $ch] = $rec->browserCall("$base/v1/challenges", $origin, ['app_key' => $cfg['BG_APP_KEY'], 'action' => 'register', 'signals' => $clean]);
+            if ($st !== 200) {
+                json_out(['scenario' => $scenario, 'error' => "签发失败 HTTP $st（可能刚运行过「刷签发接口」，等一分钟再试）", 'calls' => $rec->calls]);
+            }
+            $rec->browserCall("$base/v1/solutions", $origin, ['app_key' => $cfg['BG_APP_KEY'], 'challenge' => $ch['data']['challenge'],
+                'nonces' => array_fill(0, $ch['data']['params']['puzzles'], '0'), 'answer' => ['x' => 0, 'trajectory' => []]]);
+        }
+        [, $after] = $rec->browserCall("$base/v1/challenges", $origin, ['app_key' => $cfg['BG_APP_KEY'], 'action' => 'login', 'signals' => $clean]);
+        $r = ['title' => '同一 IP 连续 3 次求解失败后再来', 'expect' => '之前：无感；之后：滑块',
+            'explain' => 'gateway 按 IP 记录 10 分钟内的失败次数（IP_RECENT_FAILURES，每次 +10，最多 +30），这是攻击者无法伪造的服务端信号。即使浏览器信号完全正常，也会被升级。这里的 IP 是 PHP 容器，不影响你自己的浏览器。',
+            'outcome' => ['category' => 'Rejected', 'label' => '已升级', 'reason' => "之前：{$before['data']['kind']}，之后：{$after['data']['kind']}"]];
+        $rec->calls = array_merge(array_slice($rec->calls, 0, 1), array_slice($rec->calls, 1, 2), array_slice($rec->calls, -1));
+        break;
+
+    case 'verify_token':
+        // Used by the in-page script scenarios: verify whatever token they obtained.
+        $action = in_array($_POST['action'] ?? '', ['login', 'register'], true) ? $_POST['action'] : 'register';
+        $r = ['title' => '业务服务器核验脚本拿到的 token', 'expect' => '看 risk_level 和 risk_reasons',
+            'explain' => '即使脚本通过了滑块，业务服务器仍能从 verify 结果中看到题型和风险原因，可据此追加验证。',
+            'outcome' => $verify($app1(), $cfg['BG_APP_KEY'], $widgetToken, $action)];
+        break;
+
     default:
         json_out(['error' => '未知场景'], 400);
 }

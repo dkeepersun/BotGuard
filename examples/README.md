@@ -1,6 +1,6 @@
 # 接入示例
 
-- [`demo/`](demo/README.md)：Docker 一键演示。包含浏览器组件、PHP SDK、gateway、MySQL、Redis，以及 11 个攻击和误用场景。
+- [`demo/`](demo/README.md)：Docker 一键演示。包含浏览器组件、PHP SDK、gateway、MySQL、Redis，以及 16 个攻击、误用和风险场景（含滑块与无障碍备用路径）。
 
 接入顺序在所有语言里都一样：
 

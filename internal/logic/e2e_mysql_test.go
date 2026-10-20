@@ -38,7 +38,7 @@ func TestEndToEndWithMySQL(t *testing.T) {
 	if _, err := admin.AddOrigin(ctx, app, origin); err != nil {
 		t.Fatal(err)
 	}
-	if err := admin.SetAction(ctx, app, "login", domain.ActionPolicy{Enabled: true, Puzzles: 3, Difficulty: 20}); err != nil {
+	if err := admin.SetAction(ctx, app, "login", domain.ActionPolicy{Enabled: true, Mode: domain.ModeInvisible, Puzzles: 3, Difficulty: 20}); err != nil {
 		t.Fatal(err)
 	}
 	oldKey, _, err := admin.CreateSecret(ctx, app, 0)
@@ -52,7 +52,8 @@ func TestEndToEndWithMySQL(t *testing.T) {
 	g := &Gateway{
 		Apps: repository.NewMySQLApps(conn, seal), State: repository.NewState(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
 		Settings: Settings{ChallengeTTL: 2 * time.Minute, TokenTTL: time.Minute, ResultTTL: 10 * time.Minute, ClockSkew: 5 * time.Second,
-			MaxDifficulty: 1 << 20, SignatureWindow: 5 * time.Minute, ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000},
+			MaxDifficulty: 1 << 20, SignatureWindow: 5 * time.Minute, ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000,
+			RiskMedium: 30, RiskHigh: 70, HighDifficultyFactor: 4, FallbackDifficultyFactor: 8, FailureWindow: 10 * time.Minute, SliderTolerance: 4},
 		Now: now,
 	}
 	ip := netip.MustParseAddr("198.51.100.4")

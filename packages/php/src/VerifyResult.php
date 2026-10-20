@@ -18,12 +18,20 @@ final class VerifyResult
         public readonly ?string $action,
         public readonly ?int $verifiedAt,
         public readonly string $requestId,
+        /** How the token was earned: invisible, slider or fallback (null for older gateways). */
+        public readonly ?string $challengeKind = null,
+        /** low / medium / high, as scored by the gateway. */
+        public readonly ?string $riskLevel = null,
+        /** @var list<string> reason codes such as NO_SIGNALS or FALLBACK_CHOSEN */
+        public readonly array $riskReasons = [],
     ) {
     }
 
-    public static function ofPass(string $appKey, string $action, int $verifiedAt, string $requestId): self
+    /** @param list<string> $riskReasons */
+    public static function ofPass(string $appKey, string $action, int $verifiedAt, string $requestId,
+        ?string $challengeKind = null, ?string $riskLevel = null, array $riskReasons = []): self
     {
-        return new self(true, null, $appKey, $action, $verifiedAt, $requestId);
+        return new self(true, null, $appKey, $action, $verifiedAt, $requestId, $challengeKind, $riskLevel, $riskReasons);
     }
 
     public static function ofReject(string $reason, string $requestId): self
@@ -47,6 +55,9 @@ final class VerifyResult
             'action' => $this->action,
             'verified_at' => $this->verifiedAt,
             'request_id' => $this->requestId,
+            'challenge_kind' => $this->challengeKind,
+            'risk_level' => $this->riskLevel,
+            'risk_reasons' => $this->riskReasons,
         ];
     }
 }

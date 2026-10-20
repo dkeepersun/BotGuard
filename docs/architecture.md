@@ -5,14 +5,14 @@
 ## 1. 现场结论
 
 - `/Users/alex/workspace/BotGuard` 初始只有 `.git`，没有提交、源码或未提交业务改动；配置的 origin 为 `https://github.com/dkeepersun/BotGuard.git`。没有核验远程内容，也没有拉取、提交或推送。
-- PayHub 位于 `/Users/alex/workspace/PayHub`，检查时工作区干净，HEAD 为 `b81f3709410d2017cbccda1535531704fa739008`。本次不修改 PayHub。
+- 后台参考 PearAdmin（Pear Admin Layui）的常见 Go SSR 接入方式，本次不修改任何参考代码。
 - 参考会话可读取用户需求，但旧助手回答只返回内容引用占位符，无法作为已有完整设计的证据；本文基于本次本地源码与已提供的用户要求重新设计。
 - 确认约束：核心运行栈仅 go-zero、Redis、MySQL；后台 Go SSR + PearAdmin；浏览器 npm、Go 和 PHP/Laravel 接入。
 - 建议默认：先做单体分层 + 两个 HTTP 入口；一个源码仓库；不引入微服务 RPC、etcd、Kafka、独立搜索或分析数据库。TypeScript/PHP 是交付 SDK 的语言，不是新增服务端基础设施。
 
-## 2. PayHub 的哪些模式沿用
+## 2. 沿用的 PearAdmin 后台模式
 
-| 本地证据 | BotGuard 采用方式 |
+| 参考位置 | BotGuard 采用方式 |
 |---|---|
 | `AGENTS.md`、`cmd/admin-web/main.go` | main 只装配；业务逻辑、仓储、HTTP 分层 |
 | `internal/adminweb/server.go` | 手写路由；每条业务路由声明权限；page/data/action 三类包装 |
@@ -23,9 +23,9 @@
 | `internal/webui/session.go`、后台 action 包装 | Redis 会话；POST + CSRF + Origin + 权限；成功变更与审计同事务 |
 | `internal/webui/static/NOTICE.md` | 本地静态资源随二进制嵌入；保留第三方许可与来源 |
 
-不继承支付账本、渠道、订单、Telegram、支付密钥、PayHub 业务 JS 或其数据。代码注释英文，界面与错误文案中文。配置不放真实密钥；日志不记录密钥、原始 token、完整请求体。客户端 IP 只信任显式配置的代理。
+不继承参考项目的业务逻辑、业务 JS、密钥或数据，只保留 PearAdmin 静态资源与布局约定。代码注释英文，界面与错误文案中文。配置不放真实密钥；日志不记录密钥、原始 token、完整请求体。客户端 IP 只信任显式配置的代理。
 
-本次只实现壳层和健康检查。page/data/action 安全包装、Redis 会话和权限菜单是 P1 验收项，不能从“参考 PayHub”推断已具备。
+本次只实现壳层和健康检查。page/data/action 安全包装、Redis 会话和权限菜单是 P1 验收项，不能从“参考 PearAdmin”推断已具备。
 
 ## 3. 部署和模块
 
@@ -88,7 +88,7 @@ BotGuard/
 |---|---|
 | `bg_app` | id、app_key UNIQUE（对应易盾 captchaId，公开）、name、status、active_policy_version、timestamps |
 | `bg_app_origin` | id、app_id、origin；UNIQUE(app_id, origin)；精确 scheme+host+port，不允许含糊后缀匹配 |
-| `bg_app_action` | app_id、action、enabled、pow_puzzles、pow_difficulty（每题期望尝试次数）；UNIQUE(app_id, action) |
+| `bg_app_action` | app_id、action、enabled、challenge_mode（invisible / slider / adaptive，0003 加入）、pow_puzzles、pow_difficulty（每题期望尝试次数）；UNIQUE(app_id, action) |
 | `bg_app_secret` | id、app_id、secret_id UNIQUE、secret_ciphertext（AES-256-GCM，附加数据为 secret_id）、kek_id、status、expires_at、rotated_from；secret_key 仅创建时展示一次 |
 | `bg_policy_version` | id、app_id、version、schema_version、rules_json、status、created_by；UNIQUE(app_id, version) |
 | `bg_list_entry` | id、app_id、kind、value_hash 或 CIDR、action、expires_at；固定类型，禁止任意脚本规则 |
@@ -137,6 +137,8 @@ PoW 采用“多题 + 数值阈值”结构：一个 challenge 含 k 道独立�
 - `argon2id-target-v1`（内存困难）在 P2 评估，用于缩小攻击者的硬件优势。它的问题是服务端校验每道子题也要付出同等的内存和 CPU，伪造的 solve 会变成对服务端的放大攻击。只有在完成低端真机实测、solve 先限流再廉价校验再哈希、哈希校验有全局并发上限（超限返回 503）、有放大比监控之后，才作为策略对高价值 action 或可疑流量启用，不作为全局默认。
 
 浏览器在 Web Worker 中求解，支持取消和超时；默认 k 与难度在真实低端手机、电池和无障碍场景评估后确定。挑战中所有参数来自服务器签名，客户端回传的副本不被读取。限制 nonce 长度与数量、body、并发、签发速率，先限流再运算。
+
+验证题型与风险信号（第一期已实现）：每个 action 选 invisible / slider / adaptive 模式；浏览器上报环境与交互信号，gateway 结合 IP 近期失败、请求速率、UA 一致性等服务端信号做可解释的规则打分，决定出无感、滑块还是加难度；滑块答案与风险分封存在签名 challenge 的加密字段里，服务端仍无状态；verify 向业务方返回题型、风险等级和原因码。详见 `docs/challenge-types.md`。
 
 PoW 只增加自动化成本，不证明“真人”。MVP 无法替代成熟厂商的设备情报、代理网络识别、行为模型或攻击规模防护。Origin/CORS 是浏览器约束，非浏览器可以伪造 Origin，不作为身份认证。信誉、风险评分和行为采集放在后续阶段，不编造命中率。
 

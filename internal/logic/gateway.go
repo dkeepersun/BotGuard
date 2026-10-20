@@ -8,18 +8,17 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
-	"net/netip"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
 	"github.com/dkeepersun/BotGuard/internal/errx"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/challenge"
-	"github.com/dkeepersun/BotGuard/internal/service/clientip"
-	"github.com/dkeepersun/BotGuard/internal/service/pow"
 	"github.com/dkeepersun/BotGuard/internal/service/signature"
+	"github.com/dkeepersun/BotGuard/internal/service/slider"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -45,6 +44,16 @@ type Settings struct {
 	ChallengePerIPPerMinute int
 	SolvePerIPPerMinute     int
 	VerifyPerKeyPerMinute   int
+	FallbackPerIPPerMinute  int
+
+	// Risk thresholds and the PoW multipliers they trigger.
+	RiskMedium               int
+	RiskHigh                 int
+	HighDifficultyFactor     uint64
+	FallbackDifficultyFactor uint64
+	FailureWindow            time.Duration
+
+	SliderTolerance int
 }
 
 type Gateway struct {
@@ -54,6 +63,11 @@ type Gateway struct {
 	Keys     *challenge.Keyring
 	Settings Settings
 	Now      func() time.Time
+	// Puzzles generates slider puzzles; nil uses a crypto-seeded generator.
+	Puzzles func() (slider.Puzzle, error)
+	// puzzleSlots bounds concurrent image generation; created lazily.
+	puzzleSlots chan struct{}
+	slotsOnce   sync.Once
 }
 
 func (g *Gateway) limit(ctx context.Context, dim, subject string, quota int) error {
@@ -82,167 +96,6 @@ func (g *Gateway) app(ctx context.Context, appKey string) (*domain.App, error) {
 		return nil, errx.ErrAppForbidden
 	}
 	return app, nil
-}
-
-type IssueInput struct {
-	AppKey   string
-	Action   string
-	Origin   string
-	ClientIP netip.Addr
-}
-
-type IssueOutput struct {
-	Challenge   string     `json:"challenge"`
-	ChallengeID string     `json:"challenge_id"`
-	Algorithm   string     `json:"algorithm"`
-	Params      pow.Params `json:"params"`
-	ExpiresAt   int64      `json:"expires_at"`
-}
-
-// Issue signs a challenge without writing any per-challenge state.
-// allowedOrigin is set once the origin is known to be allowed for the app,
-// so the handler can attach CORS headers even to later errors.
-func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, allowedOrigin string, err error) {
-	origin, ok := domain.NormalizeOrigin(in.Origin)
-	if !ok {
-		return nil, "", errx.ErrOriginNotAllowed
-	}
-	if err := g.limit(ctx, dimChallenge, clientip.Bucket(in.ClientIP), g.Settings.ChallengePerIPPerMinute); err != nil {
-		return nil, "", err
-	}
-	if !domain.ValidAppKey(in.AppKey) || !domain.ValidAction(in.Action) {
-		return nil, "", errx.InvalidRequest("app_key 或 action 格式错误")
-	}
-	app, err := g.app(ctx, in.AppKey)
-	if err != nil {
-		return nil, "", err
-	}
-	if !app.AllowsOrigin(origin) {
-		return nil, "", errx.ErrOriginNotAllowed
-	}
-	policy, ok := app.Actions[in.Action]
-	if !ok || !policy.Enabled {
-		return nil, origin, errx.ErrActionForbidden
-	}
-	difficulty := min(policy.Difficulty, g.Settings.MaxDifficulty)
-	params, err := pow.NewParams(policy.Puzzles, difficulty)
-	if err != nil {
-		logx.WithContext(ctx).Errorf("app %d action %s has invalid pow policy", app.ID, in.Action)
-		return nil, origin, errx.ErrUnavailable
-	}
-	id, err := challenge.NewID()
-	if err != nil {
-		return nil, origin, errx.ErrUnavailable
-	}
-	now := g.Now()
-	p := challenge.Payload{
-		ChallengeID:   id,
-		AppKey:        app.AppKey,
-		Action:        in.Action,
-		Origin:        origin,
-		Algorithm:     pow.AlgSHA256Target,
-		Params:        params,
-		PolicyVersion: app.PolicyVersion,
-		IssuedAt:      now.Unix(),
-		ExpiresAt:     now.Add(g.Settings.ChallengeTTL).Unix(),
-	}
-	signed, err := g.Keys.Sign(p)
-	if err != nil {
-		logx.WithContext(ctx).Errorf("sign challenge: %v", err)
-		return nil, origin, errx.ErrUnavailable
-	}
-	return &IssueOutput{Challenge: signed, ChallengeID: id, Algorithm: p.Algorithm, Params: params, ExpiresAt: p.ExpiresAt}, origin, nil
-}
-
-type SolveInput struct {
-	AppKey    string
-	Challenge string
-	Nonces    []string
-	Origin    string
-	ClientIP  netip.Addr
-}
-
-type SolveOutput struct {
-	Token     string `json:"token"`
-	ExpiresAt int64  `json:"expires_at"`
-}
-
-// Solve follows the cheap-to-expensive order in the contract. The challenge
-// is marked used before hashing, so each challenge gets exactly one attempt.
-func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, allowedOrigin string, err error) {
-	if !domain.ValidAppKey(in.AppKey) || in.Challenge == "" {
-		return nil, "", errx.InvalidRequest("app_key 或 challenge 格式错误")
-	}
-	if len(in.Challenge) > challenge.MaxLen {
-		return nil, "", errx.InvalidRequest("challenge 过长")
-	}
-	p, err := g.Keys.Open(in.Challenge)
-	if err != nil {
-		return nil, "", errx.ErrChallengeInvalid
-	}
-	now := g.Now()
-	skew := int64(g.Settings.ClockSkew / time.Second)
-	if p.IssuedAt > now.Unix()+skew {
-		return nil, "", errx.ErrChallengeInvalid
-	}
-	if now.Unix() > p.ExpiresAt+skew {
-		return nil, "", errx.ErrChallengeExpired
-	}
-	if p.AppKey != in.AppKey {
-		return nil, "", errx.ErrAppForbidden
-	}
-	app, err := g.app(ctx, in.AppKey)
-	if err != nil {
-		return nil, "", err
-	}
-	origin, ok := domain.NormalizeOrigin(in.Origin)
-	if !ok || !app.AllowsOrigin(origin) {
-		return nil, "", errx.ErrOriginNotAllowed
-	}
-	if origin != p.Origin {
-		return nil, origin, errx.ErrOriginNotAllowed
-	}
-	if policy, ok := app.Actions[p.Action]; !ok || !policy.Enabled {
-		return nil, origin, errx.ErrActionForbidden
-	}
-	if err := g.limit(ctx, dimSolve, clientip.Bucket(in.ClientIP), g.Settings.SolvePerIPPerMinute); err != nil {
-		return nil, origin, err
-	}
-	if p.Algorithm != pow.AlgSHA256Target {
-		return nil, origin, errx.ErrChallengeInvalid
-	}
-	if err := pow.CheckNonces(p.Params, in.Nonces); err != nil {
-		return nil, origin, errx.InvalidRequest("nonces 数量或格式错误")
-	}
-	remaining := time.Unix(p.ExpiresAt+skew, 0).Sub(now)
-	first, err := g.State.MarkChallengeUsed(ctx, p.ChallengeID, remaining)
-	if err != nil {
-		logx.WithContext(ctx).Errorf("mark challenge: %v", err)
-		return nil, origin, errx.ErrUnavailable
-	}
-	if !first {
-		return nil, origin, errx.ErrChallengeUsed
-	}
-	if err := pow.Verify(p.Algorithm, p.ChallengeID, p.Params, in.Nonces); err != nil {
-		if errors.Is(err, pow.ErrProofInvalid) {
-			return nil, origin, errx.ErrProofInvalid
-		}
-		return nil, origin, errx.ErrChallengeInvalid
-	}
-	token, err := newToken(app.AppKey)
-	if err != nil {
-		return nil, origin, errx.ErrUnavailable
-	}
-	exp := now.Add(g.Settings.TokenTTL).Unix()
-	// Keep the record past expiry so verify can say EXPIRED/CONSUMED, not INVALID.
-	keyTTL := g.Settings.TokenTTL + g.Settings.ResultTTL
-	rec := repository.TokenRecord{Action: p.Action, Origin: p.Origin, ExpiresAt: exp}
-	if err := g.State.PutToken(ctx, app.ID, hashToken(token), rec, keyTTL); err != nil {
-		// The challenge is already marked; failing here issues fewer tokens, never more.
-		logx.WithContext(ctx).Errorf("store token: %v", err)
-		return nil, origin, errx.ErrUnavailable
-	}
-	return &SolveOutput{Token: token, ExpiresAt: exp}, origin, nil
 }
 
 // Tokens embed the public app key so a token from another app is rejected
@@ -296,6 +149,10 @@ type VerifyOutput struct {
 	AppKey     string `json:"app_key,omitempty"`
 	Action     string `json:"action,omitempty"`
 	VerifiedAt int64  `json:"verified_at,omitempty"`
+	// How the token was earned; additive fields, ignored by older SDKs.
+	ChallengeKind string   `json:"challenge_kind,omitempty"`
+	RiskLevel     string   `json:"risk_level,omitempty"`
+	RiskReasons   []string `json:"risk_reasons,omitempty"`
 }
 
 // authenticate checks a BG1-HMAC-SHA256 signature. Cheap format and clock
@@ -387,12 +244,21 @@ func (g *Gateway) Verify(ctx context.Context, in VerifyInput) (*VerifyOutput, er
 		logx.WithContext(ctx).Errorf("consume token: %v", err)
 		return nil, errx.ErrUnavailable
 	}
-	if ts, ok := strings.CutPrefix(outcome, repository.PassPrefix); ok {
-		at, err := strconv.ParseInt(ts, 10, 64)
+	if rest, ok := strings.CutPrefix(outcome, repository.PassPrefix); ok {
+		// verified_at:kind:level:reasons (kind and later may be empty for old tokens).
+		parts := strings.SplitN(rest, ":", 4)
+		at, err := strconv.ParseInt(parts[0], 10, 64)
 		if err != nil {
 			return nil, errx.ErrUnavailable
 		}
-		return &VerifyOutput{Success: true, AppKey: app.AppKey, Action: in.Action, VerifiedAt: at}, nil
+		out := &VerifyOutput{Success: true, AppKey: app.AppKey, Action: in.Action, VerifiedAt: at}
+		if len(parts) == 4 {
+			out.ChallengeKind, out.RiskLevel = parts[1], parts[2]
+			if parts[3] != "" {
+				out.RiskReasons = strings.Split(parts[3], ",")
+			}
+		}
+		return out, nil
 	}
 	return &VerifyOutput{Success: false, Reason: outcome}, nil
 }

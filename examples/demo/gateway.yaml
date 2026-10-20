@@ -4,7 +4,7 @@ Host: 0.0.0.0
 Port: 8090
 Mode: dev
 Timeout: 3000
-MaxBytes: 8192
+MaxBytes: 32768
 Middlewares:
   Log: false
   Trace: false
@@ -44,3 +44,14 @@ RateLimit:
   ChallengePerIPPerMinute: 30
   SolvePerIPPerMinute: 60
   VerifyPerKeyPerMinute: 600
+  FallbackPerIPPerMinute: 5
+
+Risk:
+  MediumThreshold: 30
+  HighThreshold: 70
+  HighDifficultyFactor: 4
+  FallbackDifficultyFactor: 8
+  FailureWindowSeconds: 600
+
+Slider:
+  Tolerance: 4

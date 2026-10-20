@@ -83,8 +83,14 @@ func TestOperatorWorkflow(t *testing.T) {
 	r.run(1, "origin", "add", "-app", app, "-origin", "https://a.example/login")
 	r.run(1, "origin", "add", "-app", "pk_missing_app", "-origin", "https://b.example")
 
-	r.run(0, "action", "set", "-app", app, "-action", "login", "-difficulty", "3000")
-	r.run(0, "action", "set", "-app", app, "-action", "login", "-enabled=false")
+	if out := r.run(0, "action", "set", "-app", app, "-action", "login", "-difficulty", "3000"); !strings.Contains(out, "模式 adaptive") {
+		t.Fatalf("new action defaults to adaptive: %s", out)
+	}
+	r.run(0, "action", "set", "-app", app, "-action", "login", "-mode", "slider")
+	if out := r.run(0, "action", "set", "-app", app, "-action", "login", "-enabled=false"); !strings.Contains(out, "模式 slider") {
+		t.Fatalf("unspecified mode must be kept: %s", out)
+	}
+	r.run(1, "action", "set", "-app", app, "-action", "login", "-mode", "puzzle")
 	r.run(1, "action", "set", "-app", app, "-action", "login", "-puzzles", "33")
 	r.run(1, "action", "set", "-app", app, "-action", "Bad")
 
@@ -111,7 +117,7 @@ func TestOperatorWorkflow(t *testing.T) {
 	r.run(0, "app", "disable", "-app", app)
 	show := r.run(0, "app", "show", "-app", app)
 	flat := strings.Join(strings.Fields(show), " ")
-	for _, want := range []string{"（停用）", "https://a.example", "login 停用 8 3000",
+	for _, want := range []string{"（停用）", "https://a.example", "login 停用 slider 8 3000",
 		// Rotation shortened the old pair's 720h life to the 1h grace.
 		key + " 已吊销 2026-10-20T01:00:00Z", newKey + " 启用 永不 " + key} {
 		if !strings.Contains(flat, want) {
@@ -121,8 +127,8 @@ func TestOperatorWorkflow(t *testing.T) {
 	if strings.Contains(show, secretKey) || strings.Contains(show, "secret_key") {
 		t.Error("app show must not reveal secret keys")
 	}
-	// origin add, two action sets, rotate does not touch policy: 1 + 1 + 2.
-	if !strings.Contains(show, "策略版本：4") {
+	// origin add, three action sets, rotate does not touch policy: 1 + 1 + 3.
+	if !strings.Contains(show, "策略版本：5") {
 		t.Errorf("policy version:\n%s", show)
 	}
 	if out := r.run(0, "migrate", "status"); !strings.Contains(out, "已执行") {

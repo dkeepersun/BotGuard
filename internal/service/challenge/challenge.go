@@ -7,6 +7,9 @@
 package challenge
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hkdf"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -22,7 +25,7 @@ import (
 
 const (
 	version      = "v1"
-	MaxLen       = 1024
+	MaxLen       = 2048
 	MinSecretLen = 32
 )
 
@@ -47,6 +50,11 @@ type Payload struct {
 	PolicyVersion int64      `json:"policy_version"`
 	IssuedAt      int64      `json:"iat"`
 	ExpiresAt     int64      `json:"exp"`
+	// Kind is the challenge type the browser must complete (invisible, slider, fallback).
+	Kind string `json:"kind"`
+	// Sealed is server-only data (answers, risk) encrypted under a key derived
+	// from the signing key; the browser can carry it but not read it.
+	Sealed string `json:"sealed,omitempty"`
 }
 
 type Key struct {
@@ -103,7 +111,34 @@ func mac(secret []byte, signed string) []byte {
 	return m.Sum(nil)
 }
 
-func (k *Keyring) Sign(p Payload) (string, error) {
+// sealKey derives the AES-256 key for Sealed from a signing secret, so no
+// extra key needs to be configured or rotated.
+func sealKey(secret []byte) (cipher.AEAD, error) {
+	key, err := hkdf.Key(sha256.New, secret, nil, "botguard challenge seal v1", 32)
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	return cipher.NewGCM(block)
+}
+
+// Sign signs p, first sealing private (if any) into p.Sealed with the
+// challenge id as additional data.
+func (k *Keyring) Sign(p Payload, private []byte) (string, error) {
+	if len(private) > 0 {
+		aead, err := sealKey(k.keys[k.active])
+		if err != nil {
+			return "", err
+		}
+		nonce := make([]byte, aead.NonceSize())
+		if _, err := rand.Read(nonce); err != nil {
+			return "", err
+		}
+		p.Sealed = b64.EncodeToString(aead.Seal(nonce, nonce, private, []byte(p.ChallengeID)))
+	}
 	body, err := json.Marshal(p)
 	if err != nil {
 		return "", err
@@ -116,33 +151,58 @@ func (k *Keyring) Sign(p Payload) (string, error) {
 	return s, nil
 }
 
-// Open verifies the MAC before decoding anything else.
-func (k *Keyring) Open(s string) (Payload, error) {
+// Open verifies the MAC before decoding anything else, and returns the
+// unsealed private data (nil when none was sealed).
+func (k *Keyring) Open(s string) (Payload, []byte, error) {
+	p, secret, err := k.open(s)
+	if err != nil || p.Sealed == "" {
+		return p, nil, err
+	}
+	sealed, err := b64.DecodeString(p.Sealed)
+	if err != nil {
+		return p, nil, ErrMalformed
+	}
+	aead, err := sealKey(secret)
+	if err != nil {
+		return p, nil, err
+	}
+	n := aead.NonceSize()
+	if len(sealed) < n+aead.Overhead() {
+		return p, nil, ErrMalformed
+	}
+	private, err := aead.Open(nil, sealed[:n], sealed[n:], []byte(p.ChallengeID))
+	if err != nil {
+		return p, nil, ErrSignature
+	}
+	return p, private, nil
+}
+
+func (k *Keyring) open(s string) (Payload, []byte, error) {
 	var p Payload
 	if len(s) > MaxLen {
-		return p, ErrTooLong
+		return p, nil, ErrTooLong
 	}
 	parts := strings.Split(s, ".")
 	if len(parts) != 4 || parts[0] != version {
-		return p, ErrMalformed
+		return p, nil, ErrMalformed
 	}
 	secret, ok := k.keys[parts[1]]
 	if !ok {
-		return p, ErrUnknownKey
+		return p, nil, ErrUnknownKey
 	}
 	got, err := b64.DecodeString(parts[3])
 	if err != nil {
-		return p, ErrMalformed
+		return p, nil, ErrMalformed
 	}
 	if !hmac.Equal(got, mac(secret, parts[0]+"."+parts[1]+"."+parts[2])) {
-		return p, ErrSignature
+		return p, nil, ErrSignature
 	}
 	body, err := b64.DecodeString(parts[2])
 	if err != nil {
-		return p, ErrMalformed
+		return p, nil, ErrMalformed
 	}
 	if err := json.Unmarshal(body, &p); err != nil {
-		return p, ErrMalformed
+		return p, nil, ErrMalformed
 	}
-	return p, nil
+	return p, secret, nil
 }

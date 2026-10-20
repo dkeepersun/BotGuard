@@ -60,7 +60,12 @@ func newHarness(t *testing.T) *harness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	policy := map[string]domain.ActionPolicy{"login": {Enabled: true, Puzzles: 4, Difficulty: 16}, "off": {Enabled: false, Puzzles: 4, Difficulty: 16}}
+	policy := map[string]domain.ActionPolicy{
+		"login":    {Enabled: true, Mode: domain.ModeInvisible, Puzzles: 4, Difficulty: 16},
+		"off":      {Enabled: false, Mode: domain.ModeInvisible, Puzzles: 4, Difficulty: 16},
+		"adaptive": {Enabled: true, Mode: domain.ModeAdaptive, Puzzles: 2, Difficulty: 16},
+		"slide":    {Enabled: true, Mode: domain.ModeSlider, Puzzles: 2, Difficulty: 16},
+	}
 	apps := &fakeApps{
 		apps: map[string]*domain.App{
 			appA: {ID: 1, AppKey: appA, Enabled: true, Origins: []string{originA}, Actions: policy},
@@ -76,7 +81,9 @@ func newHarness(t *testing.T) *harness {
 		Apps: apps, State: repository.NewState(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
 		Settings: Settings{ChallengeTTL: 120 * time.Second, TokenTTL: 60 * time.Second, ResultTTL: 600 * time.Second,
 			ClockSkew: 5 * time.Second, MaxDifficulty: 1 << 20, SignatureWindow: 300 * time.Second,
-			ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000},
+			ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000, FallbackPerIPPerMinute: 5,
+			RiskMedium: 30, RiskHigh: 70, HighDifficultyFactor: 4, FallbackDifficultyFactor: 8, FailureWindow: 10 * time.Minute,
+			SliderTolerance: 4},
 		Now: func() time.Time { return h.clock },
 	}
 	return h

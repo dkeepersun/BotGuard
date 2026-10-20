@@ -15,11 +15,15 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/logic"
 	"github.com/dkeepersun/BotGuard/internal/response"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/risk"
 	"github.com/dkeepersun/BotGuard/internal/service/signature"
 	"github.com/zeromicro/go-zero/rest"
 )
 
-const maxBody = 8 << 10
+const (
+	maxBody      = 8 << 10
+	maxSolveBody = 32 << 10 // slider trajectories
+)
 
 func Health(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusOK, map[string]string{"status": "alive"})
@@ -66,7 +70,11 @@ func newRequestID() string {
 // decode accepts application/json and text/plain bodies. text/plain lets the
 // browser widget send a CORS "simple request" and skip the preflight.
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
-	body, err := readBody(w, r)
+	return decodeLimit(w, r, v, maxBody)
+}
+
+func decodeLimit(w http.ResponseWriter, r *http.Request, v any, limit int64) error {
+	body, err := readBodyLimit(w, r, limit)
 	if err != nil {
 		return err
 	}
@@ -75,11 +83,15 @@ func decode(w http.ResponseWriter, r *http.Request, v any) error {
 
 // readBody returns the raw bytes, which verify needs for the signature.
 func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	return readBodyLimit(w, r, maxBody)
+}
+
+func readBodyLimit(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
 	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || (mt != "application/json" && mt != "text/plain") {
 		return nil, errx.InvalidRequest("Content-Type 必须为 application/json 或 text/plain")
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, limit))
 	if err != nil {
 		return nil, errx.InvalidRequest("请求体过大或读取失败")
 	}
@@ -130,8 +142,10 @@ func preflight(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 	rid := newRequestID()
 	var body struct {
-		AppKey string `json:"app_key"`
-		Action string `json:"action"`
+		AppKey   string        `json:"app_key"`
+		Action   string        `json:"action"`
+		Signals  *risk.Signals `json:"signals"`
+		Fallback bool          `json:"fallback"`
 	}
 	if err := decode(w, r, &body); err != nil {
 		fail(w, err, rid)
@@ -139,6 +153,7 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 	}
 	out, origin, err := g.Logic.Issue(r.Context(), logic.IssueInput{
 		AppKey: body.AppKey, Action: body.Action, Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r),
+		HeaderUA: r.UserAgent(), Signals: body.Signals, Fallback: body.Fallback,
 	})
 	cors(w, origin)
 	if err != nil {
@@ -151,17 +166,19 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {
 	rid := newRequestID()
 	var body struct {
-		AppKey    string   `json:"app_key"`
-		Challenge string   `json:"challenge"`
-		Nonces    []string `json:"nonces"`
+		AppKey    string              `json:"app_key"`
+		Challenge string              `json:"challenge"`
+		Nonces    []string            `json:"nonces"`
+		Answer    *logic.SliderAnswer `json:"answer"`
+		Signals   *risk.Signals       `json:"signals"`
 	}
-	if err := decode(w, r, &body); err != nil {
+	if err := decodeLimit(w, r, &body, maxSolveBody); err != nil {
 		fail(w, err, rid)
 		return
 	}
 	out, origin, err := g.Logic.Solve(r.Context(), logic.SolveInput{
 		AppKey: body.AppKey, Challenge: body.Challenge, Nonces: body.Nonces,
-		Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r),
+		Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r), Answer: body.Answer, Signals: body.Signals,
 	})
 	cors(w, origin)
 	if err != nil {

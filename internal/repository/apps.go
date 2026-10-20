@@ -44,6 +44,7 @@ type appRow struct {
 type actionRow struct {
 	Action     string `db:"action"`
 	Enabled    bool   `db:"enabled"`
+	Mode       string `db:"challenge_mode"`
 	Puzzles    int    `db:"pow_puzzles"`
 	Difficulty uint64 `db:"pow_difficulty"`
 }
@@ -75,7 +76,7 @@ func (r *MySQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, e
 	}
 	var actions []actionRow
 	if err := r.conn.QueryRowsCtx(ctx, &actions,
-		"SELECT action, enabled, pow_puzzles, pow_difficulty FROM bg_app_action WHERE app_id = ?", row.ID); err != nil {
+		"SELECT action, enabled, challenge_mode, pow_puzzles, pow_difficulty FROM bg_app_action WHERE app_id = ?", row.ID); err != nil {
 		return nil, err
 	}
 	app := &domain.App{
@@ -95,7 +96,12 @@ func (r *MySQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, e
 		app.Origins = append(app.Origins, n)
 	}
 	for _, a := range actions {
-		app.Actions[a.Action] = domain.ActionPolicy{Enabled: a.Enabled, Puzzles: a.Puzzles, Difficulty: a.Difficulty}
+		mode := a.Mode
+		if !domain.ValidMode(mode) {
+			logx.WithContext(ctx).Errorf("app %d action %s has unknown mode %q, using invisible", row.ID, a.Action, mode)
+			mode = domain.ModeInvisible
+		}
+		app.Actions[a.Action] = domain.ActionPolicy{Enabled: a.Enabled, Mode: mode, Puzzles: a.Puzzles, Difficulty: a.Difficulty}
 	}
 	return app, nil
 }

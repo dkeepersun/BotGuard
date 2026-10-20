@@ -32,7 +32,7 @@ func (apps) AppByKey(_ context.Context, k string) (*domain.App, error) {
 		return nil, domain.ErrNotFound
 	}
 	return &domain.App{ID: 1, AppKey: k, Enabled: true, Origins: []string{"https://a.example"},
-		Actions: map[string]domain.ActionPolicy{"login": {Enabled: true, Puzzles: 2, Difficulty: 8}}}, nil
+		Actions: map[string]domain.ActionPolicy{"login": {Enabled: true, Mode: domain.ModeInvisible, Puzzles: 2, Difficulty: 8}}}, nil
 }
 
 func (apps) SecretPair(_ context.Context, id string) (*domain.SecretPair, error) {
@@ -58,7 +58,8 @@ func newServer(t *testing.T, verifyQuota int) http.Handler {
 		Logic: &logic.Gateway{Apps: apps{}, State: repository.NewState(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
 			Settings: logic.Settings{ChallengeTTL: 2 * time.Minute, TokenTTL: time.Minute, ResultTTL: 10 * time.Minute, SignatureWindow: 5 * time.Minute,
 				ClockSkew: 5 * time.Second, MaxDifficulty: 1 << 20, ChallengePerIPPerMinute: 100, SolvePerIPPerMinute: 100,
-				VerifyPerKeyPerMinute: verifyQuota},
+				VerifyPerKeyPerMinute: verifyQuota, RiskMedium: 30, RiskHigh: 70, HighDifficultyFactor: 4, FallbackDifficultyFactor: 8,
+				FallbackPerIPPerMinute: 5, FailureWindow: 10 * time.Minute, SliderTolerance: 4},
 			Now: time.Now},
 		IPs:   ips,
 		Ready: func(context.Context) bool { return true },

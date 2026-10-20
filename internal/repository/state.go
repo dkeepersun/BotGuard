@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/stores/redis"
@@ -45,7 +46,7 @@ local function finish(outcome)
   return {'NEW', outcome}
 end
 if ARGV[5] ~= '' then return finish(ARGV[5]) end
-local t = redis.call('HMGET', KEYS[2], 'action', 'origin', 'exp', 'consumed')
+local t = redis.call('HMGET', KEYS[2], 'action', 'origin', 'exp', 'consumed', 'kind', 'level', 'reasons')
 if not t[1] then return finish('TOKEN_INVALID') end
 if t[4] == '1' then return finish('TOKEN_CONSUMED') end
 if tonumber(t[3]) <= tonumber(ARGV[2]) then return finish('TOKEN_EXPIRED') end
@@ -56,11 +57,12 @@ for i = 6, #ARGV do
 end
 if not allowed then return finish('ORIGIN_NOT_ALLOWED') end
 redis.call('HSET', KEYS[2], 'consumed', '1')
-return finish('PASS:' .. ARGV[2])
+return finish('PASS:' .. ARGV[2] .. ':' .. (t[5] or '') .. ':' .. (t[6] or '') .. ':' .. (t[7] or ''))
 `
 
 const putTokenScript = `
-redis.call('HSET', KEYS[1], 'action', ARGV[1], 'origin', ARGV[2], 'exp', ARGV[3], 'consumed', '0')
+redis.call('HSET', KEYS[1], 'action', ARGV[1], 'origin', ARGV[2], 'exp', ARGV[3], 'consumed', '0',
+  'kind', ARGV[5], 'level', ARGV[6], 'reasons', ARGV[7])
 redis.call('EXPIRE', KEYS[1], ARGV[4])
 return 1
 `
@@ -89,6 +91,29 @@ func resultKey(appID int64, requestID string) string {
 	return fmt.Sprintf("bg:{%d}:verify:%s", appID, requestID)
 }
 
+const failScript = `
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return n
+`
+
+func failKey(ipBucket string) string { return "bg:ipfail:" + ipBucket }
+
+// RecordFailure counts a failed solve for an IP bucket within window.
+func (s *State) RecordFailure(ctx context.Context, ipBucket string, window time.Duration) error {
+	_, err := s.rds.EvalCtx(ctx, failScript, []string{failKey(ipBucket)}, ceilSeconds(window))
+	return err
+}
+
+// Failures returns the recent failed solves for an IP bucket.
+func (s *State) Failures(ctx context.Context, ipBucket string) (int, error) {
+	v, err := s.rds.GetCtx(ctx, failKey(ipBucket))
+	if err != nil || v == "" {
+		return 0, err
+	}
+	return strconv.Atoi(v)
+}
+
 // MarkNonce reports false when this secret already used the nonce within ttl,
 // i.e. the signed request is a replay.
 func (s *State) MarkNonce(ctx context.Context, secretID, nonce string, ttl time.Duration) (bool, error) {
@@ -104,13 +129,18 @@ type TokenRecord struct {
 	Action    string
 	Origin    string
 	ExpiresAt int64
+	// How the token was earned, reported to the business server on verify.
+	Kind      string
+	RiskLevel string
+	Reasons   []string
 }
 
 // PutToken keeps the record for keyTTL (longer than the logical expiry) so
 // verify can tell expired and consumed tokens apart from unknown ones.
 func (s *State) PutToken(ctx context.Context, appID int64, tokenHash string, rec TokenRecord, keyTTL time.Duration) error {
 	_, err := s.rds.EvalCtx(ctx, putTokenScript, []string{tokenKey(appID, tokenHash)},
-		rec.Action, rec.Origin, strconv.FormatInt(rec.ExpiresAt, 10), strconv.Itoa(ceilSeconds(keyTTL)))
+		rec.Action, rec.Origin, strconv.FormatInt(rec.ExpiresAt, 10), strconv.Itoa(ceilSeconds(keyTTL)),
+		rec.Kind, rec.RiskLevel, strings.Join(rec.Reasons, ","))
 	return err
 }
 

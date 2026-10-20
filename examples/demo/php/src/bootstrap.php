@@ -85,3 +85,57 @@ function mask(string $s, int $keep = 6): string
 {
     return strlen($s) <= $keep ? $s : substr($s, 0, $keep) . '…';
 }
+
+/**
+ * The integration a business server actually needs: validate the form,
+ * verify the token with the SDK (action fixed by the handler, never taken
+ * from the browser), and only then run the business operation. The risk
+ * fields let the business add its own checks, e.g. SMS for high risk.
+ *
+ * @param callable(string): string $onSuccess
+ */
+function handle_form(string $action, callable $onSuccess): never
+{
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        json_out(['error' => 'POST only'], 405);
+    }
+    session_start();
+    $cfg = demo_config();
+
+    // 1. Ordinary field validation first; it must not consume the token.
+    $username = trim((string) ($_POST['username'] ?? ''));
+    $password = (string) ($_POST['password'] ?? '');
+    if ($username === '' || $password === '') {
+        json_out(['business' => '请填写用户名和密码（尚未调用 BotGuard，token 未被消耗）', 'outcome' => null, 'calls' => []]);
+    }
+
+    // 2. Verify.
+    $token = (string) ($_POST['botguard_token'] ?? '');
+    $recorder = new RecordingTransport();
+    $client = client_for($cfg['BG_SECRET_ID'], $cfg['BG_SECRET_KEY'], $recorder);
+    $outcome = run_verify($client, new VerifyRequest($cfg['BG_APP_KEY'], $token, $action, VerifyRequest::newRequestId()));
+
+    // 3. Only a pass may continue. Keep the token so the replay scenario can try it again.
+    if ($token !== '') {
+        $_SESSION['last_token'] = $token;
+    }
+    $business = match ($outcome['category']) {
+        'Passed' => $onSuccess($username) . risk_note($outcome['detail']),
+        'Rejected' => '人机验证未通过，请重新验证后再提交',
+        'CallerError' => '服务配置错误，请联系管理员（不要提示用户重试）',
+        default => '验证服务暂时不可用，请稍后再试（不要放行）',
+    };
+    json_out(['business' => $business, 'outcome' => $outcome, 'calls' => $recorder->calls]);
+}
+
+/** @param array<string, mixed> $detail */
+function risk_note(array $detail): string
+{
+    $kinds = ['invisible' => '无感验证', 'slider' => '滑块验证', 'fallback' => '无障碍备用验证'];
+    $kind = $kinds[$detail['challenge_kind'] ?? ''] ?? '未知方式';
+    $note = "。本次通过方式：{$kind}，风险等级：" . ($detail['risk_level'] ?? '-');
+    if (($detail['risk_level'] ?? '') === 'high' || ($detail['challenge_kind'] ?? '') === 'fallback') {
+        $note .= '（真实业务可在此追加短信验证）';
+    }
+    return $note;
+}

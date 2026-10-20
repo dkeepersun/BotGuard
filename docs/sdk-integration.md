@@ -30,7 +30,7 @@
 
 浏览器组件和 PHP SDK 已实现（未发布），可运行示例见 `examples/demo`；Go SDK 与 Laravel 适配仍是提案。
 
-浏览器（`packages/browser`，已实现）：业务页引入 `<botguard-widget>` 并配置 endpoint/app-key/action；组件拿到 token 后交给业务表单的 `botguard_token` 字段。token 到期、业务拒绝、页面 reset 后清理。Worker 不能冻结主线程；超时可取消。不能只隐藏提交按钮作为防护。
+浏览器（`packages/browser`，已实现）：业务页引入 `<botguard-widget>` 并配置 endpoint/app-key/action；题型由服务端决定（无感 / 滑块 / 无障碍备用），组件自动处理，业务页不需要改；组件拿到 token 后交给业务表单的 `botguard_token` 字段。token 到期、业务拒绝、页面 reset 后清理。Worker 不能冻结主线程；超时可取消。不能只隐藏提交按钮作为防护。
 
 服务端 SDK 统一结果分类（判定规则以 `api/contract-v1.md` 的“verify 结果语义”为准，各语言共用同一组 fixtures）：
 
@@ -44,6 +44,7 @@
 - 只有 Passed 允许继续业务。SDK 不把 Rejected 表示成异常，也不把 CallerError/Unknown 表示成普通拒绝，避免业务把配置故障当成“用户没过验证”静默吞掉。
 - 响应畸形属于 Unknown 的一个子类型（ProtocolError），SDK 应单独记录以便排查，但重试语义与 Unknown 相同。
 - 429 的 `Retry-After` 透传给调用方。
+- 通过结果携带 `challenge_kind`、`risk_level`、`risk_reasons`（可能缺失，按空处理）。它们不改变“通过”这一结论，供业务方对高风险或 fallback 追加验证（如短信）。
 
 Go（待实现）：`client.Verify(ctx, VerifyRequest{AppKey, Token, Action, RequestID})` 返回 `(Result, error)`：Passed 与 Rejected 通过 `Result` 返回，`error == nil`；CallerError 与 Unknown 通过可用 `errors.As` 区分的类型化 error 返回。创建 client 时注入 HTTPS endpoint、secret_id/secret_key、超时；每次请求（含重试）都重新签名；固定超时上限、不跟随重定向、限制响应体。除非调用方明确指定原 request_id，不自动重试。
 

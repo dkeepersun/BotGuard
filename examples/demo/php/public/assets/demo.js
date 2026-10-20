@@ -1,4 +1,7 @@
 // Demo page glue: shows widget events and server results on a timeline.
+import { collectEnvironment } from '/botguard/signals.js';
+import { solvePuzzle } from '/botguard/solver.js';
+
 const widget = document.getElementById('widget');
 const timeline = document.getElementById('timeline');
 const business = document.getElementById('business');
@@ -27,11 +30,16 @@ function short(token) {
   return token ? `${token.slice(0, 28)}…` : '（空）';
 }
 
+const KIND = { invisible: '无感', slider: '滑块', fallback: '无障碍备用' };
+
 const TRACE = {
-  challenge: (d) => `获取 challenge（${d.ms} ms）：${d.puzzles} 道子题，预计约 ${Math.round(d.expected_attempts).toLocaleString()} 次哈希`,
+  challenge: (d) => `获取 challenge（${d.ms} ms）：服务端决定出「${KIND[d.kind] || d.kind}」题，PoW ${d.puzzles} 道子题，预计约 ${Math.round(d.expected_attempts).toLocaleString()} 次哈希`,
+  drag: (d) => `用户拖动滑块：${d.points} 个采样点，用时 ${d.ms} ms，停在 x=${d.x}（${d.pointer_type}）`,
   solve: (d) => `浏览器完成 PoW：${d.workers} 个 Worker 并行，实际 ${d.attempts.toLocaleString()} 次哈希，用时 ${d.ms} ms`,
   solution: (d) => `提交答案换取 token（${d.ms} ms）：${short(d.token)}，${Math.max(0, d.expires_at - Math.floor(Date.now() / 1000))} 秒内有效、只能用一次`,
-  error: (d) => `组件出错：${d.code} ${d.message}`,
+  error: (d) => d.code === 'ANSWER_INVALID'
+    ? `服务端拒绝了这次拼图（ANSWER_INVALID，第 ${d.failures} 次）：位置没对准或轨迹不像人，具体原因不告诉浏览器`
+    : `组件出错：${d.code} ${d.message}`,
 };
 
 widget.addEventListener('botguard:trace', (e) => {
@@ -80,11 +88,11 @@ async function post(url, data) {
 document.getElementById('login').addEventListener('submit', async (e) => {
   e.preventDefault();
   const form = new FormData(e.target);
-  const result = await post('/login.php', Object.fromEntries(form));
+  const result = await post(e.target.dataset.endpoint, Object.fromEntries(form));
   business.hidden = false;
   business.className = `business ${result.outcome ? CATEGORY_CLASS[result.outcome.category] : 'reject'}`;
   business.textContent = result.business;
-  renderServer(`登录提交（token：${short(form.get('botguard_token'))}）`, result);
+  renderServer(`${document.getElementById('submit').textContent}提交（token：${short(form.get('botguard_token'))}）`, result);
   // A token is single-use: whatever the outcome, the widget starts over.
   if (result.outcome) widget.reset();
 });
@@ -102,3 +110,134 @@ for (const btn of document.querySelectorAll('[data-scenario]')) {
 }
 
 document.getElementById('clear').addEventListener('click', () => timeline.replaceChildren());
+
+// Login (adaptive) and register (slider) are separate server handlers with
+// their own fixed actions; the widget follows the selected tab.
+const HINTS = {
+  login: '登录用 adaptive 模式：正常浏览器通常无感通过；信号可疑或该 IP 最近有失败时，会出现滑块拼图。演示站不校验密码。',
+  register: '注册用 slider 模式：每次都出滑块拼图。拼图面板下方的「无法完成拼图？」是无障碍备用路径。',
+};
+for (const tab of document.querySelectorAll('.tab')) {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach((t) => t.classList.toggle('active', t === tab));
+    widget.setAttribute('action', tab.dataset.action);
+    document.getElementById('login').dataset.endpoint = tab.dataset.endpoint;
+    document.getElementById('submit').textContent = tab.dataset.submit;
+    document.getElementById('mode-hint').textContent = HINTS[tab.dataset.action];
+    widget.reset();
+  });
+}
+
+// ---- In-page script scenarios: what automation inside a real browser does.
+
+async function findGap(slider) {
+  const img = new Image();
+  img.src = slider.background;
+  await img.decode();
+  const canvas = document.createElement('canvas');
+  canvas.width = slider.width;
+  canvas.height = slider.height;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const { data } = ctx.getImageData(0, 0, slider.width, slider.height);
+  // The slot is darkened; scan the piece's row band for the darkest window.
+  const cols = new Array(slider.width).fill(0);
+  for (let y = slider.piece_y + 12; y < slider.piece_y + slider.piece_size - 12; y++) {
+    for (let x = 0; x < slider.width; x++) {
+      const i = (y * slider.width + x) * 4;
+      cols[x] += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+    }
+  }
+  let best = 0;
+  let bestSum = Infinity;
+  for (let x = 0; x + slider.piece_size <= slider.width; x++) {
+    let sum = 0;
+    for (let c = x + 12; c < x + slider.piece_size - 12; c++) sum += cols[c];
+    if (sum < bestSum) {
+      bestSum = sum;
+      best = x;
+    }
+  }
+  return best;
+}
+
+function straightDrag(x) {
+  const pts = [];
+  for (let i = 0; i <= 30; i++) pts.push([i * 16, Math.round((x * i / 30) * 10) / 10, 0]);
+  return pts;
+}
+
+// Ease-in-out with jittered timing, wobble and an overshoot correction: the
+// kind of generator a slightly more careful script would use.
+function humanLikeDrag(x) {
+  const pts = [];
+  let t = 0;
+  for (let i = 0; i <= 45; i++) {
+    const p = i / 45;
+    const ease = p * p * (3 - 2 * p);
+    pts.push([Math.round(t * 10) / 10, Math.round(ease * (x + 5) * 10) / 10, Math.round((Math.sin(p * 4) * 2 + Math.random()) * 10) / 10]);
+    t += 11 + Math.random() * 9;
+  }
+  pts.push([Math.round((t + 90) * 10) / 10, x + 1.5, 1.8], [Math.round((t + 170) * 10) / 10, x, 1.2]);
+  return pts;
+}
+
+function strip(value) {
+  return JSON.parse(JSON.stringify(value, (k, v) => (typeof v === 'string' && v.startsWith('data:image') ? `${v.slice(0, 40)}…（图片已省略）` : v)));
+}
+
+async function call(calls, url, body) {
+  const t0 = performance.now();
+  const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body) });
+  const json = await resp.json().catch(() => null);
+  calls.push({ method: 'POST', url, request_headers: { Origin: location.origin + '（浏览器自动带上）' }, request_body: strip(body),
+    status: resp.status, response_body: strip(json), ms: Math.round(performance.now() - t0) });
+  return { status: resp.status, json };
+}
+
+async function botSlider(human) {
+  const endpoint = widget.getAttribute('endpoint');
+  const appKey = widget.getAttribute('app-key');
+  const calls = [];
+  // Real environment signals, plus an invented "the user moved the mouse" story.
+  const signals = { ...(await collectEnvironment()), ms_to_click: 2500, pointer_moves_before_click: 37, pointer_type: 'mouse' };
+  const ch = await call(calls, `${endpoint}/v1/challenges`, { app_key: appKey, action: 'register', signals });
+  if (ch.status !== 200) {
+    return renderServer('页面脚本：签发失败', { error: `HTTP ${ch.status} ${ch.json?.code || ''}`, calls });
+  }
+  const c = ch.json.data;
+  const t0 = performance.now();
+  const x = await findGap(c.slider);
+  const findMs = Math.round(performance.now() - t0);
+  const nonces = [];
+  for (let i = 0; i < c.params.puzzles; i++) nonces.push((await solvePuzzle(c.algorithm, c.challenge_id, i, c.params.target)).nonce);
+  const trajectory = human ? humanLikeDrag(x) : straightDrag(x);
+  const sol = await call(calls, `${endpoint}/v1/solutions`, { app_key: appKey, challenge: c.challenge, nonces, answer: { x, trajectory }, signals });
+  const title = human ? '页面脚本：canvas 找缺口 + 生成仿人轨迹' : '页面脚本：canvas 找缺口 + 匀速直线拖动';
+  const found = `脚本 ${findMs} ms 就从图片里算出缺口在 x=${x}。`;
+  if (sol.status !== 200) {
+    return renderServer(title, {
+      expect: human ? '可能通过（如实展示）' : 'ANSWER_INVALID', calls,
+      outcome: { category: 'Rejected', label: '拒绝（solve 阶段）', http: sol.status, reason: sol.json?.code },
+      explain: `${found}位置是对的，但轨迹是等间隔、匀速、纯直线，被轨迹规则拦下。注意：这次失败也计入了你这个 IP 的失败次数，接下来登录可能会出现滑块。`,
+    });
+  }
+  const verified = await post('/attack.php', { scenario: 'verify_token', token: sol.json.data.token, action: 'register' });
+  renderServer(title, {
+    expect: human ? '可能通过（如实展示）' : 'ANSWER_INVALID', calls: [...calls, ...(verified.calls || [])], outcome: verified.outcome,
+    explain: `${found}再配上加速、减速、抖动和回拉的仿人轨迹，就骗过了轨迹规则，拿到了真 token。这是滑块的真实上限：它挡住粗糙的脚本、让攻击者多花功夫，挡不住认真投入的对手。业务方可以从风险等级和原因里看到异常，再决定是否加验。`,
+  });
+}
+
+for (const btn of document.querySelectorAll('[data-bot]')) {
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    try {
+      await botSlider(btn.dataset.bot === 'human');
+    } catch (err) {
+      renderServer('页面脚本出错', { error: String(err) });
+    } finally {
+      btn.disabled = false;
+    }
+  });
+}

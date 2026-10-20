@@ -7,15 +7,24 @@ set -eu
 out=/shared/demo.env
 botguard-ctl migrate up
 
+field() { sed -n "s/^$1: //p"; }
+
+# Login adapts to risk; register always shows the slider. Re-applied on every
+# start so an existing demo database picks up mode changes.
+set_modes() {
+  botguard-ctl action set -app "$1" -action login -mode adaptive -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action register -mode slider -puzzles 8 -difficulty 3000 >/dev/null
+}
+
 if [ -f "$out" ]; then
   . "$out"
   if botguard-ctl app show -app "$BG_APP_KEY" >/dev/null 2>&1; then
-    echo "演示数据已存在，跳过初始化"
+    set_modes "$BG_APP_KEY"
+    set_modes "$BG_APP2_KEY"
+    echo "演示数据已存在，已同步 action 模式"
     exit 0
   fi
 fi
-
-field() { sed -n "s/^$1: //p"; }
 
 new_app() {
   name=$1
@@ -23,8 +32,7 @@ new_app() {
   # The page may be opened as localhost or 127.0.0.1; origins are exact matches.
   botguard-ctl origin add -app "$app" -origin http://localhost:8080 >/dev/null
   botguard-ctl origin add -app "$app" -origin http://127.0.0.1:8080 >/dev/null
-  botguard-ctl action set -app "$app" -action login -puzzles 8 -difficulty 3000 >/dev/null
-  botguard-ctl action set -app "$app" -action register -puzzles 8 -difficulty 3000 >/dev/null
+  set_modes "$app"
   echo "$app"
 }
 

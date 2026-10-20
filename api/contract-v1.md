@@ -12,10 +12,10 @@ HTTPS；JSON；snake_case；严格 body 大小和字段长度；浏览器端没�
 
 API 成功用 `{"code":"OK","data":{...},"request_id":"..."}`；后台继续采用 PearAdmin 的数值 code 格式，两者不混用。错误不回显 token、签名、secret、内部 SQL 或原始 IP。
 
-- 浏览器接口（challenges/solutions）：400 `INVALID_REQUEST`（字段错误、畸形 JSON）或 `CHALLENGE_INVALID`（签名、kid、格式不对）；403 `APP_FORBIDDEN`（应用不存在或关闭）、`ORIGIN_NOT_ALLOWED`、`ACTION_FORBIDDEN`；409 `CHALLENGE_USED`；410 `CHALLENGE_EXPIRED`；有效格式但证明错误为 422 `PROOF_INVALID`；429 限流（Retry-After）；503 依赖不可用。
+- 浏览器接口（challenges/solutions）：400 `INVALID_REQUEST`（字段错误、畸形 JSON）或 `CHALLENGE_INVALID`（签名、kid、格式不对）；403 `APP_FORBIDDEN`（应用不存在或关闭）、`ORIGIN_NOT_ALLOWED`、`ACTION_FORBIDDEN`；409 `CHALLENGE_USED`；410 `CHALLENGE_EXPIRED`；有效格式但证明错误为 422 `PROOF_INVALID`；滑块位置或轨迹未通过为 422 `ANSWER_INVALID`；429 限流（Retry-After）；503 依赖不可用。
 - verify 接口的业务拒绝不用非 2xx 表达，语义见下文“verify 结果语义”。非 2xx 只表示调用方错误或服务不可用。
 - request_id 在 verify 中必填，由调用方生成，字符集 `[A-Za-z0-9_-]`，1–64 字符（UUID v4 符合）；验证服务在日志中仅记录此 ID 及非敏感决策元数据。
-- 请求体为单个 JSON 对象，最大 8 KiB；Content-Type 接受 `application/json` 或 `text/plain`。浏览器组件应使用 `text/plain`，使请求成为 CORS 简单请求、免去预检；未知字段忽略，以便新版 SDK 兼容旧服务端。
+- 请求体为单个 JSON 对象，最大 8 KiB（solutions 为 32 KiB，用于容纳滑块轨迹）；Content-Type 接受 `application/json` 或 `text/plain`。浏览器组件应使用 `text/plain`，使请求成为 CORS 简单请求、免去预检；未知字段忽略，以便新版 SDK 兼容旧服务端。
 - app_key 字符集 `[A-Za-z0-9_-]`，8–64 字符；action 为 `[a-z0-9_]`，1–32 字符。
 
 ## PoW 算法
@@ -42,9 +42,21 @@ SHA-256 在原生代码/GPU 上比浏览器快 2–3 个数量级，所以难度
 
 浏览器和服务端必须用同一组 fixture（含边界：target 恰好等于 digest、k=1、nonce=0、20 位 nonce）校验每个算法。
 
+## 验证题型（kind）
+
+每个 action 配置一种模式（`invisible` / `slider` / `adaptive`），gateway 结合风险分决定本次出什么题，题型写入签名 challenge 的 `kind` 字段。所有题型都附带 PoW。设计与规则见 `docs/challenge-types.md`。
+
+| kind | 浏览器要做什么 | 何时出现 |
+|---|---|---|
+| `invisible` | 只在后台算 PoW | invisible 模式；adaptive 模式且风险低 |
+| `slider` | 拖动拼图对准缺口，同时后台算 PoW | slider 模式；adaptive 模式且风险中/高 |
+| `fallback` | 只算 PoW，难度 × 8，独立限流 | 用户在滑块面板选择“无法完成拼图？”（invisible 模式下无此路径） |
+
+风险为高时，任何题型的 PoW 难度 × 4。风险分和原因码只通过 verify 返回给业务服务器，不返回给浏览器。
+
 ## POST /v1/challenges（浏览器）
 
-请求：`app_key`、`action`。服务端从请求读取 Origin，校验精确应用白名单；缺失/`null` Origin 默认拒绝。仅为允许来源返回 CORS，`Vary: Origin`，不用跨站 cookie。预检请求不带 body、无法得知应用，因此对任何 Origin 都返回允许（`Access-Control-Max-Age: 600`）；真正的请求仍按应用白名单校验，且只对允许来源返回 CORS 头。
+请求：`app_key`、`action`，可选 `signals`（风险信号对象，字段见 `docs/challenge-types.md` §5，缺失计为 `NO_SIGNALS`）和 `fallback`（布尔，选择无障碍备用路径）。服务端从请求读取 Origin，校验精确应用白名单；缺失/`null` Origin 默认拒绝。仅为允许来源返回 CORS，`Vary: Origin`，不用跨站 cookie。预检请求不带 body、无法得知应用，因此对任何 Origin 都返回允许（`Access-Control-Max-Age: 600`）；真正的请求仍按应用白名单校验，且只对允许来源返回 CORS 头。
 
 签发前校验应用/action 启用并完成签发限流。签发是无状态的：不写入任何 per-challenge 的 Redis 记录，只更新有界的限流计数。
 
@@ -52,6 +64,7 @@ SHA-256 在原生代码/GPU 上比浏览器快 2–3 个数量级，所以难度
 
 ```json
 {
+  "kind": "invisible",
   "challenge": "v1.k2026a.eyJ...<payload>.<mac>",
   "challenge_id": "base64url(16 字节随机)",
   "algorithm": "sha256-target-v1",
@@ -60,19 +73,28 @@ SHA-256 在原生代码/GPU 上比浏览器快 2–3 个数量级，所以难度
 }
 ```
 
+`kind` 为 `slider` 时响应还带 `slider` 对象：`width`、`height`（原图尺寸 320×160）、`background`（JPEG data URL）、`piece`（PNG data URL）、`piece_y`、`piece_size`。正确答案不在响应里。
+
 `challenge` 是服务端签名的不透明字符串，格式为 `v1.<kid>.<payload_b64>.<mac_b64>`：
 
-- payload 为 UTF-8 JSON，字段：`challenge_id`、`app_key`、`action`、`origin`、`algorithm`、`params`、`policy_version`、`iat`、`exp`（Unix 秒）。b64 均为 base64url 无 padding。
+- payload 为 UTF-8 JSON，字段：`challenge_id`、`app_key`、`action`、`origin`、`algorithm`、`params`、`policy_version`、`iat`、`exp`（Unix 秒）、`kind`、`sealed`。b64 均为 base64url 无 padding。
+- `sealed` 是只有服务端能解开的数据（滑块答案、签发时的风险分和原因码）：AES-256-GCM，密钥由该 kid 的签名密钥经 HKDF-SHA256（info `botguard challenge seal v1`）派生，`challenge_id` 作为附加数据。
 - `mac = HMAC-SHA256(key[kid], "v1." + kid + "." + payload_b64)`。服务端校验 MAC 时针对收到的原始 payload_b64 字节，不重新序列化 JSON。
 - payload 只签名、不加密，客户端可读，因此不得包含内部 ID、IP 或其它敏感信息。
-- `challenge` 总长度上限 1024 字节，超过直接 400，不解码。
+- `challenge` 总长度上限 2048 字节，超过直接 400，不解码。
 - 响应中的 `challenge_id`、`algorithm`、`params`、`expires_at` 只是 payload 的副本，供客户端求解使用；solve 时服务端只认签名 payload，绝不读取客户端回传的这些值。
 
 签名密钥（`kid` → ≥32 字节随机 secret）由部署配置或密钥管理注入，所有 gateway 副本共享，不进仓库、不进 MySQL 明文。同一时间只有一个 active kid 用于签发，另可有若干 verify-only kid 用于校验。轮换顺序：新 kid 以 verify-only 发布到全部副本 → 切为 active → 等待 challenge 最长 TTL 加时钟偏差后删除旧 kid。签名密钥泄露等于攻击者可以自签零难度 challenge，PoW 防护失效（token 仍受应用/action/Origin 与限流约束），必须立即删除该 kid。
 
 ## POST /v1/solutions（浏览器）
 
-请求：`app_key`、`challenge`（原样回传的签名字符串）、`nonces`（长度等于 `params.puzzles` 的字符串数组，第 i 项对应子题 i）。
+请求：`app_key`、`challenge`（原样回传的签名字符串）、`nonces`（长度等于 `params.puzzles` 的字符串数组，第 i 项对应子题 i），可选 `signals`（交互期间的信号，如 `pointer_type`、`untrusted_event`）。滑块题还必须带 `answer`：
+
+```json
+{"x": 172.4, "trajectory": [[0, 0, 0], [16.7, 3.2, 0.5], [33.4, 9.8, 1.1]]}
+```
+
+`x` 是拼块左边缘在原图坐标中的位置；`trajectory` 每项为 `[自按下起的毫秒数, x, y]`，最多 400 个点。位置容差 ±4 像素（`Slider.Tolerance`）；轨迹规则（时长、点数、瞬移、等间隔、匀速、纯直线、终点不一致）见 `docs/challenge-types.md` §6.3。位置错和轨迹不像人都返回同一个 422 `ANSWER_INVALID`，具体原因只记服务端日志。用键盘完成的滑块（`pointer_type: "keyboard"`）走宽松规则，并在 verify 中带上 `KEYBOARD_INPUT` 原因码。PoW 或滑块失败都会计入该 IP 的失败次数（10 分钟窗口），提高其后续风险分。
 
 服务端按从廉价到昂贵的顺序校验，任一步失败即返回：
 
@@ -137,8 +159,11 @@ HTTP 状态码只描述“这次调用是否被正确处理”，`data.success` 
 
 通过：
 ```json
-{"code":"OK","data":{"success":true,"app_key":"...","action":"login","verified_at":1790000030},"request_id":"..."}
+{"code":"OK","data":{"success":true,"app_key":"...","action":"login","verified_at":1790000030,
+ "challenge_kind":"slider","risk_level":"medium","risk_reasons":["NO_SIGNALS","IP_RECENT_FAILURES"]},"request_id":"..."}
 ```
+
+`challenge_kind`（invisible / slider / fallback）、`risk_level`（low / medium / high）、`risk_reasons` 是新增字段，告诉业务方这个 token 是怎么拿到的，便于对高风险或 fallback 追加验证。它们不改变通过与否；旧版 SDK 忽略即可。
 
 拒绝：
 ```json
@@ -197,3 +222,4 @@ HTTP 状态码只描述“这次调用是否被正确处理”，`data.success` 
 - Redis/MySQL 故障、应用禁用、密钥撤销、规则变更；无静默绕过。
 - Origin 伪造不构成身份；X-Forwarded-For 只信任配置代理；限流覆盖 challenge/solve/verify。
 - 后台未登录、越权、CSRF、跨 Origin POST、session 固定/撤销和敏感日志泄漏。
+- 题型与风险：sealed 数据不出现在 payload 明文中，挪到另一个 challenge 上解不开；滑块位置错、匀速直线、等间隔、瞬移、点数过少均为 `ANSWER_INVALID`；失败计入 IP；无信号、无头特征、IP 近期失败会升级题型；fallback 难度 × 8 且独立限流；verify 返回题型与原因码。

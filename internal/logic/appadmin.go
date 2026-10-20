@@ -83,6 +83,9 @@ func (a *AppAdmin) SetAction(ctx context.Context, appKey, action string, p domai
 	if !domain.ValidAction(action) {
 		return invalid("action 只能包含小写字母、数字和下划线，长度 1–32")
 	}
+	if !domain.ValidMode(p.Mode) {
+		return invalid("mode 只能是 invisible、slider 或 adaptive")
+	}
 	if p.Puzzles < 1 || p.Puzzles > pow.MaxPuzzles {
 		return invalid("puzzles 须在 1–%d 之间", pow.MaxPuzzles)
 	}

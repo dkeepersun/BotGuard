@@ -2,6 +2,7 @@ package challenge
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -21,34 +22,34 @@ func sample() Payload {
 
 func TestRoundTripAndRotation(t *testing.T) {
 	old, _ := NewKeyring([]Key{{ID: "k1", Secret: secretA, Active: true}})
-	s, err := old.Sign(sample())
+	s, err := old.Sign(sample(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// k2 active, k1 verify-only: old challenges still open.
 	rotated, _ := NewKeyring([]Key{{ID: "k2", Secret: secretB, Active: true}, {ID: "k1", Secret: secretA}})
-	if p, err := rotated.Open(s); err != nil || p != sample() {
+	if p, _, err := rotated.Open(s); err != nil || p != sample() {
 		t.Fatalf("rotated open: %v %+v", err, p)
 	}
-	fresh, _ := rotated.Sign(sample())
+	fresh, _ := rotated.Sign(sample(), nil)
 	if !strings.HasPrefix(fresh, "v1.k2.") {
 		t.Fatalf("signed with %q", fresh[:6])
 	}
 	// k1 removed: rejected.
 	removed, _ := NewKeyring([]Key{{ID: "k2", Secret: secretB, Active: true}})
-	if _, err := removed.Open(s); err != ErrUnknownKey {
+	if _, _, err := removed.Open(s); err != ErrUnknownKey {
 		t.Fatalf("removed key: %v", err)
 	}
 }
 
 func TestTamperRejected(t *testing.T) {
 	k, _ := NewKeyring([]Key{{ID: "k1", Secret: secretA, Active: true}})
-	s, _ := k.Sign(sample())
+	s, _ := k.Sign(sample(), nil)
 	parts := strings.Split(s, ".")
 
 	easier := sample()
 	easier.Params, _ = pow.NewParams(1, 1)
-	forged, _ := (&Keyring{active: "k1", keys: map[string][]byte{"k1": secretB}}).Sign(easier)
+	forged, _ := (&Keyring{active: "k1", keys: map[string][]byte{"k1": secretB}}).Sign(easier, nil)
 	fp := strings.Split(forged, ".")
 
 	for name, c := range map[string]string{
@@ -60,7 +61,7 @@ func TestTamperRejected(t *testing.T) {
 		"extra part":      s + ".x",
 		"too long":        s + strings.Repeat("A", MaxLen),
 	} {
-		if _, err := k.Open(c); err == nil {
+		if _, _, err := k.Open(c); err == nil {
 			t.Errorf("%s accepted", name)
 		}
 	}
@@ -78,4 +79,47 @@ func TestKeyringValidation(t *testing.T) {
 			t.Errorf("%s accepted", name)
 		}
 	}
+}
+
+func TestSealedPrivateData(t *testing.T) {
+	k, _ := NewKeyring([]Key{{ID: "k1", Secret: secretA, Active: true}})
+	s, err := k.Sign(sample(), []byte(`{"x":183}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, private, err := k.Open(s)
+	if err != nil || string(private) != `{"x":183}` || p.Sealed == "" {
+		t.Fatalf("open: %q %v", private, err)
+	}
+	if strings.Contains(s, "183") {
+		t.Fatal("private data visible in the challenge")
+	}
+	// Rotation: a verify-only key still unseals what it sealed.
+	rotated, _ := NewKeyring([]Key{{ID: "k2", Secret: secretB, Active: true}, {ID: "k1", Secret: secretA}})
+	if _, private, err := rotated.Open(s); err != nil || string(private) != `{"x":183}` {
+		t.Fatalf("rotated: %q %v", private, err)
+	}
+	// Moving a sealed blob onto another challenge (different id) must fail,
+	// even when the attacker could re-sign the payload.
+	other := sample()
+	other.ChallengeID = "other"
+	other.Sealed = p.Sealed
+	body, _ := json.Marshal(other)
+	signed := "v1.k1." + b64.EncodeToString(body)
+	forged := signed + "." + b64.EncodeToString(mac(secretA, signed))
+	if _, _, err := k.Open(forged); err == nil {
+		t.Fatal("sealed data accepted on another challenge")
+	}
+	if _, private, err := k.Open(mustSign(t, k)); err != nil || private != nil {
+		t.Fatalf("no private data: %q %v", private, err)
+	}
+}
+
+func mustSign(t *testing.T, k *Keyring) string {
+	t.Helper()
+	s, err := k.Sign(sample(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
 }

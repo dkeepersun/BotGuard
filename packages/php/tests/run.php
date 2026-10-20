@@ -93,6 +93,15 @@ $h = $call['headers'];
 check($h['X-BG-Signature'] === Signer::sign('key', Signer::canonical('POST', '/v1/verify', (int) $h['X-BG-Timestamp'], $h['X-BG-Nonce'], $call['body'])), 'signature covers body');
 check(json_decode($call['body'], true) === ['app_key' => 'app_demo', 'token' => 'tok', 'action' => 'login', 'request_id' => 'req-1'], 'body fields');
 
+// Risk fields are surfaced when present and default when absent.
+[, $c] = $mk([ok(['success' => true, 'app_key' => 'app_demo', 'action' => 'login', 'verified_at' => 1,
+    'challenge_kind' => 'slider', 'risk_level' => 'medium', 'risk_reasons' => ['NO_SIGNALS', 7]])]);
+$res = $c->verify($req);
+check($res->challengeKind === 'slider' && $res->riskLevel === 'medium' && $res->riskReasons === ['NO_SIGNALS'], 'risk fields');
+[, $c] = $mk([ok(['success' => true, 'app_key' => 'app_demo', 'action' => 'login', 'verified_at' => 1])]);
+$res = $c->verify($req);
+check($res->challengeKind === null && $res->riskReasons === [], 'risk fields absent');
+
 // Rejected, including reasons this SDK has never heard of.
 [, $c] = $mk([ok(['success' => false, 'reason' => 'TOKEN_CONSUMED'])]);
 $res = $c->verify($req);

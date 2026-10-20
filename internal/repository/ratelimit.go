@@ -28,17 +28,23 @@ func NewRateLimiter(rds *redis.Redis) *RateLimiter {
 // Allow counts one hit for subject and reports whether it fits within limit.
 // retryAfter is the number of seconds until the current window ends.
 func (l *RateLimiter) Allow(ctx context.Context, dimension, subject string, limit int, window time.Duration) (ok bool, retryAfter int, err error) {
+	n, retryAfter, err := l.Take(ctx, dimension, subject, window)
+	return err == nil && n <= int64(limit), retryAfter, err
+}
+
+// Take counts one hit and returns the count so far in the current window.
+func (l *RateLimiter) Take(ctx context.Context, dimension, subject string, window time.Duration) (count int64, retryAfter int, err error) {
 	sec := int64(ceilSeconds(window))
 	now := l.now().Unix()
 	bucket := now / sec
 	key := fmt.Sprintf("bg:rate:%s:%s:%d", dimension, subject, bucket)
 	res, err := l.rds.EvalCtx(ctx, rateScript, []string{key}, sec)
 	if err != nil {
-		return false, 0, err
+		return 0, 0, err
 	}
 	n, isInt := res.(int64)
 	if !isInt {
-		return false, 0, fmt.Errorf("rate script returned %T", res)
+		return 0, 0, fmt.Errorf("rate script returned %T", res)
 	}
-	return n <= int64(limit), int((bucket+1)*sec - now), nil
+	return n, int((bucket+1)*sec - now), nil
 }

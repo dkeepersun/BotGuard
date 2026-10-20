@@ -34,7 +34,8 @@ const now = int64(1_790_000_000)
 
 func put(t *testing.T, s *State, hash string, exp int64) {
 	t.Helper()
-	err := s.PutToken(context.Background(), 7, hash, TokenRecord{Action: "login", Origin: "https://a.example", ExpiresAt: exp}, time.Minute)
+	err := s.PutToken(context.Background(), 7, hash, TokenRecord{Action: "login", Origin: "https://a.example", ExpiresAt: exp,
+		Kind: "slider", RiskLevel: "medium", Reasons: []string{"NO_SIGNALS", "FAST_CLICK"}}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,10 +50,11 @@ func TestConsumeLifecycle(t *testing.T) {
 	s, _ := newState(t)
 	put(t, s, "h1", now+60)
 
-	if out, replay, err := consume(s, "r1", "d1", "h1", "login"); err != nil || replay || out != fmt.Sprintf("PASS:%d", now) {
+	pass := fmt.Sprintf("PASS:%d:slider:medium:NO_SIGNALS,FAST_CLICK", now)
+	if out, replay, err := consume(s, "r1", "d1", "h1", "login"); err != nil || replay || out != pass {
 		t.Fatalf("first: %q %v %v", out, replay, err)
 	}
-	if out, replay, err := consume(s, "r1", "d1", "h1", "login"); err != nil || !replay || out != fmt.Sprintf("PASS:%d", now) {
+	if out, replay, err := consume(s, "r1", "d1", "h1", "login"); err != nil || !replay || out != pass {
 		t.Fatalf("replay: %q %v %v", out, replay, err)
 	}
 	if out, _, err := consume(s, "r2", "d2", "h1", "login"); err != nil || out != ReasonConsumed {
@@ -127,6 +129,26 @@ func TestMarkChallengeUsed(t *testing.T) {
 		t.Fatal("second mark succeeded")
 	}
 	if ttl := mr.TTL("bg:pow:used:c1"); ttl != 90*time.Second {
+		t.Fatalf("ttl %s", ttl)
+	}
+}
+
+func TestFailureCounter(t *testing.T) {
+	mr := miniredis.RunT(t)
+	s := NewState(redis.New(mr.Addr(), redis.WithIdentity()))
+	ctx := context.Background()
+	if n, err := s.Failures(ctx, "192.0.2.1"); err != nil || n != 0 {
+		t.Fatalf("empty: %d %v", n, err)
+	}
+	for i := 0; i < 3; i++ {
+		if err := s.RecordFailure(ctx, "192.0.2.1", 10*time.Minute); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n, _ := s.Failures(ctx, "192.0.2.1"); n != 3 {
+		t.Fatalf("count %d", n)
+	}
+	if ttl := mr.TTL("bg:ipfail:192.0.2.1"); ttl != 10*time.Minute {
 		t.Fatalf("ttl %s", ttl)
 	}
 }

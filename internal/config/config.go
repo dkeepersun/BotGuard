@@ -62,6 +62,17 @@ type GatewayConfig struct {
 		ChallengePerIPPerMinute int `json:",default=120"`
 		SolvePerIPPerMinute     int `json:",default=120"`
 		VerifyPerKeyPerMinute   int `json:",default=6000"`
+		FallbackPerIPPerMinute  int `json:",default=5"`
+	}
+	Risk struct {
+		MediumThreshold          int `json:",default=30"`
+		HighThreshold            int `json:",default=70"`
+		HighDifficultyFactor     int `json:",default=4"`
+		FallbackDifficultyFactor int `json:",default=8"`
+		FailureWindowSeconds     int `json:",default=600"`
+	}
+	Slider struct {
+		Tolerance int `json:",default=4"`
 	}
 }
 
@@ -112,6 +123,13 @@ func (c GatewayConfig) Validate() error {
 		inRange("RateLimit.ChallengePerIPPerMinute", c.RateLimit.ChallengePerIPPerMinute, 1, 1_000_000),
 		inRange("RateLimit.SolvePerIPPerMinute", c.RateLimit.SolvePerIPPerMinute, 1, 1_000_000),
 		inRange("RateLimit.VerifyPerKeyPerMinute", c.RateLimit.VerifyPerKeyPerMinute, 1, 10_000_000),
+		inRange("RateLimit.FallbackPerIPPerMinute", c.RateLimit.FallbackPerIPPerMinute, 1, 1000),
+		inRange("Risk.MediumThreshold", c.Risk.MediumThreshold, 1, 100),
+		inRange("Risk.HighThreshold", c.Risk.HighThreshold, c.Risk.MediumThreshold+1, 101),
+		inRange("Risk.HighDifficultyFactor", c.Risk.HighDifficultyFactor, 1, 64),
+		inRange("Risk.FallbackDifficultyFactor", c.Risk.FallbackDifficultyFactor, 1, 256),
+		inRange("Risk.FailureWindowSeconds", c.Risk.FailureWindowSeconds, 60, 86400),
+		inRange("Slider.Tolerance", c.Slider.Tolerance, 1, 20),
 	)
 }
 
