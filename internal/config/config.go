@@ -76,8 +76,8 @@ func (c GatewayConfig) Validate() error {
 	if _, err := c.Keyring(); err != nil {
 		return err
 	}
-	if c.MySQL.DataSource == "" {
-		return errors.New("MySQL.DataSource is required")
+	if _, err := NormalizeMySQLDSN(c.MySQL.DataSource); err != nil {
+		return fmt.Errorf("MySQL.DataSource: %w", err)
 	}
 	if c.Redis.Host == "" {
 		return errors.New("Redis.Host is required")

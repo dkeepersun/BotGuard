@@ -33,7 +33,11 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	db := sqlx.NewMysql(c.MySQL.DataSource)
+	dsn, err := config.NormalizeMySQLDSN(c.MySQL.DataSource)
+	if err != nil {
+		return nil, err
+	}
+	db := sqlx.NewMysql(dsn)
 	sites, err := repository.NewCachedSites(repository.NewMySQLSites(db), config.Seconds(c.SiteCache.TTLSeconds), c.SiteCache.Limit)
 	if err != nil {
 		return nil, err

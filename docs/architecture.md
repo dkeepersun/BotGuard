@@ -42,7 +42,7 @@
 
 - `gateway`：公开 challenge/solve；带服务端密钥的 verify。两类接口分开限流和日志策略。
 - `admin-web`：独立端口，建议内网/VPN 访问；管理员认证、站点、域名、密钥、规则、事件、权限与审计。
-- `botguard-ctl`（P1）：迁移、创建首个管理员、密钥轮换命令；不提供公共管理员注册。
+- `botguard-ctl`（已建立）：迁移（带 checksum 与 MySQL `GET_LOCK` 互斥）、站点/来源/action 配置、服务端密钥生成/轮换/吊销。创建首个管理员待管理后台切片加入；不提供公共管理员注册。命令行变更目前不写审计，`sys_audit_log` 建好后补上。
 - `worker`（P2，确有必要才加）：规则缓存失效重试、过期事件清理、按分钟聚合。同一 Go module，可独立进程；MySQL outbox + Redis 足够。
 - `logic` 负责用例与事务，`service` 包含风险决策、PoW、凭证、会话等能力；`repository` 屏蔽 Redis/MySQL；`model` 放生成模型和扩展查询。
 - MVP 单区域 Redis 是验证状态权威源；服务多副本不存进程内消费状态。Redis 故障默认不放行。MySQL 配置缓存必须有最大陈旧时间；撤销密钥/站点要有生效 SLA。
@@ -55,7 +55,7 @@ BotGuard/
 ├── cmd/
 │   ├── gateway/main.go             # 已建立：challenge / solve / verify / 探针
 │   ├── admin-web/main.go           # 已建立，只读本地预览
-│   ├── botguard-ctl/               # P1
+│   ├── botguard-ctl/               # 已建立，运维命令行
 │   └── worker/                     # P2 按需
 ├── configs/                       # 已建立，无真实凭据
 ├── internal/
@@ -64,7 +64,7 @@ BotGuard/
 │   ├── webui/static/               # 已建立，embed 静态资源
 │   ├── svc/ logic/ service/        # 已建立：gateway 装配、三个用例、pow / challenge / clientip
 │   ├── repository/                 # 已建立：Redis 状态与限流、MySQL 站点只读仓储与缓存
-│   ├── migration/sql/              # 已有 0001；迁移执行器待 botguard-ctl
+│   ├── migration/                  # 已建立：嵌入式前向迁移执行器 + sql/0001
 │   ├── domain/ errx/               # 已建立；obs/ 脱敏观测待实现
 │   └── testdb/                     # P1 隔离集成测试
 ├── api/contract-v1.md              # v1 契约草案；api/fixtures/ 为跨语言 PoW 用例

@@ -16,7 +16,8 @@ Redis:
   DisableIdentity: false
 
 MySQL:
-  # e.g. user:pass@tcp(127.0.0.1:3306)/botguard?parseTime=true&loc=UTC&time_zone=%27%2B00%3A00%27
+  # e.g. user:pass@tcp(127.0.0.1:3306)/botguard
+  # parseTime, loc=UTC and time_zone='+00:00' are forced at startup.
   DataSource: ${BOTGUARD_MYSQL_DSN}
 
 Challenge:

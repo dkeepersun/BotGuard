@@ -9,7 +9,11 @@ import (
 	"time"
 )
 
-var ErrNotFound = errors.New("not found")
+var (
+	ErrNotFound     = errors.New("not found")
+	ErrDuplicate    = errors.New("already exists")
+	ErrInvalidState = errors.New("invalid state for this operation")
+)
 
 var (
 	siteKeyPattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)

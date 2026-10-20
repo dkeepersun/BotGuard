@@ -1,7 +1,14 @@
-.PHONY: test check build admin gateway
+.PHONY: test test-integration check build admin gateway
 
 test:
 	go test ./...
+
+# Needs BOTGUARD_TEST_MYSQL_DSN (and optionally BOTGUARD_TEST_REDIS_ADDR)
+# pointing at disposable instances: every table is dropped. Packages share
+# the database, so they must run one at a time (-p 1).
+test-integration:
+	test -n "$$BOTGUARD_TEST_MYSQL_DSN"
+	go test -p 1 -count=1 ./...
 
 check:
 	test -z "$$(gofmt -l .)"
@@ -11,6 +18,7 @@ check:
 build:
 	go build -o bin/gateway ./cmd/gateway
 	go build -o bin/admin-web ./cmd/admin-web
+	go build -o bin/botguard-ctl ./cmd/botguard-ctl
 
 admin:
 	go run ./cmd/admin-web -f configs/admin-web.yaml
