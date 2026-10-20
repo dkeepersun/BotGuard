@@ -1,7 +1,6 @@
 package credential
 
 import (
-	"crypto/sha256"
 	"strings"
 	"testing"
 
@@ -9,18 +8,15 @@ import (
 )
 
 func TestGeneratedCredentialsMatchContract(t *testing.T) {
-	site, err := NewSiteKey()
-	if err != nil || !domain.ValidSiteKey(site) || !strings.HasPrefix(site, "pk_") {
-		t.Fatalf("site key %q %v", site, err)
+	app, err := NewAppKey()
+	if err != nil || !domain.ValidAppKey(app) || !strings.HasPrefix(app, "app_") {
+		t.Fatalf("app key %q %v", app, err)
 	}
-	k, err := NewAPIKey()
-	if err != nil || !domain.ValidKeyID(k.KeyID) || len(k.Secret) != 43 || strings.Contains(k.Secret, ".") {
-		t.Fatalf("api key %+v %v", k, err)
+	p, err := NewSecretPair()
+	if err != nil || !domain.ValidSecretID(p.SecretID) || !strings.HasPrefix(p.SecretID, "sid_") || len(p.SecretKey) != 43 {
+		t.Fatalf("secret pair %+v %v", p, err)
 	}
-	if sum := sha256.Sum256([]byte(k.Secret)); string(sum[:]) != string(k.SecretHash) {
-		t.Fatal("hash does not match secret")
-	}
-	if other, _ := NewAPIKey(); other.KeyID == k.KeyID || other.Secret == k.Secret {
+	if other, _ := NewSecretPair(); other.SecretID == p.SecretID || other.SecretKey == p.SecretKey {
 		t.Fatal("not random")
 	}
 }

@@ -2,7 +2,23 @@
 
 自建反机器人验证服务：go-zero + Redis + MySQL，后台使用 Go 服务端模板和 PearAdmin。
 
-**当前还不是可交付的防护产品。** gateway 已实现 `/v1/challenges`、`/v1/solutions`、`/v1/verify`（SHA-256 多题 PoW、无状态签名 challenge、一次性 token、verify 幂等），`/readyz` 在 Redis 与 MySQL 都可用时才返回 200。运维命令行 `botguard-ctl` 已能执行迁移、管理站点/来源/action、生成/轮换/吊销服务端密钥。尚未实现：管理后台认证与网页管理、浏览器/Go/PHP SDK、审计与事件记录（命令行的变更目前也没有审计记录）。
+**当前还不是可交付的防护产品。** 已实现：
+
+- gateway：`/v1/challenges`、`/v1/solutions`、`/v1/verify`。包括 SHA-256 多题 PoW、无状态签名 challenge、一次性 token、verify 幂等，以及参考易盾的多应用 + 密钥对 HMAC 签名认证；
+- 运维命令行 `botguard-ctl`；
+- 浏览器组件 `packages/browser`；
+- PHP SDK `packages/php`；
+- Docker 一键演示 `examples/demo`。
+
+尚未实现：管理后台认证与网页管理、Go SDK、Laravel 适配、审计与事件记录（命令行变更目前没有审计记录）。
+
+## 先看演示
+
+```sh
+examples/demo/start.sh   # 然后打开 http://localhost:8080
+```
+
+详见 [examples/demo/README.md](examples/demo/README.md)：在浏览器里完成验证，看 PHP SDK 签名核验的完整请求，并逐个触发 11 种攻击和误用场景。
 
 ## 本地运行
 
@@ -15,30 +31,31 @@ make admin    # http://127.0.0.1:8091
 # 在另一个终端：
 export BOTGUARD_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/botguard'
 export BOTGUARD_CHALLENGE_KEY_K1="$(openssl rand -base64 32)"
+export BOTGUARD_SECRET_KEK="k1:$(openssl rand -base64 32)"   # 加密 secret_key 的主密钥，ctl 与 gateway 必须一致
 make gateway  # http://127.0.0.1:8090/readyz
 ```
 
 gateway 需要 Redis（建议 ≥ 7.2）和已迁移的 MySQL；密钥与 DSN 只从环境变量读取，缺失时拒绝启动。DSN 会被自动补上 `parseTime=true`、`loc=UTC`、`time_zone='+00:00'`，并强制关闭 `multiStatements`。admin-web 仍是只读预览，只接受 loopback 监听地址，不能经反向代理公开。
 
-## 用 botguard-ctl 接入一个站点
+## 用 botguard-ctl 接入一个应用
 
-`botguard-ctl` 同样从 `BOTGUARD_MYSQL_DSN` 读取连接（不接受命令行参数，避免进入 shell 历史）。完整命令见 `bin/botguard-ctl help`。
+`botguard-ctl` 同样从环境变量读取 `BOTGUARD_MYSQL_DSN` 和 `BOTGUARD_SECRET_KEK`（不接受命令行参数，避免进入 shell 历史）。完整命令见 `bin/botguard-ctl help`。
 
 ```sh
 make build
 bin/botguard-ctl migrate up
-bin/botguard-ctl site create -name 商城              # 输出 site_key
-bin/botguard-ctl origin add -site pk_xxx -origin https://shop.example.com
-bin/botguard-ctl action set -site pk_xxx -action login
-bin/botguard-ctl key create -site pk_xxx             # secret 只显示这一次
-bin/botguard-ctl site show -site pk_xxx
+bin/botguard-ctl app create -name 商城               # 输出 app_key（前端用，相当于易盾 captchaId）
+bin/botguard-ctl origin add -app app_xxx -origin https://shop.example.com
+bin/botguard-ctl action set -app app_xxx -action login
+bin/botguard-ctl secret create -app app_xxx          # 输出 secret_id + secret_key，secret_key 只显示这一次
+bin/botguard-ctl app show -app app_xxx
 ```
 
-轮换密钥用 `key rotate -key sk_xxx -grace 24h`：立即生成新密钥，旧密钥在宽限期结束后失效，期间两把都能用。变更在 gateway 站点缓存过期后生效（默认 10 秒内）。
+轮换密钥对用 `secret rotate -secret sid_xxx -grace 24h`：立即生成新密钥对，旧的在宽限期结束后失效，期间两组都能用。变更在 gateway 应用缓存过期后生效（默认 10 秒内）。
 
 ## 测试
 
-`make check` 只需要 Go。集成测试需要专用的临时 MySQL 库和 Redis 实例，**其中所有表和键都会被清空**：
+`make check` 只需要 Go；`make test-sdk` 运行 PHP SDK 与浏览器组件的测试（需要 php 和 node）。集成测试需要专用的临时 MySQL 库和 Redis 实例，**其中所有表和键都会被清空**：
 
 ```sh
 export BOTGUARD_TEST_MYSQL_DSN='root@tcp(127.0.0.1:3399)/botguard_test'

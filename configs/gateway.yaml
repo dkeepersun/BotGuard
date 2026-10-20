@@ -29,13 +29,22 @@ Challenge:
   TTLSeconds: 120
   MaxDifficulty: 1000000
 
+# Seals app secret keys in MySQL. Format id:base64(32 bytes); generate with
+#   echo "k1:$(openssl rand -base64 32)"
+# botguard-ctl must use the same value to create secret pairs.
+SecretKEK: ${BOTGUARD_SECRET_KEK}
+# Decrypt-only KEKs during a KEK rotation, same format.
+SecretKEKPrevious: []
+# Allowed distance between a signed request's timestamp and gateway time.
+SignatureWindowSeconds: 300
+
 TokenTTLSeconds: 60
 VerifyResultTTLSeconds: 600
 ClockSkewSeconds: 5
 # CIDRs of reverse proxies whose X-Forwarded-For is trusted.
 TrustedProxies: []
 
-SiteCache:
+AppCache:
   TTLSeconds: 10
   Limit: 10000
 

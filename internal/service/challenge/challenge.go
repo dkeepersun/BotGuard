@@ -39,7 +39,7 @@ var (
 // Payload is signed but not encrypted: never put internal IDs or IPs here.
 type Payload struct {
 	ChallengeID   string     `json:"challenge_id"`
-	SiteKey       string     `json:"site_key"`
+	AppKey        string     `json:"app_key"`
 	Action        string     `json:"action"`
 	Origin        string     `json:"origin"`
 	Algorithm     string     `json:"algorithm"`

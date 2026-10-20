@@ -15,7 +15,7 @@ var (
 
 func sample() Payload {
 	params, _ := pow.NewParams(8, 1000)
-	return Payload{ChallengeID: "id", SiteKey: "site", Action: "login", Origin: "https://a.example",
+	return Payload{ChallengeID: "id", AppKey: "app", Action: "login", Origin: "https://a.example",
 		Algorithm: pow.AlgSHA256Target, Params: params, PolicyVersion: 3, IssuedAt: 100, ExpiresAt: 220}
 }
 

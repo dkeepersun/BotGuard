@@ -38,13 +38,17 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 		return nil, err
 	}
 	db := sqlx.NewMysql(dsn)
-	sites, err := repository.NewCachedSites(repository.NewMySQLSites(db), config.Seconds(c.SiteCache.TTLSeconds), c.SiteCache.Limit)
+	seal, err := c.Sealer()
+	if err != nil {
+		return nil, err
+	}
+	apps, err := repository.NewCachedApps(repository.NewMySQLApps(db, seal), config.Seconds(c.AppCache.TTLSeconds), c.AppCache.Limit)
 	if err != nil {
 		return nil, err
 	}
 	return &Gateway{
 		Logic: &logic.Gateway{
-			Sites:   sites,
+			Apps:    apps,
 			State:   repository.NewState(rds),
 			Limiter: repository.NewRateLimiter(rds),
 			Keys:    keys,
@@ -54,6 +58,7 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 				ResultTTL:               config.Seconds(c.VerifyResultTTLSeconds),
 				ClockSkew:               config.Seconds(c.ClockSkewSeconds),
 				MaxDifficulty:           c.Challenge.MaxDifficulty,
+				SignatureWindow:         config.Seconds(c.SignatureWindowSeconds),
 				ChallengePerIPPerMinute: c.RateLimit.ChallengePerIPPerMinute,
 				SolvePerIPPerMinute:     c.RateLimit.SolvePerIPPerMinute,
 				VerifyPerKeyPerMinute:   c.RateLimit.VerifyPerKeyPerMinute,

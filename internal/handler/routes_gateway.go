@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -14,6 +15,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/logic"
 	"github.com/dkeepersun/BotGuard/internal/response"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/signature"
 	"github.com/zeromicro/go-zero/rest"
 )
 
@@ -64,11 +66,28 @@ func newRequestID() string {
 // decode accepts application/json and text/plain bodies. text/plain lets the
 // browser widget send a CORS "simple request" and skip the preflight.
 func decode(w http.ResponseWriter, r *http.Request, v any) error {
+	body, err := readBody(w, r)
+	if err != nil {
+		return err
+	}
+	return decodeBytes(body, v)
+}
+
+// readBody returns the raw bytes, which verify needs for the signature.
+func readBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
 	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || (mt != "application/json" && mt != "text/plain") {
-		return errx.InvalidRequest("Content-Type 必须为 application/json 或 text/plain")
+		return nil, errx.InvalidRequest("Content-Type 必须为 application/json 或 text/plain")
 	}
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
+	if err != nil {
+		return nil, errx.InvalidRequest("请求体过大或读取失败")
+	}
+	return body, nil
+}
+
+func decodeBytes(body []byte, v any) error {
+	dec := json.NewDecoder(bytes.NewReader(body))
 	if err := dec.Decode(v); err != nil {
 		return errx.InvalidRequest("请求体不是合法 JSON")
 	}
@@ -86,7 +105,7 @@ func fail(w http.ResponseWriter, err error, requestID string) {
 	response.Fail(w, e.Status, e.Code, e.Message, requestID, e.RetryAfter)
 }
 
-// cors is only ever called with an origin already allowed for the site.
+// cors is only ever called with an origin already allowed for the app.
 func cors(w http.ResponseWriter, origin string) {
 	w.Header().Add("Vary", "Origin")
 	if origin != "" {
@@ -94,8 +113,8 @@ func cors(w http.ResponseWriter, origin string) {
 	}
 }
 
-// preflight cannot know the site (no body), so it answers any origin. The
-// real request is still checked against the site's allowlist, and its
+// preflight cannot know the app (no body), so it answers any origin. The
+// real request is still checked against the app's allowlist, and its
 // response only carries CORS headers for allowed origins.
 func preflight(w http.ResponseWriter, r *http.Request) {
 	w.Header().Add("Vary", "Origin")
@@ -111,15 +130,15 @@ func preflight(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 	rid := newRequestID()
 	var body struct {
-		SiteKey string `json:"site_key"`
-		Action  string `json:"action"`
+		AppKey string `json:"app_key"`
+		Action string `json:"action"`
 	}
 	if err := decode(w, r, &body); err != nil {
 		fail(w, err, rid)
 		return
 	}
 	out, origin, err := g.Logic.Issue(r.Context(), logic.IssueInput{
-		SiteKey: body.SiteKey, Action: body.Action, Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r),
+		AppKey: body.AppKey, Action: body.Action, Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r),
 	})
 	cors(w, origin)
 	if err != nil {
@@ -132,7 +151,7 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {
 	rid := newRequestID()
 	var body struct {
-		SiteKey   string   `json:"site_key"`
+		AppKey    string   `json:"app_key"`
 		Challenge string   `json:"challenge"`
 		Nonces    []string `json:"nonces"`
 	}
@@ -141,7 +160,7 @@ func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, origin, err := g.Logic.Solve(r.Context(), logic.SolveInput{
-		SiteKey: body.SiteKey, Challenge: body.Challenge, Nonces: body.Nonces,
+		AppKey: body.AppKey, Challenge: body.Challenge, Nonces: body.Nonces,
 		Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r),
 	})
 	cors(w, origin)
@@ -154,18 +173,26 @@ func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {
 
 func (g *Gateway) verify(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		SiteKey   string `json:"site_key"`
+		AppKey    string `json:"app_key"`
 		Token     string `json:"token"`
 		Action    string `json:"action"`
 		RequestID string `json:"request_id"`
 	}
-	if err := decode(w, r, &body); err != nil {
+	raw, err := readBody(w, r)
+	if err == nil {
+		err = decodeBytes(raw, &body)
+	}
+	if err != nil {
 		fail(w, err, "")
 		return
 	}
 	out, err := g.Logic.Verify(r.Context(), logic.VerifyInput{
-		Authorization: r.Header.Get("Authorization"),
-		SiteKey:       body.SiteKey, Token: body.Token, Action: body.Action, RequestID: body.RequestID,
+		SecretID:  r.Header.Get(signature.HeaderSecretID),
+		Timestamp: r.Header.Get(signature.HeaderTimestamp),
+		Nonce:     r.Header.Get(signature.HeaderNonce),
+		Signature: r.Header.Get(signature.HeaderSignature),
+		Body:      raw,
+		AppKey:    body.AppKey, Token: body.Token, Action: body.Action, RequestID: body.RequestID,
 	})
 	if err != nil {
 		fail(w, err, body.RequestID)

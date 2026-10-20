@@ -16,31 +16,40 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/logic"
 	"github.com/dkeepersun/BotGuard/internal/migration"
 	"github.com/dkeepersun/BotGuard/internal/repository"
+	"github.com/dkeepersun/BotGuard/internal/service/credential"
+	"github.com/dkeepersun/BotGuard/internal/service/sealer"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
-const DSNEnv = "BOTGUARD_MYSQL_DSN"
+const (
+	DSNEnv = "BOTGUARD_MYSQL_DSN"
+	KEKEnv = "BOTGUARD_SECRET_KEK"
+)
 
 const usage = `用法：botguard-ctl <命令> [参数]
 
-数据库连接从环境变量 BOTGUARD_MYSQL_DSN 读取（不接受命令行参数，避免进入 shell 历史）。
+环境变量（不接受命令行参数，避免进入 shell 历史）：
+  BOTGUARD_MYSQL_DSN   数据库连接
+  BOTGUARD_SECRET_KEK  加密 secret_key 的主密钥，格式 id:base64(32 字节)；
+                       创建或轮换密钥对时需要，必须与 gateway 配置一致
 
-  migrate up                                   执行未执行的迁移
-  migrate status                               查看迁移状态
-  site create  -name 名称                      创建站点，输出 site_key
-  site list                                    列出站点
-  site show    -site site_key                  查看站点的来源、action 和密钥
-  site enable  -site site_key                  启用站点
-  site disable -site site_key                  停用站点
-  origin add    -site site_key -origin URL     添加允许来源，如 https://example.com
-  origin remove -site site_key -origin URL     移除允许来源
-  action set -site site_key -action 名称 [-enabled=true] [-puzzles 8] [-difficulty 2000]
-                                               新增或修改 action；只修改显式给出的参数
-  key create -site site_key [-ttl 0]           生成服务端密钥，secret 只显示这一次
-  key revoke -key key_id                       吊销密钥
-  key rotate -key key_id [-grace 24h] [-ttl 0] 生成替换密钥，旧密钥在宽限期后失效
+  migrate up                                        执行未执行的迁移
+  migrate status                                    查看迁移状态
+  app create  -name 名称                            创建应用，输出 app_key
+  app list                                          列出应用
+  app show    -app app_key                          查看应用的来源、action 和密钥对
+  app enable  -app app_key                          启用应用
+  app disable -app app_key                          停用应用
+  origin add    -app app_key -origin URL            添加允许来源，如 https://example.com
+  origin remove -app app_key -origin URL            移除允许来源
+  action set -app app_key -action 名称 [-enabled=true] [-puzzles 8] [-difficulty 2000]
+                                                    新增或修改 action；只修改显式给出的参数
+  secret create -app app_key [-ttl 0]               生成密钥对（secret_id + secret_key），secret_key 只显示这一次
+  secret revoke -secret secret_id                   吊销密钥对
+  secret rotate -secret secret_id [-grace 24h] [-ttl 0]
+                                                    生成替换密钥对，旧密钥对在宽限期后失效
 
-站点、来源、action、密钥的变更会在 gateway 的站点缓存过期后生效（默认 10 秒内）。
+应用、来源、action、密钥对的变更会在 gateway 的应用缓存过期后生效（默认 10 秒内）。
 `
 
 // App runs one command. Env and output are injected for tests.
@@ -79,11 +88,11 @@ func describe(err error) string {
 	case errors.Is(err, logic.ErrInvalid):
 		return strings.TrimPrefix(err.Error(), logic.ErrInvalid.Error()+": ")
 	case errors.Is(err, domain.ErrNotFound):
-		return "未找到指定的站点、来源或密钥"
+		return "未找到指定的应用、来源或密钥对"
 	case errors.Is(err, domain.ErrDuplicate):
 		return "记录已存在"
 	case errors.Is(err, domain.ErrInvalidState):
-		return "密钥已吊销，不能轮换"
+		return "密钥对已吊销，不能轮换"
 	default:
 		return err.Error()
 	}
@@ -97,12 +106,19 @@ func (a *App) conn() (sqlx.SqlConn, error) {
 	return a.openDB(dsn), nil
 }
 
-func (a *App) admin() (*logic.SiteAdmin, error) {
+func (a *App) admin() (*logic.AppAdmin, error) {
 	c, err := a.conn()
 	if err != nil {
 		return nil, err
 	}
-	return &logic.SiteAdmin{Repo: repository.NewSiteAdmin(c), Now: a.Now}, nil
+	adm := &logic.AppAdmin{Repo: repository.NewAppAdmin(c), Now: a.Now}
+	// Only secret create/rotate need the KEK; other commands work without it.
+	if raw := a.Env(KEKEnv); raw != "" {
+		if adm.Sealer, err = sealer.New(raw); err != nil {
+			return nil, fmt.Errorf("%s 无效：%w", KEKEnv, err)
+		}
+	}
+	return adm, nil
 }
 
 func (a *App) run(ctx context.Context, args []string) error {
@@ -117,24 +133,24 @@ func (a *App) run(ctx context.Context, args []string) error {
 	switch cmd {
 	case "migrate up", "migrate status":
 		return a.migrate(ctx, args[1], rest)
-	case "site create":
-		return a.siteCreate(ctx, rest)
-	case "site list":
-		return a.siteList(ctx, rest)
-	case "site show":
-		return a.siteShow(ctx, rest)
-	case "site enable", "site disable":
-		return a.siteEnable(ctx, args[1] == "enable", rest)
+	case "app create":
+		return a.appCreate(ctx, rest)
+	case "app list":
+		return a.appList(ctx, rest)
+	case "app show":
+		return a.appShow(ctx, rest)
+	case "app enable", "app disable":
+		return a.appEnable(ctx, args[1] == "enable", rest)
 	case "origin add", "origin remove":
 		return a.origin(ctx, args[1] == "add", rest)
 	case "action set":
 		return a.actionSet(ctx, rest)
-	case "key create":
-		return a.keyCreate(ctx, rest)
-	case "key revoke":
-		return a.keyRevoke(ctx, rest)
-	case "key rotate":
-		return a.keyRotate(ctx, rest)
+	case "secret create":
+		return a.secretCreate(ctx, rest)
+	case "secret revoke":
+		return a.secretRevoke(ctx, rest)
+	case "secret rotate":
+		return a.secretRotate(ctx, rest)
 	default:
 		return usageError("未知命令：" + cmd)
 	}
@@ -202,8 +218,8 @@ func (a *App) migrate(ctx context.Context, sub string, args []string) error {
 	return w.Flush()
 }
 
-func (a *App) siteCreate(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("site create", flag.ContinueOnError)
+func (a *App) appCreate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("app create", flag.ContinueOnError)
 	name := fs.String("name", "", "")
 	if err := parse(fs, args, "name"); err != nil {
 		return err
@@ -212,34 +228,34 @@ func (a *App) siteCreate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	key, err := adm.CreateSite(ctx, *name)
+	key, err := adm.CreateApp(ctx, *name)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Out, "已创建站点 %s\nsite_key: %s\n下一步：添加允许来源（origin add）、配置 action（action set）、生成服务端密钥（key create）。\n", *name, key)
+	fmt.Fprintf(a.Out, "已创建应用 %s\napp_key: %s\n下一步：添加允许来源（origin add）、配置 action（action set）、生成密钥对（secret create）。\n", *name, key)
 	return nil
 }
 
-func (a *App) siteList(ctx context.Context, args []string) error {
-	if err := parse(flag.NewFlagSet("site list", flag.ContinueOnError), args); err != nil {
+func (a *App) appList(ctx context.Context, args []string) error {
+	if err := parse(flag.NewFlagSet("app list", flag.ContinueOnError), args); err != nil {
 		return err
 	}
 	adm, err := a.admin()
 	if err != nil {
 		return err
 	}
-	sites, err := adm.ListSites(ctx)
+	apps, err := adm.ListApps(ctx)
 	if err != nil {
 		return err
 	}
-	if len(sites) == 0 {
-		fmt.Fprintln(a.Out, "还没有站点")
+	if len(apps) == 0 {
+		fmt.Fprintln(a.Out, "还没有应用")
 		return nil
 	}
 	w := tabwriter.NewWriter(a.Out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "site_key\t名称\t状态\t策略版本\t创建时间")
-	for _, s := range sites {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", s.PublicKey, s.Name, enabledText(s.Enabled), s.PolicyVersion, s.CreatedAt.UTC().Format(time.RFC3339))
+	fmt.Fprintln(w, "app_key\t名称\t状态\t策略版本\t创建时间")
+	for _, s := range apps {
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", s.AppKey, s.Name, enabledText(s.Enabled), s.PolicyVersion, s.CreatedAt.UTC().Format(time.RFC3339))
 	}
 	return w.Flush()
 }
@@ -251,21 +267,21 @@ func enabledText(b bool) string {
 	return "停用"
 }
 
-func (a *App) siteShow(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("site show", flag.ContinueOnError)
-	site := fs.String("site", "", "")
-	if err := parse(fs, args, "site"); err != nil {
+func (a *App) appShow(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("app show", flag.ContinueOnError)
+	app := fs.String("app", "", "")
+	if err := parse(fs, args, "app"); err != nil {
 		return err
 	}
 	adm, err := a.admin()
 	if err != nil {
 		return err
 	}
-	d, err := adm.SiteDetail(ctx, *site)
+	d, err := adm.AppDetail(ctx, *app)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Out, "站点：%s（%s）\nsite_key：%s\n策略版本：%d\n\n允许来源：\n", d.Name, enabledText(d.Enabled), d.PublicKey, d.PolicyVersion)
+	fmt.Fprintf(a.Out, "应用：%s（%s）\napp_key：%s\n策略版本：%d\n\n允许来源：\n", d.Name, enabledText(d.Enabled), d.AppKey, d.PolicyVersion)
 	if len(d.Origins) == 0 {
 		fmt.Fprintln(a.Out, "  （无，浏览器请求会全部被拒绝）")
 	}
@@ -283,15 +299,15 @@ func (a *App) siteShow(ctx context.Context, args []string) error {
 		}
 		_ = w.Flush()
 	}
-	fmt.Fprintln(a.Out, "\n服务端密钥：")
-	if len(d.Keys) == 0 {
+	fmt.Fprintln(a.Out, "\n密钥对：")
+	if len(d.Secrets) == 0 {
 		fmt.Fprintln(a.Out, "  （无）")
 		return nil
 	}
 	w := tabwriter.NewWriter(a.Out, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "  key_id\t状态\t过期时间\t替换自\t创建时间")
+	fmt.Fprintln(w, "  secret_id\t状态\t过期时间\t替换自\t创建时间")
 	now := a.Now()
-	for _, k := range d.Keys {
+	for _, k := range d.Secrets {
 		state := enabledText(k.Enabled)
 		if !k.Enabled {
 			state = "已吊销"
@@ -306,33 +322,33 @@ func (a *App) siteShow(ctx context.Context, args []string) error {
 		if k.RotatedFrom.Valid {
 			from = k.RotatedFrom.String
 		}
-		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n", k.KeyID, state, exp, from, k.CreatedAt.UTC().Format(time.RFC3339))
+		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n", k.SecretID, state, exp, from, k.CreatedAt.UTC().Format(time.RFC3339))
 	}
 	return w.Flush()
 }
 
-func (a *App) siteEnable(ctx context.Context, enable bool, args []string) error {
-	fs := flag.NewFlagSet("site enable", flag.ContinueOnError)
-	site := fs.String("site", "", "")
-	if err := parse(fs, args, "site"); err != nil {
+func (a *App) appEnable(ctx context.Context, enable bool, args []string) error {
+	fs := flag.NewFlagSet("app enable", flag.ContinueOnError)
+	app := fs.String("app", "", "")
+	if err := parse(fs, args, "app"); err != nil {
 		return err
 	}
 	adm, err := a.admin()
 	if err != nil {
 		return err
 	}
-	if err := adm.SetSiteEnabled(ctx, *site, enable); err != nil {
+	if err := adm.SetAppEnabled(ctx, *app, enable); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Out, "站点 %s 已%s\n", *site, enabledText(enable))
+	fmt.Fprintf(a.Out, "应用 %s 已%s\n", *app, enabledText(enable))
 	return nil
 }
 
 func (a *App) origin(ctx context.Context, add bool, args []string) error {
 	fs := flag.NewFlagSet("origin", flag.ContinueOnError)
-	site := fs.String("site", "", "")
+	app := fs.String("app", "", "")
 	origin := fs.String("origin", "", "")
-	if err := parse(fs, args, "site", "origin"); err != nil {
+	if err := parse(fs, args, "app", "origin"); err != nil {
 		return err
 	}
 	adm, err := a.admin()
@@ -340,14 +356,14 @@ func (a *App) origin(ctx context.Context, add bool, args []string) error {
 		return err
 	}
 	if add {
-		o, err := adm.AddOrigin(ctx, *site, *origin)
+		o, err := adm.AddOrigin(ctx, *app, *origin)
 		if err != nil {
 			return err
 		}
 		fmt.Fprintf(a.Out, "已添加允许来源 %s\n", o)
 		return nil
 	}
-	o, err := adm.RemoveOrigin(ctx, *site, *origin)
+	o, err := adm.RemoveOrigin(ctx, *app, *origin)
 	if err != nil {
 		return err
 	}
@@ -357,19 +373,19 @@ func (a *App) origin(ctx context.Context, add bool, args []string) error {
 
 func (a *App) actionSet(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("action set", flag.ContinueOnError)
-	site := fs.String("site", "", "")
+	app := fs.String("app", "", "")
 	action := fs.String("action", "", "")
 	enabled := fs.Bool("enabled", true, "")
 	puzzles := fs.Int("puzzles", logic.DefaultPuzzles, "")
 	difficulty := fs.Uint64("difficulty", logic.DefaultDifficulty, "")
-	if err := parse(fs, args, "site", "action"); err != nil {
+	if err := parse(fs, args, "app", "action"); err != nil {
 		return err
 	}
 	adm, err := a.admin()
 	if err != nil {
 		return err
 	}
-	d, err := adm.SiteDetail(ctx, *site)
+	d, err := adm.AppDetail(ctx, *app)
 	if err != nil {
 		return err
 	}
@@ -390,7 +406,7 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 			p.Difficulty = *difficulty
 		}
 	})
-	if err := adm.SetAction(ctx, *site, *action, p); err != nil {
+	if err := adm.SetAction(ctx, *app, *action, p); err != nil {
 		return err
 	}
 	fmt.Fprintf(a.Out, "action %s：%s，puzzles=%d，difficulty=%d（每次验证期望总尝试次数约 %d）\n",
@@ -399,69 +415,69 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 	return nil
 }
 
-func printSecret(out io.Writer, keyID, header string) {
-	fmt.Fprintf(out, "key_id: %s\nAuthorization: %s\n\n", keyID, header)
-	fmt.Fprintln(out, "这是 secret 唯一一次显示，服务端只保存其摘要。请立即存入业务服务器的密钥配置，不要提交到代码仓库或放进前端。")
+func printSecret(out io.Writer, p credential.SecretPair) {
+	fmt.Fprintf(out, "secret_id: %s\nsecret_key: %s\n\n", p.SecretID, p.SecretKey)
+	fmt.Fprintln(out, "这是 secret_key 唯一一次显示，数据库只保存加密后的密文。请立即存入业务服务器的配置，不要提交到代码仓库或放进前端。")
 }
 
-func (a *App) keyCreate(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("key create", flag.ContinueOnError)
-	site := fs.String("site", "", "")
+func (a *App) secretCreate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("secret create", flag.ContinueOnError)
+	app := fs.String("app", "", "")
 	ttl := fs.Duration("ttl", 0, "")
-	if err := parse(fs, args, "site"); err != nil {
+	if err := parse(fs, args, "app"); err != nil {
 		return err
 	}
 	adm, err := a.admin()
 	if err != nil {
 		return err
 	}
-	k, exp, err := adm.CreateKey(ctx, *site, *ttl)
+	p, exp, err := adm.CreateSecret(ctx, *app, *ttl)
 	if err != nil {
 		return err
 	}
 	if exp != nil {
-		fmt.Fprintf(a.Out, "已生成密钥，过期时间 %s\n", exp.Format(time.RFC3339))
+		fmt.Fprintf(a.Out, "已生成密钥对，过期时间 %s\n", exp.Format(time.RFC3339))
 	} else {
-		fmt.Fprintln(a.Out, "已生成密钥，永不过期（可用 key revoke 吊销）")
+		fmt.Fprintln(a.Out, "已生成密钥对，永不过期（可用 secret revoke 吊销）")
 	}
-	printSecret(a.Out, k.KeyID, k.Header())
+	printSecret(a.Out, p)
 	return nil
 }
 
-func (a *App) keyRevoke(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("key revoke", flag.ContinueOnError)
-	key := fs.String("key", "", "")
-	if err := parse(fs, args, "key"); err != nil {
+func (a *App) secretRevoke(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("secret revoke", flag.ContinueOnError)
+	id := fs.String("secret", "", "")
+	if err := parse(fs, args, "secret"); err != nil {
 		return err
 	}
 	adm, err := a.admin()
 	if err != nil {
 		return err
 	}
-	if err := adm.RevokeKey(ctx, *key); err != nil {
+	if err := adm.RevokeSecret(ctx, *id); err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Out, "密钥 %s 已吊销\n", *key)
+	fmt.Fprintf(a.Out, "密钥对 %s 已吊销\n", *id)
 	return nil
 }
 
-func (a *App) keyRotate(ctx context.Context, args []string) error {
-	fs := flag.NewFlagSet("key rotate", flag.ContinueOnError)
-	key := fs.String("key", "", "")
+func (a *App) secretRotate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("secret rotate", flag.ContinueOnError)
+	id := fs.String("secret", "", "")
 	grace := fs.Duration("grace", 24*time.Hour, "")
 	ttl := fs.Duration("ttl", 0, "")
-	if err := parse(fs, args, "key"); err != nil {
+	if err := parse(fs, args, "secret"); err != nil {
 		return err
 	}
 	adm, err := a.admin()
 	if err != nil {
 		return err
 	}
-	k, oldUntil, err := adm.RotateKey(ctx, *key, *grace, *ttl)
+	p, oldUntil, err := adm.RotateSecret(ctx, *id, *grace, *ttl)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(a.Out, "已生成替换密钥；旧密钥 %s 最晚在 %s 失效\n", *key, oldUntil.Format(time.RFC3339))
-	printSecret(a.Out, k.KeyID, k.Header())
+	fmt.Fprintf(a.Out, "已生成替换密钥对；旧密钥对 %s 最晚在 %s 失效\n", *id, oldUntil.Format(time.RFC3339))
+	printSecret(a.Out, p)
 	return nil
 }

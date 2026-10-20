@@ -48,3 +48,19 @@
 - 尚未在你提供的 MySQL 开发库上执行。
 - 迁移中途失败时，已执行的 DDL 不会回滚（MySQL 的 DDL 隐式提交），需要人工处理后重跑。
 - 命令行变更没有审计记录；也没有“创建首个管理员”命令，要等管理后台切片。
+
+## 2026-10-20：多应用签名认证与 Docker 演示
+
+改动：site 全面改名为 app（迁移 0002 改表名与列名）；verify 认证由 Bearer 改为参考易盾的 secret_id + HMAC-SHA256 签名（时间戳 ±300 秒、nonce 防重放），secret_key 用 KEK 以 AES-256-GCM 加密存库；新增 PHP SDK、浏览器组件和 `examples/demo`。
+
+已通过：
+- 临时 MySQL 8.4.9 与 Redis 8.4.0 上 `go test -p 1 ./...` 全部通过，含：从版本 1 升级到 0002（数据保留、旧 Bearer 密钥被吊销）；签名篡改、错误密钥、时间戳超窗、nonce 重放、格式错误；错误 KEK 返回 503 并确认库中不存明文。
+- `php packages/php/tests/run.php`：25 项检查，含与 Go 共用的签名用例。
+- `node --test packages/browser/test/`：11 项，浏览器求解结果与 Go 参考实现逐个一致。
+- Docker 演示（`examples/demo/start.sh`）：迁移 0001→0002、两个演示应用初始化成功；内置浏览器中组件 8 个 Worker 约 0.1 秒完成 23,038 次哈希；正常登录通过；11 个攻击/误用场景结果全部与预期一致；浏览器控制台无错误。
+- gateway 关闭了 go-zero 默认的 SQL 语句日志，避免把来自未认证请求的参数写进日志。
+
+边界：
+- 只在 macOS 的 Chromium 内核内置浏览器验证过组件，未测 Safari/Firefox 和低端手机，默认难度仍是占位值。
+- “脚本自动求解”场景表明：这个难度下脚本 8 毫秒就能拿到真 token。PoW 只提高成本，必须配合限流和风险规则。
+- 尚未在你的 MySQL 开发库上执行。

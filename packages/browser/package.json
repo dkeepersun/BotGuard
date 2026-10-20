@@ -1,0 +1,15 @@
+{
+  "name": "@botguard/browser",
+  "version": "0.1.0",
+  "description": "BotGuard 浏览器验证组件：<botguard-widget>，Web Worker 求解 PoW，换取一次性 token",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/botguard.js",
+    "./solver": "./src/solver.js"
+  },
+  "files": ["src/"],
+  "scripts": {
+    "test": "node --test test/"
+  }
+}

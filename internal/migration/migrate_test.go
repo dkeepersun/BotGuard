@@ -140,3 +140,54 @@ func TestEmbeddedMigrationsApply(t *testing.T) {
 		}
 	}
 }
+
+// TestUpgradeFromV1 applies 0001, writes a site and a legacy Bearer key, then
+// applies the rest: data must survive the rename and the key must be revoked.
+func TestUpgradeFromV1(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	all, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(ms []Migration) {
+		t.Helper()
+		r, err := open(ctx, db, ms)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		if _, err := r.Up(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(all[:1])
+	for _, q := range []string{
+		"INSERT INTO bg_site (id, public_key, name) VALUES (1, 'pk_legacy_site', 'legacy')",
+		"INSERT INTO bg_site_origin (site_id, origin) VALUES (1, 'https://legacy.example')",
+		"INSERT INTO bg_site_action (site_id, action) VALUES (1, 'login')",
+		"INSERT INTO bg_api_key (key_id, site_id, secret_hash) VALUES ('sk_legacy_key', 1, UNHEX(SHA2('x', 256)))",
+	} {
+		if _, err := db.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(all)
+
+	var appKey, origin, action string
+	if err := db.QueryRowContext(ctx, `SELECT a.app_key, o.origin, x.action FROM bg_app a
+JOIN bg_app_origin o ON o.app_id = a.id JOIN bg_app_action x ON x.app_id = a.id`).Scan(&appKey, &origin, &action); err != nil {
+		t.Fatal(err)
+	}
+	if appKey != "pk_legacy_site" || origin != "https://legacy.example" || action != "login" {
+		t.Fatalf("renamed data: %s %s %s", appKey, origin, action)
+	}
+	var status int
+	var ct []byte
+	if err := db.QueryRowContext(ctx, "SELECT status, secret_ciphertext FROM bg_app_secret WHERE secret_id = 'sk_legacy_key' AND app_id = 1").Scan(&status, &ct); err != nil {
+		t.Fatal(err)
+	}
+	if status != 2 || ct != nil {
+		t.Fatalf("legacy key: status=%d ciphertext=%v", status, ct)
+	}
+}

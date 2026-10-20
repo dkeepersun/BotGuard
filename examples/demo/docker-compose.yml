@@ -1,0 +1,68 @@
+# BotGuard 本地演示环境：MySQL + Redis + gateway + PHP 演示站。
+# 用 ./start.sh 启动（会生成 .env 中的随机密钥），不要直接 docker compose up。
+name: botguard-demo
+
+x-secrets: &secrets
+  MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?run ./start.sh first}
+  BOTGUARD_MYSQL_DSN: root:${MYSQL_ROOT_PASSWORD}@tcp(mysql:3306)/botguard
+  BOTGUARD_SECRET_KEK: ${BOTGUARD_SECRET_KEK:?run ./start.sh first}
+
+x-build: &build
+  context: ../..
+  dockerfile: examples/demo/Dockerfile
+  args:
+    GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: botguard
+    volumes: [mysql-data:/var/lib/mysql]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+
+  redis:
+    image: redis:7.4
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      retries: 20
+
+  # One-off: run migrations and create the demo apps and secret pairs.
+  seed:
+    build: { <<: *build, target: php }
+    command: ["sh", "/seed.sh"]
+    environment: *secrets
+    volumes: [shared:/shared]
+    depends_on:
+      mysql: { condition: service_healthy }
+
+  gateway:
+    build: { <<: *build, target: gateway }
+    environment:
+      <<: *secrets
+      BOTGUARD_CHALLENGE_KEY_K1: ${BOTGUARD_CHALLENGE_KEY_K1:?run ./start.sh first}
+    ports: ["127.0.0.1:8090:8090"]
+    depends_on:
+      redis: { condition: service_healthy }
+      seed: { condition: service_completed_successfully }
+
+  php:
+    build: { <<: *build, target: php }
+    environment:
+      BG_PUBLIC_ENDPOINT: http://localhost:8090
+      BG_INTERNAL_ENDPOINT: http://gateway:8090
+    volumes: [shared:/shared:ro]
+    ports: ["127.0.0.1:8080:8080"]
+    depends_on:
+      gateway: { condition: service_started }
+
+volumes:
+  mysql-data:
+  shared:

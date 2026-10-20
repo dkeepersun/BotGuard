@@ -1,0 +1,6 @@
+.git
+.idea
+bin
+**/.env
+**/node_modules
+**/vendor

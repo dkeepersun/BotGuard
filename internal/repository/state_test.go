@@ -41,7 +41,7 @@ func put(t *testing.T, s *State, hash string, exp int64) {
 }
 
 func consume(s *State, requestID, digest, hash, action string) (string, bool, error) {
-	return s.Consume(context.Background(), ConsumeInput{SiteID: 7, RequestID: requestID, RequestDigest: digest,
+	return s.Consume(context.Background(), ConsumeInput{AppID: 7, RequestID: requestID, RequestDigest: digest,
 		TokenHash: hash, Action: action, AllowedOrigins: []string{"https://a.example"}, Now: now, ResultTTL: time.Minute})
 }
 

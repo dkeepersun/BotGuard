@@ -1,9 +1,8 @@
-// Package credential generates site keys and server API keys.
+// Package credential generates app keys and secret pairs.
 package credential
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
 )
 
@@ -15,35 +14,31 @@ func random(n int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(b), nil
 }
 
-// NewSiteKey returns a public, non-enumerable site key.
-func NewSiteKey() (string, error) {
+// NewAppKey returns a public, non-enumerable app key (Yidun's captchaId).
+func NewAppKey() (string, error) {
 	r, err := random(16)
 	if err != nil {
 		return "", err
 	}
-	return "pk_" + r, nil
+	return "app_" + r, nil
 }
 
-// APIKey is a freshly generated server credential. Secret is shown to the
-// operator once and only its hash is stored.
-type APIKey struct {
-	KeyID      string
-	Secret     string
-	SecretHash []byte
+// SecretPair is a freshly generated server credential (Yidun's
+// secretId/secretKey). The secret key is shown to the operator once and
+// stored only encrypted.
+type SecretPair struct {
+	SecretID  string
+	SecretKey string
 }
 
-// Header is the Authorization value the business server sends to /v1/verify.
-func (k APIKey) Header() string { return "Bearer " + k.KeyID + "." + k.Secret }
-
-func NewAPIKey() (APIKey, error) {
-	id, err := random(9)
+func NewSecretPair() (SecretPair, error) {
+	id, err := random(12)
 	if err != nil {
-		return APIKey{}, err
+		return SecretPair{}, err
 	}
-	secret, err := random(32)
+	key, err := random(32)
 	if err != nil {
-		return APIKey{}, err
+		return SecretPair{}, err
 	}
-	sum := sha256.Sum256([]byte(secret))
-	return APIKey{KeyID: "sk_" + id, Secret: secret, SecretHash: sum[:]}, nil
+	return SecretPair{SecretID: "sid_" + id, SecretKey: key}, nil
 }

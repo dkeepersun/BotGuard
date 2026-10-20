@@ -1,4 +1,4 @@
-.PHONY: test test-integration check build admin gateway
+.PHONY: test test-integration test-sdk check build admin gateway demo demo-down
 
 test:
 	go test ./...
@@ -25,3 +25,13 @@ admin:
 
 gateway:
 	go run ./cmd/gateway -f configs/gateway.yaml
+
+test-sdk:
+	php packages/php/tests/run.php
+	node --test packages/browser/test/
+
+demo:
+	examples/demo/start.sh
+
+demo-down:
+	docker compose -f examples/demo/docker-compose.yml down

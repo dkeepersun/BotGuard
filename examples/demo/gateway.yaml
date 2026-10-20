@@ -1,0 +1,46 @@
+# Gateway configuration for the local demo only. Secrets come from .env.
+Name: botguard-gateway-demo
+Host: 0.0.0.0
+Port: 8090
+Mode: dev
+Timeout: 3000
+MaxBytes: 8192
+Middlewares:
+  Log: false
+  Trace: false
+Log:
+  Encoding: plain
+
+Redis:
+  Host: redis:6379
+  Type: node
+
+MySQL:
+  DataSource: ${BOTGUARD_MYSQL_DSN}
+
+Challenge:
+  Keys:
+    - ID: k1
+      Secret: ${BOTGUARD_CHALLENGE_KEY_K1}
+      Active: true
+  TTLSeconds: 120
+  MaxDifficulty: 1000000
+
+SecretKEK: ${BOTGUARD_SECRET_KEK}
+SecretKEKPrevious: []
+SignatureWindowSeconds: 300
+
+TokenTTLSeconds: 120
+VerifyResultTTLSeconds: 600
+ClockSkewSeconds: 5
+TrustedProxies: []
+
+AppCache:
+  TTLSeconds: 5
+  Limit: 1000
+
+# Low challenge limit so the flood scenario visibly hits 429 within a minute.
+RateLimit:
+  ChallengePerIPPerMinute: 30
+  SolvePerIPPerMinute: 60
+  VerifyPerKeyPerMinute: 600

@@ -3,7 +3,6 @@ package logic
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"net/netip"
 	"strings"
@@ -20,28 +19,28 @@ import (
 )
 
 const (
-	siteA   = "site_a_public"
-	siteB   = "site_b_public"
+	appA    = "app_a_public"
+	appB    = "app_b_public"
 	originA = "https://a.example"
-	secretA = "secret-for-site-a"
-	keyA    = "key_site_a"
-	keyB    = "key_site_b"
+	secretA = "secret-for-app-a"
+	keyA    = "key_app_a"
+	keyB    = "key_app_b"
 )
 
-type fakeSites struct {
-	sites map[string]*domain.Site
-	keys  map[string]*domain.APIKey
+type fakeApps struct {
+	apps    map[string]*domain.App
+	secrets map[string]*domain.SecretPair
 }
 
-func (f *fakeSites) SiteByKey(_ context.Context, k string) (*domain.Site, error) {
-	if s, ok := f.sites[k]; ok {
+func (f *fakeApps) AppByKey(_ context.Context, k string) (*domain.App, error) {
+	if s, ok := f.apps[k]; ok {
 		return s, nil
 	}
 	return nil, domain.ErrNotFound
 }
 
-func (f *fakeSites) APIKey(_ context.Context, id string) (*domain.APIKey, error) {
-	if k, ok := f.keys[id]; ok {
+func (f *fakeApps) SecretPair(_ context.Context, id string) (*domain.SecretPair, error) {
+	if k, ok := f.secrets[id]; ok {
 		return k, nil
 	}
 	return nil, domain.ErrNotFound
@@ -49,14 +48,9 @@ func (f *fakeSites) APIKey(_ context.Context, id string) (*domain.APIKey, error)
 
 type harness struct {
 	g     *Gateway
-	sites *fakeSites
+	apps  *fakeApps
 	clock time.Time
 	ip    netip.Addr
-}
-
-func hash(s string) []byte {
-	sum := sha256.Sum256([]byte(s))
-	return sum[:]
 }
 
 func newHarness(t *testing.T) *harness {
@@ -67,21 +61,21 @@ func newHarness(t *testing.T) *harness {
 		t.Fatal(err)
 	}
 	policy := map[string]domain.ActionPolicy{"login": {Enabled: true, Puzzles: 4, Difficulty: 16}, "off": {Enabled: false, Puzzles: 4, Difficulty: 16}}
-	sites := &fakeSites{
-		sites: map[string]*domain.Site{
-			siteA: {ID: 1, PublicKey: siteA, Enabled: true, Origins: []string{originA}, Actions: policy},
-			siteB: {ID: 2, PublicKey: siteB, Enabled: true, Origins: []string{"https://b.example"}, Actions: policy},
+	apps := &fakeApps{
+		apps: map[string]*domain.App{
+			appA: {ID: 1, AppKey: appA, Enabled: true, Origins: []string{originA}, Actions: policy},
+			appB: {ID: 2, AppKey: appB, Enabled: true, Origins: []string{"https://b.example"}, Actions: policy},
 		},
-		keys: map[string]*domain.APIKey{
-			keyA: {KeyID: keyA, SiteID: 1, SecretHash: hash(secretA), Enabled: true},
-			keyB: {KeyID: keyB, SiteID: 2, SecretHash: hash("secret-for-site-b"), Enabled: true},
+		secrets: map[string]*domain.SecretPair{
+			keyA: {SecretID: keyA, AppID: 1, SecretKey: []byte(secretA), Enabled: true},
+			keyB: {SecretID: keyB, AppID: 2, SecretKey: []byte("secret-for-app-b"), Enabled: true},
 		},
 	}
-	h := &harness{sites: sites, clock: time.Unix(1_790_000_000, 0), ip: netip.MustParseAddr("192.0.2.10")}
+	h := &harness{apps: apps, clock: time.Unix(1_790_000_000, 0), ip: netip.MustParseAddr("192.0.2.10")}
 	h.g = &Gateway{
-		Sites: sites, State: repository.NewState(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
+		Apps: apps, State: repository.NewState(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
 		Settings: Settings{ChallengeTTL: 120 * time.Second, TokenTTL: 60 * time.Second, ResultTTL: 600 * time.Second,
-			ClockSkew: 5 * time.Second, MaxDifficulty: 1 << 20,
+			ClockSkew: 5 * time.Second, MaxDifficulty: 1 << 20, SignatureWindow: 300 * time.Second,
 			ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000},
 		Now: func() time.Time { return h.clock },
 	}
@@ -90,7 +84,7 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) issue(t *testing.T) *IssueOutput {
 	t.Helper()
-	out, _, err := h.g.Issue(context.Background(), IssueInput{SiteKey: siteA, Action: "login", Origin: originA, ClientIP: h.ip})
+	out, _, err := h.g.Issue(context.Background(), IssueInput{AppKey: appA, Action: "login", Origin: originA, ClientIP: h.ip})
 	if err != nil {
 		t.Fatalf("issue: %v", err)
 	}
@@ -98,7 +92,7 @@ func (h *harness) issue(t *testing.T) *IssueOutput {
 }
 
 func (h *harness) solve(c *IssueOutput, nonces []string) (*SolveOutput, error) {
-	out, _, err := h.g.Solve(context.Background(), SolveInput{SiteKey: siteA, Challenge: c.Challenge, Nonces: nonces, Origin: originA, ClientIP: h.ip})
+	out, _, err := h.g.Solve(context.Background(), SolveInput{AppKey: appA, Challenge: c.Challenge, Nonces: nonces, Origin: originA, ClientIP: h.ip})
 	return out, err
 }
 
@@ -114,8 +108,7 @@ func (h *harness) token(t *testing.T) string {
 }
 
 func (h *harness) verify(token, action, requestID string) (*VerifyOutput, error) {
-	return h.g.Verify(context.Background(), VerifyInput{Authorization: "Bearer " + keyA + "." + secretA,
-		SiteKey: siteA, Token: token, Action: action, RequestID: requestID})
+	return h.g.Verify(context.Background(), signed(keyA, secretA, h.clock, appA, token, action, requestID))
 }
 
 func code(err error) string {
@@ -133,7 +126,7 @@ func TestHappyPathAndReplay(t *testing.T) {
 	h := newHarness(t)
 	tok := h.token(t)
 	out, err := h.verify(tok, "login", "req-1")
-	if err != nil || !out.Success || out.SiteKey != siteA || out.Action != "login" || out.VerifiedAt != h.clock.Unix() {
+	if err != nil || !out.Success || out.AppKey != appA || out.Action != "login" || out.VerifiedAt != h.clock.Unix() {
 		t.Fatalf("verify: %+v %v", out, err)
 	}
 	h.clock = h.clock.Add(30 * time.Second)
@@ -150,13 +143,13 @@ func TestHappyPathAndReplay(t *testing.T) {
 func TestVerifyRejectionsAre200(t *testing.T) {
 	h := newHarness(t)
 	tok := h.token(t)
-	forged := "bgt1." + siteA + "." + strings.Repeat("A", 43)
-	crossSite := "bgt1." + siteB + "." + strings.Repeat("A", 43)
+	forged := "bgt1." + appA + "." + strings.Repeat("A", 43)
+	crossApp := "bgt1." + appB + "." + strings.Repeat("A", 43)
 	for name, c := range map[string]struct{ token, action, want string }{
 		"empty":           {"", "login", "TOKEN_INVALID"},
 		"garbage":         {"not-a-token", "login", "TOKEN_INVALID"},
 		"forged":          {forged, "login", "TOKEN_INVALID"},
-		"other site":      {crossSite, "login", "SITE_MISMATCH"},
+		"other app":       {crossApp, "login", "APP_MISMATCH"},
 		"action mismatch": {tok, "signup", "ACTION_MISMATCH"},
 	} {
 		out, err := h.verify(c.token, c.action, "req-"+strings.ReplaceAll(name, " ", "-"))
@@ -176,13 +169,11 @@ func TestVerifyCallerErrors(t *testing.T) {
 	if _, err := h.verify(tok, "login", "bad id with spaces"); code(err) != "INVALID_REQUEST" {
 		t.Fatalf("bad request_id: %v", err)
 	}
-	if _, err := h.g.Verify(context.Background(), VerifyInput{Authorization: "Bearer " + keyA + ".wrong",
-		SiteKey: siteA, Token: tok, Action: "login", RequestID: "r"}); code(err) != "UNAUTHORIZED" {
+	if _, err := h.g.Verify(context.Background(), signed(keyA, "wrong", h.clock, appA, tok, "login", "r")); code(err) != "UNAUTHORIZED" {
 		t.Fatalf("wrong secret: %v", err)
 	}
-	if _, err := h.g.Verify(context.Background(), VerifyInput{Authorization: "Bearer " + keyB + ".secret-for-site-b",
-		SiteKey: siteA, Token: tok, Action: "login", RequestID: "r"}); code(err) != "SITE_FORBIDDEN" {
-		t.Fatalf("key for other site: %v", err)
+	if _, err := h.g.Verify(context.Background(), signed(keyB, "secret-for-app-b", h.clock, appA, tok, "login", "r")); code(err) != "APP_FORBIDDEN" {
+		t.Fatalf("key for other app: %v", err)
 	}
 	if _, err := h.verify(tok, "login", "same"); err != nil {
 		t.Fatal(err)
@@ -198,14 +189,14 @@ func TestRevocationBeatsCachedPass(t *testing.T) {
 	if out, err := h.verify(tok, "login", "req"); err != nil || !out.Success {
 		t.Fatal(err)
 	}
-	h.sites.keys[keyA].Enabled = false
+	h.apps.secrets[keyA].Enabled = false
 	if _, err := h.verify(tok, "login", "req"); code(err) != "UNAUTHORIZED" {
 		t.Fatalf("revoked key replay: %v", err)
 	}
-	h.sites.keys[keyA].Enabled = true
-	h.sites.sites[siteA].Enabled = false
-	if _, err := h.verify(tok, "login", "req"); code(err) != "SITE_FORBIDDEN" {
-		t.Fatalf("disabled site replay: %v", err)
+	h.apps.secrets[keyA].Enabled = true
+	h.apps.apps[appA].Enabled = false
+	if _, err := h.verify(tok, "login", "req"); code(err) != "APP_FORBIDDEN" {
+		t.Fatalf("disabled app replay: %v", err)
 	}
 }
 
@@ -251,19 +242,19 @@ func TestSolveRules(t *testing.T) {
 	}
 }
 
-func TestSolveBindsSiteAndOrigin(t *testing.T) {
+func TestSolveBindsAppAndOrigin(t *testing.T) {
 	h := newHarness(t)
 	c := h.issue(t)
 	nonces, _ := pow.Solve(c.Algorithm, c.ChallengeID, c.Params)
 	ctx := context.Background()
-	if _, _, err := h.g.Solve(ctx, SolveInput{SiteKey: siteB, Challenge: c.Challenge, Nonces: nonces, Origin: "https://b.example", ClientIP: h.ip}); code(err) != "SITE_FORBIDDEN" {
-		t.Fatalf("other site: %v", err)
+	if _, _, err := h.g.Solve(ctx, SolveInput{AppKey: appB, Challenge: c.Challenge, Nonces: nonces, Origin: "https://b.example", ClientIP: h.ip}); code(err) != "APP_FORBIDDEN" {
+		t.Fatalf("other app: %v", err)
 	}
-	if _, _, err := h.g.Solve(ctx, SolveInput{SiteKey: siteA, Challenge: c.Challenge, Nonces: nonces, Origin: "https://evil.example", ClientIP: h.ip}); code(err) != "ORIGIN_NOT_ALLOWED" {
+	if _, _, err := h.g.Solve(ctx, SolveInput{AppKey: appA, Challenge: c.Challenge, Nonces: nonces, Origin: "https://evil.example", ClientIP: h.ip}); code(err) != "ORIGIN_NOT_ALLOWED" {
 		t.Fatalf("other origin: %v", err)
 	}
 	// Removing the origin after issuance takes effect immediately.
-	h.sites.sites[siteA].Origins = nil
+	h.apps.apps[appA].Origins = nil
 	if _, err := h.solve(c, nonces); code(err) != "ORIGIN_NOT_ALLOWED" {
 		t.Fatalf("removed origin: %v", err)
 	}
@@ -276,12 +267,12 @@ func TestIssueRules(t *testing.T) {
 		in   IssueInput
 		want string
 	}{
-		"missing origin": {IssueInput{SiteKey: siteA, Action: "login"}, "ORIGIN_NOT_ALLOWED"},
-		"wrong origin":   {IssueInput{SiteKey: siteA, Action: "login", Origin: "https://evil.example"}, "ORIGIN_NOT_ALLOWED"},
-		"unknown site":   {IssueInput{SiteKey: "unknown_site", Action: "login", Origin: originA}, "SITE_FORBIDDEN"},
-		"disabled":       {IssueInput{SiteKey: siteA, Action: "off", Origin: originA}, "ACTION_FORBIDDEN"},
-		"unknown action": {IssueInput{SiteKey: siteA, Action: "nope", Origin: originA}, "ACTION_FORBIDDEN"},
-		"bad action":     {IssueInput{SiteKey: siteA, Action: "Bad Action", Origin: originA}, "INVALID_REQUEST"},
+		"missing origin": {IssueInput{AppKey: appA, Action: "login"}, "ORIGIN_NOT_ALLOWED"},
+		"wrong origin":   {IssueInput{AppKey: appA, Action: "login", Origin: "https://evil.example"}, "ORIGIN_NOT_ALLOWED"},
+		"unknown app":    {IssueInput{AppKey: "unknown_app", Action: "login", Origin: originA}, "APP_FORBIDDEN"},
+		"disabled":       {IssueInput{AppKey: appA, Action: "off", Origin: originA}, "ACTION_FORBIDDEN"},
+		"unknown action": {IssueInput{AppKey: appA, Action: "nope", Origin: originA}, "ACTION_FORBIDDEN"},
+		"bad action":     {IssueInput{AppKey: appA, Action: "Bad Action", Origin: originA}, "INVALID_REQUEST"},
 	} {
 		c.in.ClientIP = h.ip
 		if _, _, err := h.g.Issue(ctx, c.in); code(err) != c.want {
@@ -293,7 +284,56 @@ func TestIssueRules(t *testing.T) {
 	h.issue(t)
 	// Same /64 shares the bucket.
 	h.ip = netip.MustParseAddr("2001:db8::2")
-	if _, _, err := h.g.Issue(ctx, IssueInput{SiteKey: siteA, Action: "login", Origin: originA, ClientIP: h.ip}); code(err) != "RATE_LIMITED" {
+	if _, _, err := h.g.Issue(ctx, IssueInput{AppKey: appA, Action: "login", Origin: originA, ClientIP: h.ip}); code(err) != "RATE_LIMITED" {
 		t.Fatalf("rate limit: %v", err)
+	}
+}
+
+func TestSignatureRules(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	tok := h.token(t)
+
+	tampered := signed(keyA, secretA, h.clock, appA, tok, "login", "r-tamper")
+	tampered.Body = append([]byte(nil), tampered.Body...)
+	tampered.Body[len(tampered.Body)-2] = 'X'
+	if _, err := h.g.Verify(ctx, tampered); code(err) != "UNAUTHORIZED" {
+		t.Fatalf("tampered body: %v", err)
+	}
+
+	for name, skew := range map[string]time.Duration{"too old": -301 * time.Second, "too new": 301 * time.Second} {
+		in := signed(keyA, secretA, h.clock.Add(skew), appA, tok, "login", "r-ts")
+		if _, err := h.g.Verify(ctx, in); code(err) != "TIMESTAMP_EXPIRED" {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if _, err := h.g.Verify(ctx, signed(keyA, secretA, h.clock.Add(-299*time.Second), appA, tok, "login", "r-edge")); err != nil {
+		t.Fatalf("inside window: %v", err)
+	}
+
+	in := signed(keyA, secretA, h.clock, appA, tok, "login", "r-replay")
+	if _, err := h.g.Verify(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.g.Verify(ctx, in); code(err) != "NONCE_REUSED" {
+		t.Fatalf("replayed signed request: %v", err)
+	}
+	// An SDK retry re-signs with a new nonce and gets the idempotent result.
+	if out, err := h.g.Verify(ctx, signed(keyA, secretA, h.clock, appA, tok, "login", "r-replay")); err != nil || out.Reason != "TOKEN_CONSUMED" {
+		t.Fatalf("re-signed retry: %+v %v", out, err)
+	}
+
+	for name, mutate := range map[string]func(*VerifyInput){
+		"unknown secret": func(v *VerifyInput) { v.SecretID = "sid_unknown_1" },
+		"short nonce":    func(v *VerifyInput) { v.Nonce = "short" },
+		"bad timestamp":  func(v *VerifyInput) { v.Timestamp = "soon" },
+		"upper hex sig":  func(v *VerifyInput) { v.Signature = strings.ToUpper(v.Signature) },
+		"missing sig":    func(v *VerifyInput) { v.Signature = "" },
+	} {
+		v := signed(keyA, secretA, h.clock, appA, tok, "login", "r-fmt")
+		mutate(&v)
+		if _, err := h.g.Verify(ctx, v); code(err) != "UNAUTHORIZED" {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

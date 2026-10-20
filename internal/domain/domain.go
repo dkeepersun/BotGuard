@@ -16,16 +16,16 @@ var (
 )
 
 var (
-	siteKeyPattern   = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
+	appKeyPattern    = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
 	actionPattern    = regexp.MustCompile(`^[a-z0-9_]{1,32}$`)
 	requestIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-	keyIDPattern     = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
+	secretIDPattern  = regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`)
 )
 
-func ValidSiteKey(s string) bool   { return siteKeyPattern.MatchString(s) }
+func ValidAppKey(s string) bool    { return appKeyPattern.MatchString(s) }
 func ValidAction(s string) bool    { return actionPattern.MatchString(s) }
 func ValidRequestID(s string) bool { return requestIDPattern.MatchString(s) }
-func ValidKeyID(s string) bool     { return keyIDPattern.MatchString(s) }
+func ValidSecretID(s string) bool  { return secretIDPattern.MatchString(s) }
 
 // ActionPolicy is the per-action PoW configuration.
 type ActionPolicy struct {
@@ -34,9 +34,9 @@ type ActionPolicy struct {
 	Difficulty uint64
 }
 
-type Site struct {
+type App struct {
 	ID            int64
-	PublicKey     string
+	AppKey        string
 	Enabled       bool
 	PolicyVersion int64
 	// Origins are normalized with NormalizeOrigin.
@@ -44,7 +44,7 @@ type Site struct {
 	Actions map[string]ActionPolicy
 }
 
-func (s *Site) AllowsOrigin(origin string) bool {
+func (s *App) AllowsOrigin(origin string) bool {
 	for _, o := range s.Origins {
 		if o == origin {
 			return true
@@ -53,16 +53,18 @@ func (s *Site) AllowsOrigin(origin string) bool {
 	return false
 }
 
-type APIKey struct {
-	KeyID      string
-	SiteID     int64
-	SecretHash []byte // SHA-256 of the high-entropy secret
-	Enabled    bool
-	ExpiresAt  *time.Time
+// SecretPair is an app's server credential, like Yidun's secretId/secretKey.
+// SecretKey is the decrypted HMAC key; it never leaves the gateway process.
+type SecretPair struct {
+	SecretID  string
+	AppID     int64
+	SecretKey []byte
+	Enabled   bool
+	ExpiresAt *time.Time
 }
 
-func (k *APIKey) Usable(now time.Time) bool {
-	return k.Enabled && (k.ExpiresAt == nil || now.Before(*k.ExpiresAt))
+func (k *SecretPair) Usable(now time.Time) bool {
+	return k.Enabled && len(k.SecretKey) > 0 && (k.ExpiresAt == nil || now.Before(*k.ExpiresAt))
 }
 
 // NormalizeOrigin returns scheme://host[:port] in lower case with default

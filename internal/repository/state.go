@@ -19,7 +19,7 @@ const (
 	ReasonConsumed = "TOKEN_CONSUMED"
 	ReasonAction   = "ACTION_MISMATCH"
 	ReasonOrigin   = "ORIGIN_NOT_ALLOWED"
-	ReasonSite     = "SITE_MISMATCH"
+	ReasonApp      = "APP_MISMATCH"
 )
 
 var ErrIdempotencyConflict = errors.New("request_id reused with a different request")
@@ -79,14 +79,20 @@ func NewState(rds *redis.Redis) *State { return &State{rds: rds} }
 
 func usedKey(challengeID string) string { return "bg:pow:used:" + challengeID }
 
-// Keys for one site share a hash tag so the verify script stays single-slot
+// Keys for one app share a hash tag so the verify script stays single-slot
 // under Redis Cluster.
-func tokenKey(siteID int64, tokenHash string) string {
-	return fmt.Sprintf("bg:{%d}:token:%s", siteID, tokenHash)
+func tokenKey(appID int64, tokenHash string) string {
+	return fmt.Sprintf("bg:{%d}:token:%s", appID, tokenHash)
 }
 
-func resultKey(siteID int64, requestID string) string {
-	return fmt.Sprintf("bg:{%d}:verify:%s", siteID, requestID)
+func resultKey(appID int64, requestID string) string {
+	return fmt.Sprintf("bg:{%d}:verify:%s", appID, requestID)
+}
+
+// MarkNonce reports false when this secret already used the nonce within ttl,
+// i.e. the signed request is a replay.
+func (s *State) MarkNonce(ctx context.Context, secretID, nonce string, ttl time.Duration) (bool, error) {
+	return s.rds.SetnxExCtx(ctx, "bg:nonce:"+secretID+":"+nonce, "1", ceilSeconds(ttl))
 }
 
 // MarkChallengeUsed reports false when the challenge was already submitted.
@@ -102,21 +108,21 @@ type TokenRecord struct {
 
 // PutToken keeps the record for keyTTL (longer than the logical expiry) so
 // verify can tell expired and consumed tokens apart from unknown ones.
-func (s *State) PutToken(ctx context.Context, siteID int64, tokenHash string, rec TokenRecord, keyTTL time.Duration) error {
-	_, err := s.rds.EvalCtx(ctx, putTokenScript, []string{tokenKey(siteID, tokenHash)},
+func (s *State) PutToken(ctx context.Context, appID int64, tokenHash string, rec TokenRecord, keyTTL time.Duration) error {
+	_, err := s.rds.EvalCtx(ctx, putTokenScript, []string{tokenKey(appID, tokenHash)},
 		rec.Action, rec.Origin, strconv.FormatInt(rec.ExpiresAt, 10), strconv.Itoa(ceilSeconds(keyTTL)))
 	return err
 }
 
 type ConsumeInput struct {
-	SiteID         int64
+	AppID          int64
 	RequestID      string
 	RequestDigest  string
 	TokenHash      string
 	Action         string
 	AllowedOrigins []string
 	// Forced records this rejection without touching the token, for tokens
-	// rejected before lookup (malformed, other site). It still goes through
+	// rejected before lookup (malformed, other app). It still goes through
 	// the idempotency record so request_id conflicts are detected.
 	Forced    string
 	Now       int64
@@ -131,7 +137,7 @@ func (s *State) Consume(ctx context.Context, in ConsumeInput) (outcome string, r
 		args = append(args, o)
 	}
 	res, err := s.rds.EvalCtx(ctx, verifyScript,
-		[]string{resultKey(in.SiteID, in.RequestID), tokenKey(in.SiteID, in.TokenHash)}, args...)
+		[]string{resultKey(in.AppID, in.RequestID), tokenKey(in.AppID, in.TokenHash)}, args...)
 	if err != nil {
 		return "", false, err
 	}

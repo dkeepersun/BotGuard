@@ -1,0 +1,24 @@
+[
+  {
+    "name": "verify request",
+    "secret_key": "kD3n9QxV2bLr7tYpZ0aFhW8sJmC4eUiN6oGq1RvXyTw",
+    "method": "POST",
+    "path": "/v1/verify",
+    "timestamp": 1790000000,
+    "nonce": "n0nce_ABCDEFGHIJKL",
+    "body": "{\"app_key\":\"app_demo\",\"token\":\"bgt1.app_demo.x\",\"action\":\"login\",\"request_id\":\"r-1\"}",
+    "canonical": "BG1-HMAC-SHA256\nPOST\n/v1/verify\n1790000000\nn0nce_ABCDEFGHIJKL\n29765d68f68c2065baa86cd49f307128bfe3c53702ccc6b836d84759cd90dfb3",
+    "signature": "f71473dba56b90be5160bc3ef08073540fa4aa1c19a84eaa458063f787761404"
+  },
+  {
+    "name": "empty body",
+    "secret_key": "s3cret-key-with-utf8-中文",
+    "method": "POST",
+    "path": "/v1/verify",
+    "timestamp": 0,
+    "nonce": "0000000000000000",
+    "body": "",
+    "canonical": "BG1-HMAC-SHA256\nPOST\n/v1/verify\n0\n0000000000000000\ne3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "signature": "98a36a510e0d3702251a9ae86f91a5889b10715eb79043e20577aa2256897a5b"
+  }
+]

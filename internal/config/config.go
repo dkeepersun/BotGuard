@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/service/challenge"
+	"github.com/dkeepersun/BotGuard/internal/service/sealer"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 	"github.com/zeromicro/go-zero/rest"
 )
@@ -43,12 +44,17 @@ type GatewayConfig struct {
 		TTLSeconds    int    `json:",default=120"`
 		MaxDifficulty uint64 `json:",default=1000000"`
 	}
-	TokenTTLSeconds        int `json:",default=60"`
-	VerifyResultTTLSeconds int `json:",default=600"`
-	ClockSkewSeconds       int `json:",default=5"`
+	// SecretKEK seals app secret keys at rest: "id:base64(32 bytes)", from env.
+	SecretKEK string
+	// SecretKEKPrevious are decrypt-only KEKs kept during a KEK rotation.
+	SecretKEKPrevious      []string `json:",optional"`
+	SignatureWindowSeconds int      `json:",default=300"`
+	TokenTTLSeconds        int      `json:",default=60"`
+	VerifyResultTTLSeconds int      `json:",default=600"`
+	ClockSkewSeconds       int      `json:",default=5"`
 	// TrustedProxies are CIDRs whose X-Forwarded-For entries are believed.
 	TrustedProxies []string `json:",optional"`
-	SiteCache      struct {
+	AppCache       struct {
 		TTLSeconds int `json:",default=10"`
 		Limit      int `json:",default=10000"`
 	}
@@ -72,9 +78,16 @@ func (c GatewayConfig) Keyring() (*challenge.Keyring, error) {
 	return challenge.NewKeyring(keys)
 }
 
+func (c GatewayConfig) Sealer() (*sealer.Sealer, error) {
+	return sealer.New(c.SecretKEK, c.SecretKEKPrevious...)
+}
+
 func (c GatewayConfig) Validate() error {
 	if _, err := c.Keyring(); err != nil {
 		return err
+	}
+	if _, err := c.Sealer(); err != nil {
+		return fmt.Errorf("SecretKEK: %w", err)
 	}
 	if _, err := NormalizeMySQLDSN(c.MySQL.DataSource); err != nil {
 		return fmt.Errorf("MySQL.DataSource: %w", err)
@@ -93,8 +106,9 @@ func (c GatewayConfig) Validate() error {
 		inRange("TokenTTLSeconds", c.TokenTTLSeconds, 10, 600),
 		inRange("VerifyResultTTLSeconds", c.VerifyResultTTLSeconds, 60, 3600),
 		inRange("ClockSkewSeconds", c.ClockSkewSeconds, 0, 30),
-		inRange("SiteCache.TTLSeconds", c.SiteCache.TTLSeconds, 1, 300),
-		inRange("SiteCache.Limit", c.SiteCache.Limit, 100, 1_000_000),
+		inRange("SignatureWindowSeconds", c.SignatureWindowSeconds, 30, 900),
+		inRange("AppCache.TTLSeconds", c.AppCache.TTLSeconds, 1, 300),
+		inRange("AppCache.Limit", c.AppCache.Limit, 100, 1_000_000),
 		inRange("RateLimit.ChallengePerIPPerMinute", c.RateLimit.ChallengePerIPPerMinute, 1, 1_000_000),
 		inRange("RateLimit.SolvePerIPPerMinute", c.RateLimit.SolvePerIPPerMinute, 1, 1_000_000),
 		inRange("RateLimit.VerifyPerKeyPerMinute", c.RateLimit.VerifyPerKeyPerMinute, 1, 10_000_000),
