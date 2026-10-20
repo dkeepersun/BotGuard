@@ -1,0 +1,139 @@
+[
+  {
+    "name": "solved k=8 difficulty=64",
+    "algorithm": "sha256-target-v1",
+    "challenge_id": "AAECAwQFBgcICQoLDA0ODw",
+    "params": {
+      "puzzles": 8,
+      "target": "0400000000000000000000000000000000000000000000000000000000000000"
+    },
+    "nonces": [
+      "46",
+      "130",
+      "106",
+      "123",
+      "26",
+      "27",
+      "251",
+      "83"
+    ],
+    "valid": true
+  },
+  {
+    "name": "one wrong nonce",
+    "algorithm": "sha256-target-v1",
+    "challenge_id": "AAECAwQFBgcICQoLDA0ODw",
+    "params": {
+      "puzzles": 8,
+      "target": "0400000000000000000000000000000000000000000000000000000000000000"
+    },
+    "nonces": [
+      "46",
+      "130",
+      "106",
+      "123",
+      "26",
+      "27",
+      "251",
+      "18446744073709551615"
+    ],
+    "valid": false
+  },
+  {
+    "name": "digest equals target",
+    "algorithm": "sha256-target-v1",
+    "challenge_id": "AAECAwQFBgcICQoLDA0ODw",
+    "params": {
+      "puzzles": 1,
+      "target": "baf32d65138cd6e3839bdd522c3a6dcb5075ee175a21cbdb9f2f8ddecf60fcfa"
+    },
+    "nonces": [
+      "0"
+    ],
+    "valid": false
+  },
+  {
+    "name": "digest one below target",
+    "algorithm": "sha256-target-v1",
+    "challenge_id": "AAECAwQFBgcICQoLDA0ODw",
+    "params": {
+      "puzzles": 1,
+      "target": "baf32d65138cd6e3839bdd522c3a6dcb5075ee175a21cbdb9f2f8ddecf60fcfb"
+    },
+    "nonces": [
+      "0"
+    ],
+    "valid": true
+  },
+  {
+    "name": "k=1 difficulty=1 nonce=0",
+    "algorithm": "sha256-target-v1",
+    "challenge_id": "AAECAwQFBgcICQoLDA0ODw",
+    "params": {
+      "puzzles": 1,
+      "target": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "nonces": [
+      "0"
+    ],
+    "valid": true
+  },
+  {
+    "name": "20 digit nonce",
+    "algorithm": "sha256-target-v1",
+    "challenge_id": "AAECAwQFBgcICQoLDA0ODw",
+    "params": {
+      "puzzles": 1,
+      "target": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "nonces": [
+      "18446744073709551615"
+    ],
+    "valid": true
+  },
+  {
+    "name": "leading zero nonce",
+    "algorithm": "sha256-target-v1",
+    "challenge_id": "AAECAwQFBgcICQoLDA0ODw",
+    "params": {
+      "puzzles": 1,
+      "target": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "nonces": [
+      "01"
+    ],
+    "valid": false
+  },
+  {
+    "name": "21 digit nonce",
+    "algorithm": "sha256-target-v1",
+    "challenge_id": "AAECAwQFBgcICQoLDA0ODw",
+    "params": {
+      "puzzles": 1,
+      "target": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+    },
+    "nonces": [
+      "100000000000000000000"
+    ],
+    "valid": false
+  },
+  {
+    "name": "nonce count mismatch",
+    "algorithm": "sha256-target-v1",
+    "challenge_id": "AAECAwQFBgcICQoLDA0ODw",
+    "params": {
+      "puzzles": 8,
+      "target": "0400000000000000000000000000000000000000000000000000000000000000"
+    },
+    "nonces": [
+      "46",
+      "130",
+      "106",
+      "123",
+      "26",
+      "27",
+      "251"
+    ],
+    "valid": false
+  }
+]

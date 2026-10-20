@@ -1,0 +1,9 @@
+Name: botguard-admin-preview
+Host: 127.0.0.1
+Port: 8091
+Mode: dev
+Timeout: 3000
+MaxBytes: 65536
+Middlewares:
+  Log: false
+  Trace: false

@@ -1,0 +1,175 @@
+package handler
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"io"
+	"mime"
+	"net/http"
+
+	"github.com/dkeepersun/BotGuard/internal/errx"
+	"github.com/dkeepersun/BotGuard/internal/logic"
+	"github.com/dkeepersun/BotGuard/internal/response"
+	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/zeromicro/go-zero/rest"
+)
+
+const maxBody = 8 << 10
+
+func Health(w http.ResponseWriter, r *http.Request) {
+	response.JSON(w, http.StatusOK, map[string]string{"status": "alive"})
+}
+
+// Readiness is the admin preview's probe: it has no stores to check and must
+// never report ready.
+func Readiness(w http.ResponseWriter, r *http.Request) {
+	response.JSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready", "reason": "preview_only"})
+}
+
+type Gateway struct {
+	Logic *logic.Gateway
+	IPs   *clientip.Resolver
+	Ready func(ctx context.Context) bool
+}
+
+func (g *Gateway) Register(s *rest.Server) {
+	s.AddRoutes([]rest.Route{
+		{Method: http.MethodGet, Path: "/healthz", Handler: Health},
+		{Method: http.MethodGet, Path: "/readyz", Handler: g.readiness},
+		{Method: http.MethodPost, Path: "/v1/challenges", Handler: g.challenges},
+		{Method: http.MethodOptions, Path: "/v1/challenges", Handler: preflight},
+		{Method: http.MethodPost, Path: "/v1/solutions", Handler: g.solutions},
+		{Method: http.MethodOptions, Path: "/v1/solutions", Handler: preflight},
+		{Method: http.MethodPost, Path: "/v1/verify", Handler: g.verify},
+	})
+}
+
+func (g *Gateway) readiness(w http.ResponseWriter, r *http.Request) {
+	if !g.Ready(r.Context()) {
+		response.JSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready", "reason": "store_unavailable"})
+		return
+	}
+	response.JSON(w, http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func newRequestID() string {
+	var b [12]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
+
+// decode accepts application/json and text/plain bodies. text/plain lets the
+// browser widget send a CORS "simple request" and skip the preflight.
+func decode(w http.ResponseWriter, r *http.Request, v any) error {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || (mt != "application/json" && mt != "text/plain") {
+		return errx.InvalidRequest("Content-Type 必须为 application/json 或 text/plain")
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBody))
+	if err := dec.Decode(v); err != nil {
+		return errx.InvalidRequest("请求体不是合法 JSON")
+	}
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return errx.InvalidRequest("请求体只能包含一个 JSON 对象")
+	}
+	return nil
+}
+
+func fail(w http.ResponseWriter, err error, requestID string) {
+	var e *errx.Error
+	if !errors.As(err, &e) {
+		e = errx.ErrUnavailable
+	}
+	response.Fail(w, e.Status, e.Code, e.Message, requestID, e.RetryAfter)
+}
+
+// cors is only ever called with an origin already allowed for the site.
+func cors(w http.ResponseWriter, origin string) {
+	w.Header().Add("Vary", "Origin")
+	if origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+	}
+}
+
+// preflight cannot know the site (no body), so it answers any origin. The
+// real request is still checked against the site's allowlist, and its
+// response only carries CORS headers for allowed origins.
+func preflight(w http.ResponseWriter, r *http.Request) {
+	w.Header().Add("Vary", "Origin")
+	if origin := r.Header.Get("Origin"); origin != "" {
+		w.Header().Set("Access-Control-Allow-Origin", origin)
+		w.Header().Set("Access-Control-Allow-Methods", "POST")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Max-Age", "600")
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
+	rid := newRequestID()
+	var body struct {
+		SiteKey string `json:"site_key"`
+		Action  string `json:"action"`
+	}
+	if err := decode(w, r, &body); err != nil {
+		fail(w, err, rid)
+		return
+	}
+	out, origin, err := g.Logic.Issue(r.Context(), logic.IssueInput{
+		SiteKey: body.SiteKey, Action: body.Action, Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r),
+	})
+	cors(w, origin)
+	if err != nil {
+		fail(w, err, rid)
+		return
+	}
+	response.OK(w, out, rid)
+}
+
+func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {
+	rid := newRequestID()
+	var body struct {
+		SiteKey   string   `json:"site_key"`
+		Challenge string   `json:"challenge"`
+		Nonces    []string `json:"nonces"`
+	}
+	if err := decode(w, r, &body); err != nil {
+		fail(w, err, rid)
+		return
+	}
+	out, origin, err := g.Logic.Solve(r.Context(), logic.SolveInput{
+		SiteKey: body.SiteKey, Challenge: body.Challenge, Nonces: body.Nonces,
+		Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r),
+	})
+	cors(w, origin)
+	if err != nil {
+		fail(w, err, rid)
+		return
+	}
+	response.OK(w, out, rid)
+}
+
+func (g *Gateway) verify(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		SiteKey   string `json:"site_key"`
+		Token     string `json:"token"`
+		Action    string `json:"action"`
+		RequestID string `json:"request_id"`
+	}
+	if err := decode(w, r, &body); err != nil {
+		fail(w, err, "")
+		return
+	}
+	out, err := g.Logic.Verify(r.Context(), logic.VerifyInput{
+		Authorization: r.Header.Get("Authorization"),
+		SiteKey:       body.SiteKey, Token: body.Token, Action: body.Action, RequestID: body.RequestID,
+	})
+	if err != nil {
+		fail(w, err, body.RequestID)
+		return
+	}
+	response.OK(w, out, body.RequestID)
+}

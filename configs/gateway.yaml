@@ -1,0 +1,44 @@
+Name: botguard-gateway
+Host: 127.0.0.1
+Port: 8090
+Mode: dev
+Timeout: 3000
+MaxBytes: 8192
+Middlewares:
+  Log: false
+  Trace: false
+
+Redis:
+  Host: 127.0.0.1:6379
+  Type: node
+  # Set true for Redis < 7.2, which lacks CLIENT SETINFO; otherwise go-zero's
+  # breaker counts the handshake error as a failure.
+  DisableIdentity: false
+
+MySQL:
+  # e.g. user:pass@tcp(127.0.0.1:3306)/botguard?parseTime=true&loc=UTC&time_zone=%27%2B00%3A00%27
+  DataSource: ${BOTGUARD_MYSQL_DSN}
+
+Challenge:
+  Keys:
+    # Generate with: openssl rand -base64 32
+    - ID: k1
+      Secret: ${BOTGUARD_CHALLENGE_KEY_K1}
+      Active: true
+  TTLSeconds: 120
+  MaxDifficulty: 1000000
+
+TokenTTLSeconds: 60
+VerifyResultTTLSeconds: 600
+ClockSkewSeconds: 5
+# CIDRs of reverse proxies whose X-Forwarded-For is trusted.
+TrustedProxies: []
+
+SiteCache:
+  TTLSeconds: 10
+  Limit: 10000
+
+RateLimit:
+  ChallengePerIPPerMinute: 120
+  SolvePerIPPerMinute: 120
+  VerifyPerKeyPerMinute: 6000
