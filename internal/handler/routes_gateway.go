@@ -39,7 +39,8 @@ func Readiness(w http.ResponseWriter, r *http.Request) {
 type Gateway struct {
 	Logic *logic.Gateway
 	IPs   *clientip.Resolver
-	Ready func(ctx context.Context) bool
+	// Ready returns "" when ready, otherwise a reason code for the probe.
+	Ready func(ctx context.Context) string
 }
 
 func (g *Gateway) Register(s *rest.Server) {
@@ -58,8 +59,8 @@ func (g *Gateway) Register(s *rest.Server) {
 }
 
 func (g *Gateway) readiness(w http.ResponseWriter, r *http.Request) {
-	if !g.Ready(r.Context()) {
-		response.JSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready", "reason": "store_unavailable"})
+	if reason := g.Ready(r.Context()); reason != "" {
+		response.JSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready", "reason": reason})
 		return
 	}
 	response.JSON(w, http.StatusOK, map[string]string{"status": "ready"})
@@ -208,6 +209,7 @@ func (g *Gateway) verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, err := g.Logic.Verify(r.Context(), logic.VerifyInput{
+		ClientIP:  g.IPs.Resolve(r),
 		SecretID:  r.Header.Get(signature.HeaderSecretID),
 		Timestamp: r.Header.Get(signature.HeaderTimestamp),
 		Nonce:     r.Header.Get(signature.HeaderNonce),

@@ -30,9 +30,23 @@ final class Client
     private readonly int $retries;
     private readonly ?string $appKey;
 
+    /** Local format checks, mirroring the gateway (internal/domain, internal/logic/gateway.go). */
+    private const APP_KEY_PATTERN = '/\A[A-Za-z0-9_-]{8,64}\z/';
+    private const ACTION_PATTERN = '/\A[a-z0-9_]{1,32}\z/';
+    private const REQUEST_ID_PATTERN = '/\A[A-Za-z0-9_-]{1,64}\z/';
     /**
-     * @param array{app_key?: string, timeout?: float, connect_timeout?: float, retries?: int, transport?: TransportInterface} $options
+     * Tokens are opaque to callers, but every token the gateway issues is
+     * base64url text joined by dots and at most 256 bytes; anything else is
+     * TOKEN_INVALID on the gateway too, so it is rejected without a request.
+     */
+    private const TOKEN_PATTERN = '/\A[A-Za-z0-9._-]{1,256}\z/';
+
+    /**
+     * @param array{app_key?: string, timeout?: float|int|string, connect_timeout?: float|int|string, retries?: int, transport?: TransportInterface} $options
      *   app_key: default app for verifyToken().
+     *   timeout / connect_timeout: seconds; empty, zero, negative or
+     *   non-numeric values fall back to 3.0 / 1.0, tiny ones are raised to
+     *   50 ms, so a request is never left without a time limit.
      *   retries: extra attempts after an unknown result (network error, 5xx),
      *   each re-signed with the same request_id. 429 is never retried here.
      */
@@ -46,7 +60,10 @@ final class Client
             throw new \InvalidArgumentException('secret_id 和 secret_key 不能为空');
         }
         $this->url = rtrim($endpoint, '/') . Signer::VERIFY_PATH;
-        $this->transport = $options['transport'] ?? new CurlTransport($options['timeout'] ?? 3.0, $options['connect_timeout'] ?? 1.0);
+        $this->transport = $options['transport'] ?? new CurlTransport(
+            CurlTransport::seconds($options['timeout'] ?? null, CurlTransport::DEFAULT_TIMEOUT),
+            CurlTransport::seconds($options['connect_timeout'] ?? null, CurlTransport::DEFAULT_CONNECT_TIMEOUT),
+        );
         $this->retries = max(0, (int) ($options['retries'] ?? 0));
         $this->appKey = isset($options['app_key']) && $options['app_key'] !== '' ? (string) $options['app_key'] : null;
     }
@@ -55,17 +72,32 @@ final class Client
      * One-line form, like Yidun's verify($validate): uses the app_key given
      * at construction and a fresh request_id. Pass a request_id derived from
      * your own operation when you need to retry after an unknown result.
+     *
+     * $token is whatever the browser submitted: anything that is not a
+     * well-formed token string (null, an array, bad UTF-8, oversized) is a
+     * local TOKEN_INVALID rejection and no request is sent.
      */
-    public function verifyToken(string $token, string $action, ?string $requestId = null): VerifyResult
+    public function verifyToken(mixed $token, string $action, ?string $requestId = null): VerifyResult
     {
         if ($this->appKey === null) {
             throw new \LogicException('verifyToken 需要在构造 Client 时传入 app_key 选项');
         }
-        return $this->verify(new VerifyRequest($this->appKey, $token, $action, $requestId ?? VerifyRequest::newRequestId()));
+        return $this->verify(new VerifyRequest($this->appKey, is_string($token) ? $token : '', $action, $requestId ?? VerifyRequest::newRequestId()));
     }
 
+    /**
+     * Malformed app_key, action or request_id are fixed by the caller's code
+     * or configuration, so they throw CallerErrorException (INVALID_REQUEST)
+     * before anything is sent. A malformed token comes from the browser and
+     * is a local Rejected result with reason TOKEN_INVALID, as the gateway
+     * would answer.
+     */
     public function verify(VerifyRequest $request): VerifyResult
     {
+        $this->checkCallerFields($request);
+        if (preg_match(self::TOKEN_PATTERN, $request->token) !== 1) {
+            return VerifyResult::ofReject(VerifyResult::TOKEN_INVALID, $request->requestId);
+        }
         $body = $request->toJson();
         for ($attempt = 0; ; $attempt++) {
             try {
@@ -79,6 +111,34 @@ final class Client
         }
     }
 
+    /** Keeps secret_key out of var_dump(), print_r() and debugger views. */
+    public function __debugInfo(): array
+    {
+        return [
+            'url' => $this->url,
+            'secretId' => $this->secretId,
+            'secretKey' => '[REDACTED]',
+            'appKey' => $this->appKey,
+            'retries' => $this->retries,
+            'transport' => $this->transport::class,
+        ];
+    }
+
+    private function checkCallerFields(VerifyRequest $request): void
+    {
+        $bad = match (true) {
+            preg_match(self::APP_KEY_PATTERN, $request->appKey) !== 1 => 'app_key 格式错误：应为 [A-Za-z0-9_-]，8–64 个字符',
+            preg_match(self::ACTION_PATTERN, $request->action) !== 1 => 'action 格式错误：应为 [a-z0-9_]，1–32 个字符，并由后端写死',
+            preg_match(self::REQUEST_ID_PATTERN, $request->requestId) !== 1 => 'request_id 格式错误：应为 [A-Za-z0-9_-]，1–64 个字符',
+            default => null,
+        };
+        if ($bad !== null) {
+            // request_id is echoed back only when it is well-formed.
+            $rid = preg_match(self::REQUEST_ID_PATTERN, $request->requestId) === 1 ? $request->requestId : null;
+            throw new CallerErrorException('BotGuard 请求未发送，' . $bad, 0, 'INVALID_REQUEST', $rid);
+        }
+    }
+
     private function attempt(VerifyRequest $request, string $body): VerifyResult
     {
         // Fresh timestamp and nonce per attempt; body and request_id unchanged.
@@ -88,19 +148,58 @@ final class Client
         } catch (TransportException $e) {
             throw new UnknownResultException('BotGuard 网络错误：' . $e->getMessage(), 0, null, $request->requestId, null, $e);
         }
+        $status = $resp->status;
+        if ($resp->truncated) {
+            // Retrying would only fetch the same oversized body again.
+            throw new ProtocolException('BotGuard 响应体超过大小上限（HTTP ' . $status . '）', $status, null, $request->requestId);
+        }
 
         $json = json_decode($resp->body, true);
         $code = is_array($json) && is_string($json['code'] ?? null) ? $json['code'] : null;
-        $message = is_array($json) && is_string($json['message'] ?? null) ? $json['message'] : 'HTTP ' . $resp->status;
+        $message = is_array($json) && is_string($json['message'] ?? null) ? $json['message'] : 'HTTP ' . $status;
 
-        if ($resp->status === 200) {
+        if ($status === 200) {
             return $this->parseOk($request, $json);
         }
-        if (in_array($resp->status, [400, 401, 403, 409], true)) {
-            throw new CallerErrorException($message, $resp->status, $code, $request->requestId);
+        if ($status === 429 || ($status >= 500 && $status <= 599)) {
+            $retryAfter = self::retryAfter($resp->headers['retry-after'] ?? null);
+            throw new UnknownResultException($message, $status, $code, $request->requestId, $retryAfter);
         }
-        $retryAfter = isset($resp->headers['retry-after']) ? (int) $resp->headers['retry-after'] : null;
-        throw new UnknownResultException($message, $resp->status, $code, $request->requestId, $retryAfter);
+        if ($status >= 300 && $status <= 499) {
+            // Redirects, 404/405 (wrong endpoint), 413/415 and the contract's
+            // 400/401/403/409: retrying the same request cannot succeed.
+            if ($code === null) {
+                $message = 'BotGuard 返回 HTTP ' . $status . '，请检查 endpoint 与网关配置';
+            }
+            throw new CallerErrorException($message, $status, $code, $request->requestId);
+        }
+        throw new ProtocolException('BotGuard 返回了契约之外的 HTTP ' . $status, $status, $code, $request->requestId);
+    }
+
+    /**
+     * Retry-After as delay-seconds or an HTTP-date (RFC 9110 §10.2.3);
+     * null when absent or unparseable, 0 for a date in the past.
+     */
+    private static function retryAfter(?string $value): ?int
+    {
+        if ($value === null) {
+            return null;
+        }
+        $value = trim((string) preg_replace('/\s+/', ' ', $value));
+        if (preg_match('/\A\d+\z/', $value) === 1) {
+            return (int) $value;
+        }
+        $utc = new \DateTimeZone('UTC');
+        // IMF-fixdate, then the obsolete RFC 850 and asctime forms.
+        foreach (['D, d M Y H:i:s \G\M\T', 'l, d-M-y H:i:s \G\M\T', 'D M j H:i:s Y'] as $format) {
+            $at = \DateTimeImmutable::createFromFormat('!' . $format, $value, $utc);
+            $errors = \DateTimeImmutable::getLastErrors();
+            $clean = $errors === false || ($errors['warning_count'] === 0 && $errors['error_count'] === 0);
+            if ($at !== false && $clean) {
+                return max(0, $at->getTimestamp() - time());
+            }
+        }
+        return null;
     }
 
     private function parseOk(VerifyRequest $request, mixed $json): VerifyResult

@@ -232,6 +232,10 @@ func TestChooseKind(t *testing.T) {
 	if kind, f := g.chooseKind(adaptive, risk.LevelMedium, true, nil); kind != domain.KindFallback || f != 8 {
 		t.Fatalf("fallback: %s ×%d", kind, f)
 	}
+	// Fallback must not be a discount for high risk: the factors compound.
+	if kind, f := g.chooseKind(adaptive, risk.LevelHigh, true, nil); kind != domain.KindFallback || f != 32 {
+		t.Fatalf("high-risk fallback: %s ×%d", kind, f)
+	}
 }
 
 func TestClickSolve(t *testing.T) {

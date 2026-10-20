@@ -4,7 +4,6 @@ Host: 0.0.0.0
 Port: 8090
 Mode: dev
 Timeout: 3000
-MaxBytes: 32768
 Middlewares:
   Log: false
   Trace: false

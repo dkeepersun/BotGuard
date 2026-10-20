@@ -38,7 +38,7 @@ $rawVerify = function (string $body, array $headers) use ($cfg, $rec): array {
 switch ($scenario) {
     case 'no_token':
         $r = ['title' => '不带 token 直接提交', 'expect' => 'Rejected · TOKEN_INVALID',
-            'explain' => '机器人跳过前端组件、直接 POST 表单。缺失或为空的 token 一律是业务拒绝（HTTP 200），业务服务器据此拒绝登录。',
+            'explain' => '机器人跳过前端组件、直接 POST 表单。缺失、为空或格式不对的 token 由 PHP SDK 在本地直接判为业务拒绝，不会请求 gateway（所以下面没有网络交互记录）；业务服务器据此拒绝登录。',
             'outcome' => $verify($app1(), $cfg['BG_APP_KEY'], '', 'login')];
         break;
 
@@ -124,10 +124,21 @@ switch ($scenario) {
     case 'bot_solve':
         $base = $cfg['internal_endpoint'];
         $origin = 'http://localhost:8080';
-        [$s1, $ch] = $rec->browserCall("$base/v1/challenges", $origin, ['app_key' => $cfg['BG_APP_KEY'], 'action' => 'login']);
+        // A script can forge "clean browser" signals; without them NO_SIGNALS
+        // alone escalates it to an interactive puzzle.
+        $signals = ['user_agent' => 'Mozilla/5.0 (Macintosh) Chrome/140', 'ms_to_click' => 2600,
+            'pointer_moves_before_click' => 40, 'pointer_type' => 'mouse'];
+        [$s1, $ch] = $rec->browserCall("$base/v1/challenges", $origin, ['app_key' => $cfg['BG_APP_KEY'], 'action' => 'login', 'signals' => $signals]);
         if ($s1 !== 200) {
             $r = ['title' => '脚本自动求解 PoW', 'expect' => 'Passed', 'explain' => '签发被拒（可能刚运行过「刷签发接口」，等一分钟限流窗口过去再试）。',
                 'outcome' => ['category' => 'Unknown', 'label' => "签发失败 HTTP $s1", 'reason' => $ch['code'] ?? null]];
+            break;
+        }
+        if (($ch['data']['kind'] ?? '') !== 'invisible') {
+            // Other server-side scenarios (e.g. repeated failures) share this IP and raise its risk.
+            $r = ['title' => '脚本不经浏览器，自己求解 PoW', 'expect' => 'Passed（这是 PoW 的真实局限）',
+                'explain' => '这个 IP 刚有过失败记录（例如运行过「同一 IP 连续失败」），风险升高，服务端改出交互题；只会算 PoW 的脚本拿不到 token。等 10 分钟失败窗口过去再试，就能看到纯 PoW 被脚本攻破。',
+                'outcome' => ['category' => 'Rejected', 'label' => '已升级', 'reason' => '本次出题：' . $ch['data']['kind']]];
             break;
         }
         $t0 = microtime(true);
@@ -136,7 +147,7 @@ switch ($scenario) {
         [, $s] = $rec->browserCall("$base/v1/solutions", $origin, ['app_key' => $cfg['BG_APP_KEY'], 'challenge' => $ch['data']['challenge'], 'nonces' => $sol['nonces']]);
         $token = $s['data']['token'] ?? '';
         $r = ['title' => '脚本不经浏览器，自己求解 PoW', 'expect' => 'Passed（这是 PoW 的真实局限）',
-            'explain' => "脚本用 PHP 在服务器上 {$ms} 毫秒完成了 " . number_format($sol['attempts']) . ' 次哈希，拿到了真 token。PoW 只提高批量请求的成本，不能区分人和机器；需要配合限流、按风险调高难度和业务规则。',
+            'explain' => "脚本伪造了一份正常浏览器的信号，再用 PHP 在服务器上 {$ms} 毫秒完成了 " . number_format($sol['attempts']) . ' 次哈希，拿到了真 token。PoW 只提高批量请求的成本，不能区分人和机器；需要配合限流、按风险调高难度和业务规则。',
             'outcome' => $verify($app1(), $cfg['BG_APP_KEY'], $token, 'login')];
         break;
 

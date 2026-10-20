@@ -92,7 +92,9 @@ func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback 
 	case policy.Mode == domain.ModeInvisible:
 		return domain.KindInvisible, factor
 	case fallback:
-		return domain.KindFallback, max(factor, g.Settings.FallbackDifficultyFactor)
+		// The factors compound: choosing fallback must never make a
+		// high-risk client's work cheaper than its hardest interactive kind.
+		return domain.KindFallback, factor * max(1, g.Settings.FallbackDifficultyFactor)
 	case level == risk.LevelHigh:
 		return domain.Hardest(kinds), factor
 	case policy.Mode == domain.ModeInteractive || level == risk.LevelMedium:
@@ -173,11 +175,11 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		return nil, "", errx.ErrUnavailable
 	}
 	if count > int64(g.Settings.ChallengePerIPPerMinute) {
-		return nil, "", errx.RateLimited(retry)
+		return nil, g.cachedOrigin(in.AppKey, origin), errx.RateLimited(retry)
 	}
 	if in.Fallback {
 		if err := g.limit(ctx, dimFallback, ipBucket, g.Settings.FallbackPerIPPerMinute); err != nil {
-			return nil, "", err
+			return nil, g.cachedOrigin(in.AppKey, origin), err
 		}
 	}
 	if !domain.ValidAppKey(in.AppKey) || !domain.ValidAction(in.Action) {
@@ -195,6 +197,11 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		return nil, origin, errx.ErrActionForbidden
 	}
 
+	if in.Signals != nil {
+		s := *in.Signals
+		s.PointerType = risk.NormalizePointer(s.PointerType)
+		in.Signals = &s
+	}
 	failures, err := g.State.Failures(ctx, ipBucket)
 	if err != nil {
 		logx.WithContext(ctx).Errorf("read failures: %v", err)
@@ -292,6 +299,9 @@ type SolveInput struct {
 type SolveOutput struct {
 	Token     string `json:"token"`
 	ExpiresAt int64  `json:"expires_at"`
+	// ExpiresIn is relative, so a browser with a wrong clock still knows
+	// how long the token lives.
+	ExpiresIn int64 `json:"expires_in"`
 }
 
 // fail records a failed attempt for the IP, raising its risk next time.
@@ -314,19 +324,13 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	}
 	p, private, err := g.Keys.Open(in.Challenge)
 	if err != nil {
-		return nil, "", errx.ErrChallengeInvalid
+		// No app is known yet; answer with CORS only if the cache already
+		// knows this origin, so the widget can read the error code.
+		return nil, g.cachedOrigin(in.AppKey, in.Origin), errx.ErrChallengeInvalid
 	}
 	var state sealedState
 	if len(private) > 0 && json.Unmarshal(private, &state) != nil {
 		return nil, "", errx.ErrChallengeInvalid
-	}
-	now := g.Now()
-	skew := int64(g.Settings.ClockSkew / time.Second)
-	if p.IssuedAt > now.Unix()+skew {
-		return nil, "", errx.ErrChallengeInvalid
-	}
-	if now.Unix() > p.ExpiresAt+skew {
-		return nil, "", errx.ErrChallengeExpired
 	}
 	if p.AppKey != in.AppKey {
 		return nil, "", errx.ErrAppForbidden
@@ -341,6 +345,16 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	}
 	if origin != p.Origin {
 		return nil, origin, errx.ErrOriginNotAllowed
+	}
+	// Time checks come after the origin is known, so the widget can read
+	// CHALLENGE_EXPIRED and fetch a new challenge.
+	now := g.Now()
+	skew := int64(g.Settings.ClockSkew / time.Second)
+	if p.IssuedAt > now.Unix()+skew {
+		return nil, origin, errx.ErrChallengeInvalid
+	}
+	if now.Unix() > p.ExpiresAt+skew {
+		return nil, origin, errx.ErrChallengeExpired
 	}
 	if policy, ok := app.Actions[p.Action]; !ok || !policy.Enabled {
 		return nil, origin, errx.ErrActionForbidden
@@ -368,7 +382,9 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 			points = append(points, slider.Point{T: t[0], X: t[1], Y: t[2]})
 		}
 	}
-	remaining := time.Unix(p.ExpiresAt+skew, 0).Sub(now)
+	// Another replica's clock may run up to skew behind ours and still accept
+	// the challenge until its own exp+skew, so keep the mark that much longer.
+	remaining := time.Unix(p.ExpiresAt+2*skew, 0).Sub(now)
 	first, err := g.State.MarkChallengeUsed(ctx, p.ChallengeID, remaining)
 	if err != nil {
 		logx.WithContext(ctx).Errorf("mark challenge: %v", err)
@@ -383,11 +399,11 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		}
 		return nil, origin, errx.ErrChallengeInvalid
 	}
+	input := risk.PointerMouse
+	if in.Signals != nil {
+		input = risk.NormalizePointer(in.Signals.PointerType)
+	}
 	if p.Kind == domain.KindSlider {
-		input := "mouse"
-		if in.Signals != nil && in.Signals.PointerType != "" {
-			input = in.Signals.PointerType
-		}
 		if reason := slider.Check(float64(state.X), in.Answer.X, g.Settings.SliderTolerance, points, input); reason != "" {
 			// One public code for every failure; the specific reason stays in our logs.
 			logx.WithContext(ctx).Infof("slider rejected: %s (app %d, %s)", reason, app.ID, input)
@@ -396,9 +412,10 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	}
 
 	if isClick {
-		input := "mouse"
-		if in.Signals != nil && in.Signals.PointerType != "" {
-			input = in.Signals.PointerType
+		// Click kinds cannot be answered from the keyboard; hold such a
+		// claim to the mouse rules.
+		if input == risk.PointerKeyboard {
+			input = risk.PointerMouse
 		}
 		if reason := click.Check(state.Targets, in.Answer.Clicks, in.Answer.MovesBetween, input); reason != "" {
 			logx.WithContext(ctx).Infof("%s rejected: %s (app %d, %s)", p.Kind, reason, app.ID, input)
@@ -411,8 +428,12 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if in.Signals != nil && in.Signals.UntrustedEvent {
 		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonUntrustedEvent], Reasons: []string{risk.ReasonUntrustedEvent}})
 	}
-	if p.Kind == domain.KindSlider && in.Signals != nil && in.Signals.PointerType == "keyboard" {
+	interactive := p.Kind == domain.KindSlider || isClick
+	if p.Kind == domain.KindSlider && input == risk.PointerKeyboard {
 		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonKeyboardInput], Reasons: []string{risk.ReasonKeyboardInput}})
+	}
+	if interactive && input == risk.PointerTouch {
+		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonTouchInput], Reasons: []string{risk.ReasonTouchInput}})
 	}
 
 	token, err := newToken(app.AppKey)
@@ -429,5 +450,5 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		logx.WithContext(ctx).Errorf("store token: %v", err)
 		return nil, origin, errx.ErrUnavailable
 	}
-	return &SolveOutput{Token: token, ExpiresAt: exp}, origin, nil
+	return &SolveOutput{Token: token, ExpiresAt: exp, ExpiresIn: int64(g.Settings.TokenTTL / time.Second)}, origin, nil
 }

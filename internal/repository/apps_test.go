@@ -3,6 +3,8 @@ package repository
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -59,5 +61,49 @@ func TestCachedAppsDoesNotCacheErrors(t *testing.T) {
 	src.fail = false
 	if s, err := c.AppByKey(ctx, "known-app"); err != nil || s.ID != 1 {
 		t.Fatalf("after recovery: %v %v", s, err)
+	}
+}
+
+// Random keys must not evict the apps in use, and PeekApp never queries.
+func TestCachedAppsMissesDoNotEvictHits(t *testing.T) {
+	src := &countingStore{}
+	c, _ := NewCachedApps(src, time.Minute, 100)
+	ctx := context.Background()
+	if _, ok := c.PeekApp("known-app"); ok || src.appCalls != 0 {
+		t.Fatal("peek before load")
+	}
+	if _, err := c.AppByKey(ctx, "known-app"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 500; i++ {
+		_, _ = c.AppByKey(ctx, fmt.Sprintf("random-%d", i))
+	}
+	before := src.appCalls
+	if _, err := c.AppByKey(ctx, "known-app"); err != nil || src.appCalls != before {
+		t.Fatalf("known app evicted by misses: %v, %d calls", err, src.appCalls-before)
+	}
+	if a, ok := c.PeekApp("known-app"); !ok || a.ID != 1 {
+		t.Fatal("peek after load")
+	}
+}
+
+func TestStoredMode(t *testing.T) {
+	cases := []struct {
+		mode, kinds string
+		want        string
+		wantKinds   []string
+		known       bool
+	}{
+		{"slider", "click_text", domain.ModeInteractive, []string{domain.KindSlider}, true},
+		{"adaptive", "slider,click_shape", domain.ModeAdaptive, []string{domain.KindSlider, domain.KindClickShape}, true},
+		{"invisible", "", domain.ModeInvisible, []string{domain.KindSlider}, true},
+		{"strict", "click_text", domain.ModeAdaptive, []string{domain.KindClickText}, false},
+		{"", "", domain.ModeAdaptive, []string{domain.KindSlider}, false},
+	}
+	for _, c := range cases {
+		mode, kinds, known := storedMode(c.mode, c.kinds)
+		if mode != c.want || !slices.Equal(kinds, c.wantKinds) || known != c.known {
+			t.Errorf("%q/%q: %s %v %v", c.mode, c.kinds, mode, kinds, known)
+		}
 	}
 }

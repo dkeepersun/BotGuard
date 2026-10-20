@@ -63,7 +63,30 @@ const (
 	// The slider was completed with arrow keys. That path skips the drag
 	// heuristics for accessibility, so a script can claim it; flag it.
 	ReasonKeyboardInput = "KEYBOARD_INPUT"
+	// The answer came from touch, which skips the mouse-only heuristics
+	// (straight drags, clicks without moves). Informational, like fallback:
+	// every relaxed path stays visible to the business server.
+	ReasonTouchInput = "TOUCH_INPUT"
 )
+
+// Pointer types the widget reports. Anything else is treated as a mouse, the
+// strictest path, so an invented value never relaxes a check.
+const (
+	PointerMouse    = "mouse"
+	PointerTouch    = "touch"
+	PointerPen      = "pen"
+	PointerKeyboard = "keyboard"
+)
+
+// NormalizePointer maps a client-reported pointer type onto the known set.
+func NormalizePointer(pt string) string {
+	switch pt {
+	case PointerTouch, PointerPen, PointerKeyboard:
+		return pt
+	default:
+		return PointerMouse
+	}
+}
 
 // Weights are the whole policy; tests pin them so changes are deliberate.
 var Weights = map[string]int{
@@ -84,6 +107,7 @@ var Weights = map[string]int{
 	ReasonDesktopNoPlugins:   10,
 	ReasonKeyboardInput:      15,
 	ReasonFallbackChosen:     0, // informational: the business server decides
+	ReasonTouchInput:         0, // informational
 }
 
 const (
@@ -133,9 +157,11 @@ func Assess(s *Signals, f Facts) Assessment {
 		hit(s.NoLanguages, ReasonNoLanguages)
 		hit(s.DesktopNoPlugins, ReasonDesktopNoPlugins)
 		// Touch taps and keyboard activation legitimately have no prior moves.
-		hit(s.PointerType == "mouse" && s.PointerMovesBeforeClick == 0, ReasonClickWithoutMove)
+		hit(NormalizePointer(s.PointerType) == PointerMouse && s.PointerMovesBeforeClick == 0, ReasonClickWithoutMove)
 		hit(s.MsToClick > 0 && s.MsToClick < fastClickMs, ReasonFastClick)
-		hit(s.UserAgent != "" && f.HeaderUA != "" && s.UserAgent != f.HeaderUA, ReasonUAHeaderMismatch)
+		// Both sides go through CleanUA: the header copy already has.
+		ua := CleanUA(s.UserAgent)
+		hit(ua != "" && f.HeaderUA != "" && ua != CleanUA(f.HeaderUA), ReasonUAHeaderMismatch)
 	}
 	if f.RecentFailures > 0 {
 		hits = append(hits, ReasonIPRecentFailures)

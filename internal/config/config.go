@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/service/challenge"
@@ -63,6 +64,8 @@ type GatewayConfig struct {
 		SolvePerIPPerMinute     int `json:",default=120"`
 		VerifyPerKeyPerMinute   int `json:",default=6000"`
 		FallbackPerIPPerMinute  int `json:",default=5"`
+		// Failed verify signatures per IP before 429 (no secret lookups).
+		AuthFailuresPerIPPerMinute int `json:",default=60"`
 	}
 	Risk struct {
 		MediumThreshold          int `json:",default=30"`
@@ -90,7 +93,14 @@ func (c GatewayConfig) Keyring() (*challenge.Keyring, error) {
 }
 
 func (c GatewayConfig) Sealer() (*sealer.Sealer, error) {
-	return sealer.New(c.SecretKEK, c.SecretKEKPrevious...)
+	// Empty entries come from an unset ${BOTGUARD_SECRET_KEK_PREVIOUS}.
+	var previous []string
+	for _, k := range c.SecretKEKPrevious {
+		if k = strings.TrimSpace(k); k != "" {
+			previous = append(previous, k)
+		}
+	}
+	return sealer.New(c.SecretKEK, previous...)
 }
 
 func (c GatewayConfig) Validate() error {
@@ -112,7 +122,13 @@ func (c GatewayConfig) Validate() error {
 		}
 		return nil
 	}
+	var maxDifficulty error
+	if d := c.Challenge.MaxDifficulty; d < 1 || d > 1<<32 {
+		// 0 would make every challenge fail with 503 and blame the app policy.
+		maxDifficulty = fmt.Errorf("Challenge.MaxDifficulty must be within [1, %d]", uint64(1)<<32)
+	}
 	return errors.Join(
+		maxDifficulty,
 		inRange("Challenge.TTLSeconds", c.Challenge.TTLSeconds, 10, 600),
 		inRange("TokenTTLSeconds", c.TokenTTLSeconds, 10, 600),
 		inRange("VerifyResultTTLSeconds", c.VerifyResultTTLSeconds, 60, 3600),
@@ -124,6 +140,7 @@ func (c GatewayConfig) Validate() error {
 		inRange("RateLimit.SolvePerIPPerMinute", c.RateLimit.SolvePerIPPerMinute, 1, 1_000_000),
 		inRange("RateLimit.VerifyPerKeyPerMinute", c.RateLimit.VerifyPerKeyPerMinute, 1, 10_000_000),
 		inRange("RateLimit.FallbackPerIPPerMinute", c.RateLimit.FallbackPerIPPerMinute, 1, 1000),
+		inRange("RateLimit.AuthFailuresPerIPPerMinute", c.RateLimit.AuthFailuresPerIPPerMinute, 1, 100_000),
 		inRange("Risk.MediumThreshold", c.Risk.MediumThreshold, 1, 100),
 		inRange("Risk.HighThreshold", c.Risk.HighThreshold, c.Risk.MediumThreshold+1, 101),
 		inRange("Risk.HighDifficultyFactor", c.Risk.HighDifficultyFactor, 1, 64),

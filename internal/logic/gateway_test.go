@@ -47,6 +47,7 @@ func (f *fakeApps) SecretPair(_ context.Context, id string) (*domain.SecretPair,
 }
 
 type harness struct {
+	redis *miniredis.Miniredis
 	g     *Gateway
 	apps  *fakeApps
 	clock time.Time
@@ -78,12 +79,12 @@ func newHarness(t *testing.T) *harness {
 			keyB: {SecretID: keyB, AppID: 2, SecretKey: []byte("secret-for-app-b"), Enabled: true},
 		},
 	}
-	h := &harness{apps: apps, clock: time.Unix(1_790_000_000, 0), ip: netip.MustParseAddr("192.0.2.10")}
+	h := &harness{redis: mr, apps: apps, clock: time.Unix(1_790_000_000, 0), ip: netip.MustParseAddr("192.0.2.10")}
 	h.g = &Gateway{
 		Apps: apps, State: repository.NewState(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
 		Settings: Settings{ChallengeTTL: 120 * time.Second, TokenTTL: 60 * time.Second, ResultTTL: 600 * time.Second,
 			ClockSkew: 5 * time.Second, MaxDifficulty: 1 << 20, SignatureWindow: 300 * time.Second,
-			ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000, FallbackPerIPPerMinute: 5,
+			ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000, FallbackPerIPPerMinute: 5, AuthFailuresPerIPPerMinute: 60,
 			RiskMedium: 30, RiskHigh: 70, HighDifficultyFactor: 4, FallbackDifficultyFactor: 8, FailureWindow: 10 * time.Minute,
 			SliderTolerance: 4},
 		Now: func() time.Time { return h.clock },

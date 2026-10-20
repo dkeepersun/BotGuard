@@ -52,7 +52,7 @@ func TestEndToEndWithMySQL(t *testing.T) {
 	g := &Gateway{
 		Apps: repository.NewMySQLApps(conn, seal), State: repository.NewState(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
 		Settings: Settings{ChallengeTTL: 2 * time.Minute, TokenTTL: time.Minute, ResultTTL: 10 * time.Minute, ClockSkew: 5 * time.Second,
-			MaxDifficulty: 1 << 20, SignatureWindow: 5 * time.Minute, ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000,
+			MaxDifficulty: 1 << 20, SignatureWindow: 5 * time.Minute, ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000, AuthFailuresPerIPPerMinute: 60,
 			RiskMedium: 30, RiskHigh: 70, HighDifficultyFactor: 4, FallbackDifficultyFactor: 8, FailureWindow: 10 * time.Minute, SliderTolerance: 4},
 		Now: now,
 	}

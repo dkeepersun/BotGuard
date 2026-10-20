@@ -1,0 +1,3 @@
+# Migration checksums cover file bytes; keep line endings stable everywhere.
+internal/migration/sql/*.sql text eol=lf
+*.sh text eol=lf

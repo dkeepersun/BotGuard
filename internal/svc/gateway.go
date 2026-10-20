@@ -3,12 +3,15 @@ package svc
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/config"
 	"github.com/dkeepersun/BotGuard/internal/logic"
+	"github.com/dkeepersun/BotGuard/internal/migration"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
@@ -18,6 +21,10 @@ type Gateway struct {
 	IPs   *clientip.Resolver
 	rds   *redis.Redis
 	db    sqlx.SqlConn
+	// schema is the migration version this binary needs; schemaOK latches
+	// once the database has it, since migrations only move forward.
+	schema   int
+	schemaOK atomic.Bool
 }
 
 func NewGateway(c config.GatewayConfig) (*Gateway, error) {
@@ -42,6 +49,10 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
+	schema, err := migration.Latest()
+	if err != nil {
+		return nil, err
+	}
 	apps, err := repository.NewCachedApps(repository.NewMySQLApps(db, seal), config.Seconds(c.AppCache.TTLSeconds), c.AppCache.Limit)
 	if err != nil {
 		return nil, err
@@ -53,16 +64,17 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 			Limiter: repository.NewRateLimiter(rds),
 			Keys:    keys,
 			Settings: logic.Settings{
-				ChallengeTTL:            config.Seconds(c.Challenge.TTLSeconds),
-				TokenTTL:                config.Seconds(c.TokenTTLSeconds),
-				ResultTTL:               config.Seconds(c.VerifyResultTTLSeconds),
-				ClockSkew:               config.Seconds(c.ClockSkewSeconds),
-				MaxDifficulty:           c.Challenge.MaxDifficulty,
-				SignatureWindow:         config.Seconds(c.SignatureWindowSeconds),
-				ChallengePerIPPerMinute: c.RateLimit.ChallengePerIPPerMinute,
-				SolvePerIPPerMinute:     c.RateLimit.SolvePerIPPerMinute,
-				VerifyPerKeyPerMinute:   c.RateLimit.VerifyPerKeyPerMinute,
-				FallbackPerIPPerMinute:  c.RateLimit.FallbackPerIPPerMinute,
+				ChallengeTTL:               config.Seconds(c.Challenge.TTLSeconds),
+				TokenTTL:                   config.Seconds(c.TokenTTLSeconds),
+				ResultTTL:                  config.Seconds(c.VerifyResultTTLSeconds),
+				ClockSkew:                  config.Seconds(c.ClockSkewSeconds),
+				MaxDifficulty:              c.Challenge.MaxDifficulty,
+				SignatureWindow:            config.Seconds(c.SignatureWindowSeconds),
+				ChallengePerIPPerMinute:    c.RateLimit.ChallengePerIPPerMinute,
+				SolvePerIPPerMinute:        c.RateLimit.SolvePerIPPerMinute,
+				VerifyPerKeyPerMinute:      c.RateLimit.VerifyPerKeyPerMinute,
+				FallbackPerIPPerMinute:     c.RateLimit.FallbackPerIPPerMinute,
+				AuthFailuresPerIPPerMinute: c.RateLimit.AuthFailuresPerIPPerMinute,
 
 				RiskMedium:               c.Risk.MediumThreshold,
 				RiskHigh:                 c.Risk.HighThreshold,
@@ -73,20 +85,39 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 			},
 			Now: time.Now,
 		},
-		IPs: ips,
-		rds: rds,
-		db:  db,
+		IPs:    ips,
+		rds:    rds,
+		db:     db,
+		schema: schema,
 	}, nil
 }
 
-// Ready reports whether both stores answer. The gateway fails closed without
-// either one, so readiness must not pass on a partial outage.
-func (g *Gateway) Ready(ctx context.Context) bool {
+// Ready reports whether both stores answer and the schema is migrated. The
+// gateway fails closed without either store, so readiness must not pass on a
+// partial outage; and a gateway newer than the schema would fail every
+// challenge, so during an upgrade it stays out of rotation until
+// "botguard-ctl migrate up" has run.
+func (g *Gateway) Ready(ctx context.Context) string {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
 	if !g.rds.PingCtx(ctx) {
-		return false
+		return "store_unavailable"
 	}
 	raw, err := g.db.RawDB()
-	return err == nil && raw.PingContext(ctx) == nil
+	if err != nil || raw.PingContext(ctx) != nil {
+		return "store_unavailable"
+	}
+	if g.schemaOK.Load() {
+		return ""
+	}
+	applied, err := migration.Applied(ctx, raw)
+	if err != nil {
+		return "store_unavailable"
+	}
+	if applied < g.schema {
+		logx.WithContext(ctx).Errorf("database schema is at %d, this gateway needs %d: run botguard-ctl migrate up", applied, g.schema)
+		return "schema_outdated"
+	}
+	g.schemaOK.Store(true)
+	return ""
 }

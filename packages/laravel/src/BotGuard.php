@@ -21,22 +21,34 @@ final class BotGuard
     private array $memo = [];
     private VerifyResult|BotGuardException|null $last = null;
 
+    /**
+     * @param Client|\Closure(): Client $client a client, or a resolver that is
+     *   only called on the first verify; it throws CallerErrorException
+     *   (NOT_CONFIGURED) when BotGuard is not configured, so booting the app
+     *   and rendering pages never fail for that reason.
+     */
     public function __construct(
-        private readonly Client $client,
+        private Client|\Closure $client,
         private readonly LoggerInterface $log,
     ) {
     }
 
     /**
-     * Full result: returns Passed/Rejected, throws CallerErrorException or
+     * Full result: returns Passed/Rejected, throws CallerErrorException
+     * (including NOT_CONFIGURED and a malformed action) or
      * UnknownResultException. Use this when you want to branch on each case.
+     *
+     * $token is the raw submitted value: null, arrays and other non-strings,
+     * like malformed strings, are a local TOKEN_INVALID rejection that never
+     * reaches the gateway.
      */
-    public function verify(string $token, string $action, ?string $requestId = null): VerifyResult
+    public function verify(mixed $token, string $action, ?string $requestId = null): VerifyResult
     {
+        $token = is_string($token) ? $token : '';
         $key = $action . '|' . $token;
         if (!array_key_exists($key, $this->memo)) {
             try {
-                $this->memo[$key] = $this->client->verifyToken($token, $action, $requestId);
+                $this->memo[$key] = $this->client()->verifyToken($token, $action, $requestId);
             } catch (BotGuardException $e) {
                 $this->memo[$key] = $e;
             }
@@ -54,10 +66,10 @@ final class BotGuard
      * closed) but are logged as errors, so they are not mistaken for users
      * failing the check.
      */
-    public function passes(?string $token, string $action): bool
+    public function passes(mixed $token, string $action): bool
     {
         try {
-            return $this->verify((string) $token, $action)->passed();
+            return $this->verify($token, $action)->passed();
         } catch (BotGuardException $e) {
             $this->log->error('BotGuard verify failed: ' . $e->getMessage(), [
                 'exception' => $e::class, 'http_status' => $e->httpStatus, 'code' => $e->errorCode, 'action' => $action,
@@ -70,5 +82,13 @@ final class BotGuard
     public function last(): VerifyResult|BotGuardException|null
     {
         return $this->last;
+    }
+
+    private function client(): Client
+    {
+        if ($this->client instanceof \Closure) {
+            $this->client = ($this->client)();
+        }
+        return $this->client;
     }
 }

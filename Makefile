@@ -28,7 +28,8 @@ gateway:
 
 test-sdk:
 	php packages/php/tests/run.php
-	node --test packages/browser/test/
+	npm ci --prefix packages/browser --no-audit --no-fund
+	npm test --prefix packages/browser
 
 demo:
 	examples/demo/start.sh

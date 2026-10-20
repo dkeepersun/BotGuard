@@ -23,10 +23,12 @@
 
 ### npm
 
-1. 注册或登录 npmjs.com，创建组织 **botguard**，这样才能使用 `@botguard/` 前缀。如果组织名已被占用，告诉我换哪个名字，我来改包名。
-2. 在 npm 账号设置里生成 **Automation** 类型的访问令牌。
-3. 在 GitHub 仓库 Settings → Secrets → Actions 中添加 `NPM_TOKEN`。
-4. 发布：推送标签 `browser-v0.1.0`，`release-browser` 工作流会检查版本号、跑测试，然后带 provenance 发布到 npm。
+npm 已在 2025 年底撤销 classic（含 Automation）令牌；有写权限的 granular 令牌最长 90 天，默认要求 2FA。所以 CI 发布改用 **Trusted Publishing**（GitHub Actions 的 OIDC 临时凭证），仓库里不保存任何 npm 令牌。
+
+1. 注册或登录 npmjs.com，开启 2FA，创建组织 **botguard**，这样才能使用 `@botguard/` 前缀。如果组织名已被占用，告诉我换哪个名字，我来改包名。
+2. **第一次发布手动完成**，因为 Trusted Publishing 要在已存在的包上配置：在 `packages/browser` 下执行 `npm ci && npm test && npm publish --access public`，按提示输入 2FA 验证码。
+3. 在 npmjs.com 打开包 `@botguard/browser` → Settings → Trusted Publisher，选择 GitHub Actions，填写仓库 `dkeepersun/BotGuard`、工作流文件 `release-browser.yml`。之后可以在同一页面把发布方式设为“只允许 Trusted Publishing”。
+4. 之后的版本：修改 `package.json` 的 version，推送标签 `browser-vX.Y.Z`。`release-browser` 工作流会检查版本号、跑测试，然后带 provenance 发布（需要主仓库保持公开）。
 
 ### Composer / Packagist
 

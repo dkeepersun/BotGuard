@@ -62,7 +62,7 @@ func newServer(t *testing.T, verifyQuota int) http.Handler {
 				FallbackPerIPPerMinute: 5, FailureWindow: 10 * time.Minute, SliderTolerance: 4},
 			Now: time.Now},
 		IPs:   ips,
-		Ready: func(context.Context) bool { return true },
+		Ready: func(context.Context) string { return "" },
 	}
 	srv := rest.MustNewServer(rest.RestConf{Host: "127.0.0.1", Port: 0, Timeout: 3000})
 	g.Register(srv)
@@ -166,6 +166,13 @@ func TestErrorEnvelopes(t *testing.T) {
 	w, env = call(t, h, http.MethodPost, "/v1/challenges", "application/json", "https://a.example", "", `{"app_key":"app_public"}{}`)
 	if w.Code != 400 {
 		t.Fatalf("trailing data: %d %+v", w.Code, env)
+	}
+	// Oversized bodies get the contract's JSON 400, not a bare 413 (cmd/gateway
+	// turns go-zero's MaxBytes middleware off for this).
+	big := `{"app_key":"app_public","challenge":"` + strings.Repeat("x", 40<<10) + `"}`
+	w, env = call(t, h, http.MethodPost, "/v1/solutions", "text/plain", "https://a.example", "", big)
+	if w.Code != 400 || env.Code != "INVALID_REQUEST" {
+		t.Fatalf("oversized: %d %+v", w.Code, env)
 	}
 
 	body := `{"app_key":"app_public","token":"x","action":"login","request_id":"r1"}`

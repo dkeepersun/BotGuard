@@ -20,7 +20,7 @@ final class Signer
         return self::SCHEME . "\n" . $method . "\n" . $path . "\n" . $timestamp . "\n" . $nonce . "\n" . hash('sha256', $body);
     }
 
-    public static function sign(string $secretKey, string $canonical): string
+    public static function sign(#[\SensitiveParameter] string $secretKey, string $canonical): string
     {
         return hash_hmac('sha256', $canonical, $secretKey);
     }
@@ -37,7 +37,7 @@ final class Signer
      *
      * @return array<string, string>
      */
-    public static function headers(string $secretId, string $secretKey, string $body, ?int $timestamp = null, ?string $nonce = null): array
+    public static function headers(string $secretId, #[\SensitiveParameter] string $secretKey, string $body, ?int $timestamp = null, ?string $nonce = null): array
     {
         $timestamp ??= time();
         $nonce ??= self::newNonce();

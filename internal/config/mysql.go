@@ -17,6 +17,9 @@ func NormalizeMySQLDSN(raw string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if cfg.DBName == "" {
+		return "", errors.New("MySQL DSN must name a database, e.g. user:pass@tcp(host:3306)/botguard")
+	}
 	cfg.ParseTime = true
 	cfg.Loc = time.UTC
 	if cfg.Params == nil {

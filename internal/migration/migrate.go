@@ -10,6 +10,7 @@
 package migration
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -23,6 +24,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-sql-driver/mysql"
 )
 
 //go:embed sql/*.sql
@@ -78,6 +81,8 @@ func load(fsys fs.FS, dir string) ([]Migration, error) {
 		if err != nil {
 			return nil, err
 		}
+		// A Windows checkout with autocrlf must produce the same checksum.
+		body = bytes.ReplaceAll(body, []byte("\r\n"), []byte("\n"))
 		stmts := Split(string(body))
 		if len(stmts) == 0 {
 			return nil, fmt.Errorf("migration %s has no statements", e.Name())
@@ -133,6 +138,15 @@ func open(ctx context.Context, db *sql.DB, ms []Migration) (*Runner, error) {
 	if err != nil {
 		return nil, err
 	}
+	var version string
+	if err := conn.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	if err := CheckServerVersion(version); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	var got sql.NullInt64
 	if err := conn.QueryRowContext(ctx, "SELECT GET_LOCK(?, 30)", lockName).Scan(&got); err != nil {
 		conn.Close()
@@ -147,6 +161,66 @@ func open(ctx context.Context, db *sql.DB, ms []Migration) (*Runner, error) {
 		return nil, err
 	}
 	return &Runner{conn: conn, migrations: ms}, nil
+}
+
+// CheckServerVersion rejects servers the migrations do not run on: they use
+// RENAME COLUMN (MySQL 8.0, MariaDB 10.5.2) and are not transactional, so an
+// old server would fail half-way and leave a database no rerun can fix.
+func CheckServerVersion(version string) error {
+	nums := func(s string) [3]int {
+		var out [3]int
+		for i, part := range strings.SplitN(s, ".", 3) {
+			end := 0
+			for end < len(part) && part[end] >= '0' && part[end] <= '9' {
+				end++
+			}
+			out[i], _ = strconv.Atoi(part[:end])
+		}
+		return out
+	}
+	less := func(a, b [3]int) bool {
+		for i := range a {
+			if a[i] != b[i] {
+				return a[i] < b[i]
+			}
+		}
+		return false
+	}
+	v := nums(version)
+	if strings.Contains(strings.ToLower(version), "mariadb") {
+		if less(v, [3]int{10, 5, 2}) {
+			return fmt.Errorf("需要 MariaDB ≥ 10.5.2，当前为 %s", version)
+		}
+		return nil
+	}
+	if less(v, [3]int{8, 0, 0}) {
+		return fmt.Errorf("需要 MySQL ≥ 8.0，当前为 %s", version)
+	}
+	return nil
+}
+
+// Latest is the newest migration version built into this binary.
+func Latest() (int, error) {
+	ms, err := Load()
+	if err != nil || len(ms) == 0 {
+		return 0, err
+	}
+	return ms[len(ms)-1].Version, nil
+}
+
+// Applied returns the newest applied version, 0 for a fresh database. It
+// takes no lock, so the gateway can call it from its readiness probe.
+func Applied(ctx context.Context, db *sql.DB) (int, error) {
+	var v sql.NullInt64
+	err := db.QueryRowContext(ctx, "SELECT MAX(version) FROM bg_schema_migration").Scan(&v)
+	var me *mysql.MySQLError
+	if errors.As(err, &me) && me.Number == 1146 { // table does not exist
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return int(v.Int64), nil
 }
 
 func (r *Runner) Close() error {

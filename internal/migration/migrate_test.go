@@ -29,6 +29,32 @@ func TestLoadEmbedded(t *testing.T) {
 	}
 }
 
+// A CRLF checkout (Windows, autocrlf) must not look like edited migrations.
+func TestChecksumIgnoresLineEndings(t *testing.T) {
+	body := "CREATE TABLE a (x INT);\nCREATE TABLE b (y INT);\n"
+	lf, err1 := load(fstest.MapFS{"sql/0001_a.sql": {Data: []byte(body)}}, "sql")
+	crlf, err2 := load(fstest.MapFS{"sql/0001_a.sql": {Data: []byte(strings.ReplaceAll(body, "\n", "\r\n"))}}, "sql")
+	if err1 != nil || err2 != nil || lf[0].Checksum != crlf[0].Checksum {
+		t.Fatalf("%v %v", err1, err2)
+	}
+}
+
+func TestCheckServerVersion(t *testing.T) {
+	for v, ok := range map[string]bool{
+		"8.0.36":                 true,
+		"8.4.9":                  true,
+		"9.1.0-commercial":       true,
+		"5.7.44-log":             false,
+		"10.5.2-MariaDB":         true,
+		"10.4.32-MariaDB-1:10.4": false,
+		"11.4.2-MariaDB-ubu2404": true,
+	} {
+		if err := CheckServerVersion(v); (err == nil) != ok {
+			t.Errorf("%s: %v", v, err)
+		}
+	}
+}
+
 func TestLoadRejectsBadNames(t *testing.T) {
 	for name, fsys := range map[string]fstest.MapFS{
 		"bad name":  {"sql/1_x.sql": {Data: []byte("SELECT 1;")}},
@@ -127,8 +153,15 @@ func TestEmbeddedMigrationsApply(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer r.Close()
+	if v, err := Applied(ctx, db); err != nil || v != 0 {
+		t.Fatalf("fresh database: %d %v", v, err)
+	}
 	if _, err := r.Up(ctx); err != nil {
 		t.Fatal(err)
+	}
+	latest, _ := Latest()
+	if v, err := Applied(ctx, db); err != nil || v != latest {
+		t.Fatalf("applied %d, latest %d: %v", v, latest, err)
 	}
 	status, err := r.Status(ctx)
 	if err != nil {

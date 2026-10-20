@@ -113,7 +113,7 @@ MVP 单平台管理多个应用，所有业务查询都必须带 app_id；不声
 
 为什么签发无状态：`/v1/challenges` 是无需认证的公开接口，也是调用量最大的接口。若每次签发都写 Redis，攻击者只要刷签发就能打满 Redis 内存。改为签名后，签发只更新有界的限流计数；Redis 写入推迟到 solve，且 solve 先限流、先校验签名，伪造或过期的 challenge 不会产生写入。代价是多了一组需要轮换和保护的签名密钥：它由部署配置注入，所有 gateway 副本共享，泄露即 PoW 失效（轮换流程见契约）。
 
-业务服务器认证参考易盾：每个应用有公开的 `app_key` 和一组或多组密钥对（`secret_id` + `secret_key`）。调用 verify 时 secret_key 不出网，请求带 `X-BG-Secret-Id`、时间戳、nonce 和 BG1-HMAC-SHA256 签名（覆盖请求体原始字节）；gateway 校验时间戳窗口（默认 ±300 秒）、验签，验签通过后才在 Redis 记录 `bg:nonce:<secret_id>:<nonce>`（保留 2 倍窗口）防重放。验签要求服务端持有 secret_key，因此用 KEK（`BOTGUARD_SECRET_KEK`，环境变量注入，支持 `SecretKEKPrevious` 轮换）加密存库；KEK 不对时返回 503 而不是 401，避免把配置故障误报成调用方签名错误。签名细节见 `api/contract-v1.md`。
+业务服务器认证参考易盾：每个应用有公开的 `app_key` 和一组或多组密钥对（`secret_id` + `secret_key`）。调用 verify 时 secret_key 不出网，请求带 `X-BG-Secret-Id`、时间戳、nonce 和 BG1-HMAC-SHA256 签名（覆盖请求体原始字节）；gateway 校验时间戳窗口（默认 ±300 秒）、验签，验签通过后才在 Redis 记录 `bg:nonce:<secret_id>:<nonce>`（保留 2 倍窗口加时钟偏差）防重放；同一 IP 验签失败过多时，在查密钥之前直接限流。验签要求服务端持有 secret_key，因此用 KEK（`BOTGUARD_SECRET_KEK`，环境变量注入，轮换期间旧 KEK 放在 `BOTGUARD_SECRET_KEK_PREVIOUS`）加密存库；botguard-ctl 创建密钥对前会用当前 KEK 解开库里同一 KEK id 下最新的一个密钥对，解不开就拒绝，防止 ctl 和 gateway 用了不同的 KEK；KEK 不对时返回 503 而不是 401，避免把配置故障误报成调用方签名错误。签名细节见 `api/contract-v1.md`。
 
 Lua 脚本一律用 EVAL 而不是 EVALSHA：go-zero 的 Redis 熔断器会把 `NOSCRIPT` 计为失败，Redis 重启后脚本缓存为空，并发请求会直接把熔断器打开。同理，Redis < 7.2 不支持 `CLIENT SETINFO`，必须在配置中设 `DisableIdentity: true`，否则每次建连的握手错误都会计入熔断。最低建议 Redis 7.2。
 

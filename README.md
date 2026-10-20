@@ -25,18 +25,25 @@ examples/demo/start.sh   # 然后打开 http://localhost:8080
 
 需要 Go 1.26.3 或更高版本（当前开发机验证版本），依赖 go-zero v1.10.3。Go 版本与最低 SDK 版本将独立维护。
 
+密钥只生成一次，写进一个只有自己可读的文件，gateway 和 botguard-ctl 都从它加载。KEK 必须两边一致：如果在两个终端里各生成一次，ctl 生成的密钥对在 gateway 上无法解密（ctl 发现库里已有密钥对解不开时会拒绝创建）。
+
 ```sh
+umask 077
+cat > ~/.botguard.env <<ENV
+export BOTGUARD_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/botguard'
+export BOTGUARD_CHALLENGE_KEY_K1='$(openssl rand -base64 32)'
+export BOTGUARD_SECRET_KEK='k1:$(openssl rand -base64 32)'
+ENV
+. ~/.botguard.env
+
 make check
 make build
-make admin    # http://127.0.0.1:8091
-# 在另一个终端：
-export BOTGUARD_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/botguard'
-export BOTGUARD_CHALLENGE_KEY_K1="$(openssl rand -base64 32)"
-export BOTGUARD_SECRET_KEK="k1:$(openssl rand -base64 32)"   # 加密 secret_key 的主密钥，ctl 与 gateway 必须一致
+bin/botguard-ctl migrate up   # gateway 在库结构落后时 /readyz 返回 schema_outdated
 make gateway  # http://127.0.0.1:8090/readyz
+make admin    # 另一个终端，http://127.0.0.1:8091
 ```
 
-gateway 需要 Redis（建议 ≥ 7.2）和已迁移的 MySQL；密钥与 DSN 只从环境变量读取，缺失时拒绝启动。DSN 会被自动补上 `parseTime=true`、`loc=UTC`、`time_zone='+00:00'`，并强制关闭 `multiStatements`。admin-web 仍是只读预览，只接受 loopback 监听地址，不能经反向代理公开。
+gateway 需要 Redis（建议 ≥ 7.2）和已迁移的 MySQL（MySQL ≥ 8.0 或 MariaDB ≥ 10.5.2，迁移会检查）；密钥与 DSN 只从环境变量读取，缺失时拒绝启动。DSN 会被自动补上 `parseTime=true`、`loc=UTC`、`time_zone='+00:00'`，并强制关闭 `multiStatements`。admin-web 仍是只读预览，只接受 loopback 监听地址，不能经反向代理公开。
 
 ## 用 botguard-ctl 接入一个应用
 
@@ -53,6 +60,17 @@ bin/botguard-ctl app show -app app_xxx
 ```
 
 轮换密钥对用 `secret rotate -secret sid_xxx -grace 24h`：立即生成新密钥对，旧的在宽限期结束后失效，期间两组都能用。变更在 gateway 应用缓存过期后生效（默认 10 秒内）。
+
+## 升级
+
+先迁移，再换 gateway：
+
+1. 用新版 `botguard-ctl migrate up`。迁移只向前、带 checksum，并用数据库锁防止并发执行。
+2. 滚动替换 gateway。新版 gateway 在库结构落后时 `/readyz` 返回 503 `schema_outdated`，不会接流量。
+
+迁移后、旧 gateway 下线前的短暂窗口里，旧 gateway 可能不认识新写入的配置值。例如 0004 之后，旧版会把 `interactive` 当作无感处理。这个窗口应尽量短。新版 gateway 遇到不认识的模式时一律按 adaptive 处理，不会降级成无感。
+
+更换 KEK 时，把旧值放进 `BOTGUARD_SECRET_KEK_PREVIOUS`（见 `configs/gateway.yaml`）。用新 KEK 轮换完所有密钥对后，再移除旧值。
 
 ## 测试
 
@@ -71,4 +89,4 @@ make test-integration
 - [SDK 与发布方案](docs/sdk-integration.md)
 - [验证记录与边界](docs/validation.md)
 
-`packages/` 是 SDK 源码边界的预留目录，其中说明文件不是可安装 SDK。包名均为提案，尚未注册或发布。
+`packages/` 下是三个 SDK 的源码（`@botguard/browser`、`botguard/php-sdk`、`botguard/laravel`），尚未发布到 npm / Packagist，见 [docs/release.md](docs/release.md)。

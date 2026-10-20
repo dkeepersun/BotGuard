@@ -1,4 +1,4 @@
-// node --test packages/browser/test
+// node --test packages/browser/test/*.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { collectEnvironment, trackInteraction } from '../src/signals.js';

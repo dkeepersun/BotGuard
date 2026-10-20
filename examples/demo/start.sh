@@ -5,6 +5,14 @@ set -eu
 cd "$(dirname "$0")"
 
 if [ ! -f .env ]; then
+  # MySQL sets the root password only when it initialises its volume, and the
+  # old KEK is needed to open the stored secret pairs: new secrets cannot
+  # reuse old data.
+  if docker volume inspect botguard-demo_mysql-data >/dev/null 2>&1; then
+    echo "错误：找不到 .env，但旧的演示数据卷还在，新生成的密码和密钥无法打开它。" >&2
+    echo "请先清空旧数据：docker compose -f $(pwd)/docker-compose.yml down -v" >&2
+    exit 1
+  fi
   umask 077
   {
     echo "MYSQL_ROOT_PASSWORD=$(openssl rand -hex 16)"

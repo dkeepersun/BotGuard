@@ -12,10 +12,10 @@ HTTPS；JSON；snake_case；严格 body 大小和字段长度；浏览器端没�
 
 API 成功用 `{"code":"OK","data":{...},"request_id":"..."}`；后台继续采用 PearAdmin 的数值 code 格式，两者不混用。错误不回显 token、签名、secret、内部 SQL 或原始 IP。
 
-- 浏览器接口（challenges/solutions）：400 `INVALID_REQUEST`（字段错误、畸形 JSON）或 `CHALLENGE_INVALID`（签名、kid、格式不对）；403 `APP_FORBIDDEN`（应用不存在或关闭）、`ORIGIN_NOT_ALLOWED`、`ACTION_FORBIDDEN`；409 `CHALLENGE_USED`；410 `CHALLENGE_EXPIRED`；有效格式但证明错误为 422 `PROOF_INVALID`；滑块位置或轨迹未通过为 422 `ANSWER_INVALID`；429 限流（Retry-After）；503 依赖不可用。
+- 浏览器接口（challenges/solutions）：400 `INVALID_REQUEST`（字段错误、畸形 JSON）或 `CHALLENGE_INVALID`（签名、kid、格式不对）；403 `APP_FORBIDDEN`（应用不存在或关闭）、`ORIGIN_NOT_ALLOWED`、`ACTION_FORBIDDEN`；409 `CHALLENGE_USED`；410 `CHALLENGE_EXPIRED`；有效格式但证明错误为 422 `PROOF_INVALID`；滑块位置或轨迹未通过为 422 `ANSWER_INVALID`；429 限流（Retry-After）；503 依赖不可用。只要请求的 Origin 已知对该应用允许（包括限流、challenge 已过期，以及应用已在缓存中时的 `CHALLENGE_INVALID`），错误响应也带 CORS 头，组件才能读到错误码；未知应用或不允许的 Origin 不带。
 - verify 接口的业务拒绝不用非 2xx 表达，语义见下文“verify 结果语义”。非 2xx 只表示调用方错误或服务不可用。
 - request_id 在 verify 中必填，由调用方生成，字符集 `[A-Za-z0-9_-]`，1–64 字符（UUID v4 符合）；验证服务在日志中仅记录此 ID 及非敏感决策元数据。
-- 请求体为单个 JSON 对象，最大 8 KiB（solutions 为 32 KiB，用于容纳滑块轨迹）；Content-Type 接受 `application/json` 或 `text/plain`。浏览器组件应使用 `text/plain`，使请求成为 CORS 简单请求、免去预检；未知字段忽略，以便新版 SDK 兼容旧服务端。
+- 请求体为单个 JSON 对象，最大 8 KiB（solutions 为 32 KiB，用于容纳滑块轨迹），超限返回 400 `INVALID_REQUEST`（JSON 格式，不是空的 413）；Content-Type 接受 `application/json` 或 `text/plain`。浏览器组件应使用 `text/plain`，使请求成为 CORS 简单请求、免去预检；未知字段忽略，以便新版 SDK 兼容旧服务端。
 - app_key 字符集 `[A-Za-z0-9_-]`，8–64 字符；action 为 `[a-z0-9_]`，1–32 字符。
 
 ## PoW 算法
@@ -52,9 +52,9 @@ SHA-256 在原生代码/GPU 上比浏览器快 2–3 个数量级，所以难度
 | `slider` | 拖动拼图对准缺口，同时后台算 PoW | 题型列表中含 slider，且被选中 |
 | `click_text` | 按顺序点击图中的汉字，同时后台算 PoW | 题型列表中含 click_text，且被选中 |
 | `click_shape` | 按顺序点击描述的图形（要数点数、边数），同时后台算 PoW | 题型列表中含 click_shape，且被选中 |
-| `fallback` | 只算 PoW，难度 × 8，独立限流 | 用户在滑块面板选择“无法完成拼图？”（invisible 模式下无此路径） |
+| `fallback` | 只算 PoW，难度 × 8（高风险时再 × 4，即 × 32），独立限流 | 用户在滑块面板选择“无法完成拼图？”（invisible 模式下无此路径） |
 
-interactive 模式每次从列表随机选题；adaptive 模式中风险随机选、高风险选列表中最难的（click_shape > click_text > slider）。风险为高时，任何题型的 PoW 难度 × 4。风险分和原因码只通过 verify 返回给业务服务器，不返回给浏览器。
+interactive 模式每次从列表随机选题；adaptive 模式中风险随机选、高风险选列表中最难的（click_shape > click_text > slider）。风险为高时，任何题型的 PoW 难度 × 4，包括 fallback（倍数相乘），所以选 fallback 不会比高风险的点选题更便宜。实际难度不超过 `Challenge.MaxDifficulty`。风险分和原因码只通过 verify 返回给业务服务器，不返回给浏览器。
 
 ## GET /sdk/v1/{file}（浏览器组件脚本）
 
@@ -86,7 +86,7 @@ gateway 托管浏览器组件：`load.js`（经典脚本，提供 `initBotGuard`
 `challenge` 是服务端签名的不透明字符串，格式为 `v1.<kid>.<payload_b64>.<mac_b64>`：
 
 - payload 为 UTF-8 JSON，字段：`challenge_id`、`app_key`、`action`、`origin`、`algorithm`、`params`、`policy_version`、`iat`、`exp`（Unix 秒）、`kind`、`sealed`。b64 均为 base64url 无 padding。
-- `sealed` 是只有服务端能解开的数据（滑块答案、签发时的风险分和原因码）：AES-256-GCM，密钥由该 kid 的签名密钥经 HKDF-SHA256（info `botguard challenge seal v1`）派生，`challenge_id` 作为附加数据。
+- `sealed` 是只有服务端能解开的数据（滑块答案、签发时的风险分和原因码）：AES-256-GCM，密钥由该 kid 的签名密钥经 HKDF-SHA256（info `botguard challenge seal v1`）派生，`challenge_id` 作为附加数据。nonce 为随机 96 位：同一 kid 下签发量接近 2³² 次时 nonce 碰撞概率超出 NIST 建议，碰撞会泄露两题答案的异或（伪造仍不可能，sealed 受 HMAC 覆盖）。因此 challenge 签名密钥应定期轮换 kid，远早于这个量级（例如每月或每 10 亿次签发）。
 - `mac = HMAC-SHA256(key[kid], "v1." + kid + "." + payload_b64)`。服务端校验 MAC 时针对收到的原始 payload_b64 字节，不重新序列化 JSON。
 - payload 只签名、不加密，客户端可读，因此不得包含内部 ID、IP 或其它敏感信息。
 - `challenge` 总长度上限 2048 字节，超过直接 400，不解码。
@@ -102,7 +102,7 @@ gateway 托管浏览器组件：`load.js`（经典脚本，提供 `initBotGuard`
 {"x": 172.4, "trajectory": [[0, 0, 0], [16.7, 3.2, 0.5], [33.4, 9.8, 1.1]]}
 ```
 
-`x` 是拼块左边缘在原图坐标中的位置；`trajectory` 每项为 `[自按下起的毫秒数, x, y]`，最多 400 个点。位置容差 ±4 像素（`Slider.Tolerance`）；轨迹规则（时长、点数、瞬移、等间隔、匀速、纯直线、终点不一致）见 `docs/challenge-types.md` §6.3。位置错和轨迹不像人都返回同一个 422 `ANSWER_INVALID`，具体原因只记服务端日志。点选题的 `answer` 为 `{"clicks": [[ms, x, y], ...], "moves_between": [n, ...]}`：`clicks` 按点击顺序、坐标为原图坐标、时间自面板显示起；`moves_between[i]` 为第 i 次点击前的指针移动次数。校验数量、位置（目标半径 + 4 像素）、顺序、读题时间、点击间隔和鼠标移动，规则见 `docs/click-challenges.md` §5。用键盘完成的滑块（`pointer_type: "keyboard"`）走宽松规则，并在 verify 中带上 `KEYBOARD_INPUT` 原因码。PoW 或滑块失败都会计入该 IP 的失败次数（10 分钟窗口），提高其后续风险分。
+`x` 是拼块左边缘在原图坐标中的位置；`trajectory` 每项为 `[自按下起的毫秒数, x, y]`，最多 400 个点。位置容差 ±4 像素（`Slider.Tolerance`）；轨迹规则（时长、点数、瞬移、等间隔、匀速、纯直线、终点不一致）见 `docs/challenge-types.md` §6.3。位置错和轨迹不像人都返回同一个 422 `ANSWER_INVALID`，具体原因只记服务端日志。点选题的 `answer` 为 `{"clicks": [[ms, x, y], ...], "moves_between": [n, ...]}`：`clicks` 按点击顺序、坐标为原图坐标、时间自面板显示起；`moves_between[i]` 为第 i 次点击前的指针移动次数。校验数量、位置（目标半径 + 4 像素）、顺序、读题时间、点击间隔和鼠标移动，规则见 `docs/click-challenges.md` §5。`pointer_type` 只认 `mouse`、`touch`、`pen`、`keyboard`，其他值（含大小写不同）一律按 `mouse` 处理，即最严格的规则。用键盘完成的滑块走宽松规则，并在 verify 中带上 `KEYBOARD_INPUT` 原因码；点选题不能用键盘完成，声称 `keyboard` 时按鼠标规则校验。触摸输入免去鼠标专用的检查（纯直线拖动、点击间无移动），verify 中带 `TOUCH_INPUT`（权重 0，仅供业务方参考）。PoW 或滑块失败都会计入该 IP 的失败次数（10 分钟窗口），提高其后续风险分。
 
 服务端按从廉价到昂贵的顺序校验，任一步失败即返回：
 
@@ -114,9 +114,9 @@ gateway 托管浏览器组件：`load.js`（经典脚本，提供 `initBotGuard`
 6. `nonces` 数量与格式；
 7. 逐题校验哈希，首个失败即停止。
 
-通过第 6 步后、校验哈希之前，无论证明对错，服务端都会以 `SET bg:pow:used:<challenge_id> 1 NX EX <exp-now>` 标记 challenge 已用：一个 challenge 只有一次提交机会，防止把服务端当作求解预言机。标记已存在返回 409 `CHALLENGE_USED`；证明错误返回 422 `PROOF_INVALID`；证明正确则生成随机 256 位 token 并写入 token 状态。若标记成功而 token 写入失败，返回 503，浏览器重新获取 challenge。这一路径只会少发 token，不会多发，所以 solve 不需要多 key Lua 脚本。
+通过第 6 步后、校验哈希之前，无论证明对错，服务端都会以 `SET bg:pow:used:<challenge_id> 1 NX EX <exp+2×skew-now>` 标记 challenge 已用（多出的时钟偏差余量保证时钟稍慢的副本也认得这个标记）：一个 challenge 只有一次提交机会，防止把服务端当作求解预言机。标记已存在返回 409 `CHALLENGE_USED`；证明错误返回 422 `PROOF_INVALID`；证明正确则生成随机 256 位 token 并写入 token 状态。若标记成功而 token 写入失败，返回 503，浏览器重新获取 challenge。这一路径只会少发 token，不会多发，所以 solve 不需要多 key Lua 脚本。
 
-响应 data：`token`、`expires_at`（建议 60 秒）。challenge 默认 120 秒；TTL 由服务端控制。token 为 opaque，不是可由业务端离线接受的 JWT。
+响应 data：`token`、`expires_at`（建议 60 秒）、`expires_in`（剩余秒数）。浏览器应以 `expires_in` 计时，因为客户端时钟可能不准；`expires_at` 保留给旧版组件。challenge 默认 120 秒；TTL 由服务端控制。token 为 opaque，不是可由业务端离线接受的 JWT。
 
 签发后策略变更（如提高难度）不追溯已签发且未过期的 challenge；应用/action 禁用、Origin 移除会在第 4 步立即生效。
 
@@ -149,7 +149,8 @@ signature = hex(HMAC-SHA256(key = secret_key 的 UTF-8 字节, canonical))
 
 - 签名中的路径固定为 API 路由 `/v1/verify`，与实际请求 URL 的前缀无关，反向代理改写路径不影响验签。
 - 签名覆盖请求体的原始字节：SDK 必须先序列化 JSON，再对同一份字节签名并发送，不能签完再重新序列化。
-- gateway 先检查格式和时间戳，再验签；验签通过后才记录 nonce（Redis，保留 2 倍窗口），所以没有密钥的人无法预先占用 nonce。
+- gateway 先检查格式和时间戳，再验签；验签通过后才记录 nonce（Redis，保留 2 倍窗口加时钟偏差），所以没有密钥的人无法预先占用 nonce。
+- 同一 IP 每分钟验签失败（`UNAUTHORIZED`）超过 `RateLimit.AuthFailuresPerIPPerMinute`（默认 60）次后，该 IP 的 verify 在查密钥之前直接返回 429，以免随机 secret_id 变成数据库查询。`TIMESTAMP_EXPIRED` 不计入。
 - 同一个已签名请求再次发送会被判为重放（401 `NONCE_REUSED`）。SDK 重试时必须**重新签名**（新 nonce、新时间戳），但保持 `request_id` 和请求体不变，这样仍能拿到幂等结果。
 - 未知 secret_id 与签名错误返回同一个错误，避免被用来探测 secret_id 是否存在。
 - 签名用例见 `api/fixtures/hmac-signature-v1.json`，各语言 SDK 必须用它测试。
@@ -193,7 +194,7 @@ HTTP 状态码只描述“这次调用是否被正确处理”，`data.success` 
 | nonce 已用过（同一签名请求被重放） | 401 | `NONCE_REUSED` | CallerError | 检查重试逻辑：重试必须重新签名 |
 | 密钥对与 app_key 不属于同一应用、应用已停用 | 403 | `APP_FORBIDDEN` | CallerError | 不重试，告警 |
 | 同 request_id 但请求体不同 | 409 | `IDEMPOTENCY_CONFLICT` | CallerError | 不重试，修复 request_id 生成 |
-| 限流 | 429 | `RATE_LIMITED` | Unknown | 按 Retry-After 用原 request_id 重试 |
+| 限流（每个密钥对的配额，或该 IP 验签失败过多） | 429 | `RATE_LIMITED` | Unknown | 按 Retry-After 用原 request_id 重试 |
 | 依赖不可用、内部错误 | 503/5xx | `UNAVAILABLE` | Unknown | 用原 request_id 重试或提示稍后再试 |
 | 网络错误、超时、响应体畸形、缺 `success`，或 `success: true` 但 app_key/action 与请求不符 | — | — | Unknown | 同上 |
 

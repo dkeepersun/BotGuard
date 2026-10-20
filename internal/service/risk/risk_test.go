@@ -33,10 +33,14 @@ func TestRulesAndCaps(t *testing.T) {
 	}{
 		"webdriver":     {func(s *Signals, _ *Facts) { s.Webdriver = true }, 60, []string{ReasonWebdriver}},
 		"mouse no move": {func(s *Signals, _ *Facts) { s.PointerMovesBeforeClick = 0 }, 20, []string{ReasonClickWithoutMove}},
-		"fast click":    {func(s *Signals, _ *Facts) { s.MsToClick = 120 }, 15, []string{ReasonFastClick}},
-		"ua mismatch":   {func(_ *Signals, f *Facts) { f.HeaderUA = "curl/8" }, 30, []string{ReasonUAHeaderMismatch}},
-		"failures cap":  {func(_ *Signals, f *Facts) { f.RecentFailures = 9 }, 30, []string{ReasonIPRecentFailures}},
-		"fallback":      {func(_ *Signals, f *Facts) { f.Fallback = true }, 0, []string{ReasonFallbackChosen}},
+		// An invented pointer type is held to the mouse rules.
+		"bogus pointer": {func(s *Signals, _ *Facts) { s.PointerType, s.PointerMovesBeforeClick = "MOUSE", 0 }, 20, []string{ReasonClickWithoutMove}},
+		// The header copy is cleaned before comparison; the signal must be too.
+		"ua padded":    {func(s *Signals, _ *Facts) { s.UserAgent = "  " + ua + "\n" }, 0, nil},
+		"fast click":   {func(s *Signals, _ *Facts) { s.MsToClick = 120 }, 15, []string{ReasonFastClick}},
+		"ua mismatch":  {func(_ *Signals, f *Facts) { f.HeaderUA = "curl/8" }, 30, []string{ReasonUAHeaderMismatch}},
+		"failures cap": {func(_ *Signals, f *Facts) { f.RecentFailures = 9 }, 30, []string{ReasonIPRecentFailures}},
+		"fallback":     {func(_ *Signals, f *Facts) { f.Fallback = true }, 0, []string{ReasonFallbackChosen}},
 		"headless stack": {func(s *Signals, _ *Facts) {
 			s.Webdriver, s.HeadlessUA, s.SoftwareGL = true, true, true
 		}, 100, []string{ReasonHeadlessUA, ReasonSoftwareGL, ReasonWebdriver}},

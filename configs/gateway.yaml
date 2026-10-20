@@ -1,9 +1,12 @@
 Name: botguard-gateway
 Host: 127.0.0.1
 Port: 8090
-Mode: dev
+# pro keeps go-zero's CPU-based load shedding on; dev turns it off.
+Mode: pro
 Timeout: 3000
-MaxBytes: 32768
+# Request bodies are bounded by the handlers (8 KiB, 32 KiB for solutions),
+# which answer 400 INVALID_REQUEST; cmd/gateway turns go-zero's own MaxBytes
+# and breaker middlewares off.
 Middlewares:
   Log: false
   Trace: false
@@ -33,8 +36,9 @@ Challenge:
 #   echo "k1:$(openssl rand -base64 32)"
 # botguard-ctl must use the same value to create secret pairs.
 SecretKEK: ${BOTGUARD_SECRET_KEK}
-# Decrypt-only KEKs during a KEK rotation, same format.
-SecretKEKPrevious: []
+# Decrypt-only KEKs during a KEK rotation, same format. Keep them in the
+# environment too; an unset variable leaves the list empty.
+SecretKEKPrevious: ["${BOTGUARD_SECRET_KEK_PREVIOUS}"]
 # Allowed distance between a signed request's timestamp and gateway time.
 SignatureWindowSeconds: 300
 
@@ -53,9 +57,14 @@ RateLimit:
   SolvePerIPPerMinute: 120
   VerifyPerKeyPerMinute: 6000
   FallbackPerIPPerMinute: 5
+  # Failed verify signatures per IP per minute before 429. Unknown secret
+  # ids miss every cache, so this bounds MySQL lookups from probing.
+  AuthFailuresPerIPPerMinute: 60
 
-# Risk scoring (docs/challenge-types.md). Score >= MediumThreshold escalates
-# adaptive actions to the slider; >= HighThreshold also multiplies PoW work.
+# Risk scoring (docs/challenge-types.md). For adaptive actions, a score >=
+# MediumThreshold draws an interactive kind at random from the action's kinds;
+# >= HighThreshold gives the hardest kind offered and multiplies PoW work.
+# Fallback multiplies it by FallbackDifficultyFactor on top.
 Risk:
   MediumThreshold: 30
   HighThreshold: 70

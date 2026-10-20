@@ -30,7 +30,7 @@
 
 浏览器组件、PHP SDK 和 Laravel 适配包已实现，并做过发布前的真实安装验证，但**尚未发布**（发布步骤见 `docs/release.md`）。可运行示例见 `examples/demo`；Go SDK 仍是提案。
 
-浏览器（`packages/browser`，已实现）：业务页引入 `<botguard-widget>` 并配置 endpoint/app-key/action；题型由服务端决定（无感 / 滑块 / 文字点选 / 图形点选 / 无障碍备用），组件自动处理，业务页不需要改；组件拿到 token 后交给业务表单的 `botguard_token` 字段。token 到期、业务拒绝、页面 reset 后清理。Worker 不能冻结主线程；超时可取消。不能只隐藏提交按钮作为防护。
+浏览器（`packages/browser`，已实现）：业务页引入 `<botguard-widget>` 并配置 endpoint/app-key/action；题型由服务端决定（无感 / 滑块 / 文字点选 / 图形点选 / 无障碍备用），组件自动处理，业务页不需要改；组件拿到 token 后交给业务表单的 `botguard_token` 字段。token 到期、业务拒绝、页面 reset 后清理；有效期以 solve 响应的相对时长 `expires_in` 为准（旧 gateway 退回 `expires_at`），不受客户端时钟偏差影响。Worker 不能冻结主线程；超时可取消，每轮验证只停止自己的 Worker 和定时器。`verify()` 必定有结果（成功、出错，或以 `CANCELLED` / `TOO_MANY_FAILURES` reject），并发调用共享同一个 Promise。`bindTo` 绑定表单内按钮时在表单 `submit` 事件拦截（覆盖回车和其他提交按钮），只提交一次。模块可在 SSR 环境 import。不能只隐藏提交按钮作为防护。
 
 服务端 SDK 统一结果分类（判定规则以 `api/contract-v1.md` 的“verify 结果语义”为准，各语言共用同一组 fixtures）：
 
@@ -48,9 +48,9 @@
 
 Go（待实现）：`client.Verify(ctx, VerifyRequest{AppKey, Token, Action, RequestID})` 返回 `(Result, error)`：Passed 与 Rejected 通过 `Result` 返回，`error == nil`；CallerError 与 Unknown 通过可用 `errors.As` 区分的类型化 error 返回。创建 client 时注入 HTTPS endpoint、secret_id/secret_key、超时；每次请求（含重试）都重新签名；固定超时上限、不跟随重定向、限制响应体。除非调用方明确指定原 request_id，不自动重试。
 
-PHP（`packages/php`，已实现）：`Client::verify(VerifyRequest): VerifyResult`，按 BG1-HMAC-SHA256 签名，传输可注入，可选按原 request_id 重新签名重试。Passed 与 Rejected 通过 `VerifyResult` 返回；CallerError 与 Unknown 抛出不同的异常类型（ProtocolError 为 Unknown 异常的子类）。secret_key 由业务服务器配置注入，不进入 Blade/JavaScript/HTML。
+PHP（`packages/php`，已实现，见其 README）：`Client::verify(VerifyRequest): VerifyResult`，按 BG1-HMAC-SHA256 签名，传输可注入，可选按原 request_id 重新签名重试（只重试网络错误和 5xx）。Passed 与 Rejected 通过 `VerifyResult` 返回；CallerError 与 Unknown 抛出不同的异常类型（ProtocolError 为 Unknown 异常的子类，SDK 不自动重试）。发请求前按网关规则本地校验：token 不是 `[A-Za-z0-9._-]`、1–256 字节的字符串时直接返回 Rejected（`TOKEN_INVALID`），不发请求；app_key/action/request_id 格式不对抛 CallerError（`INVALID_REQUEST`）。除 429 外的 3xx/4xx 一律为 CallerError；响应体超过 64 KiB 为 ProtocolError 并保留状态码；`Retry-After` 支持秒数和 HTTP-date。超时为空、0 或负数时取默认值，并有 50 ms 下限，不会出现不限时。secret_key 由业务服务器配置注入，不进入 Blade/JavaScript/HTML；参数标记 `#[\SensitiveParameter]`，`Client` 的调试输出不含 secret_key。
 
-Laravel（`packages/laravel`，已实现，见其 README）：ServiceProvider 注入 PHP client，发布配置，支持 config cache；只在配置读取 env。默认推荐 controller/service 显式验证，便于控制消费时机。若提供 Validation Rule，只在普通字段验证全部成功后调用，且每个请求最多一次；不要让通用多次校验提前消耗 token。`request_id` 与业务幂等键由服务端建立稳定映射。Validation Rule 只把 Rejected 转为表单验证错误；CallerError 与 Unknown 不得伪装成验证错误，应抛出异常交给应用的错误处理（如返回 503）。
+Laravel（`packages/laravel`，已实现，见其 README）：ServiceProvider 注入 PHP client，发布配置，支持 config cache；只在配置读取 env。默认推荐 controller/service 显式验证，便于控制消费时机。Validation Rule（`botguard:action` 与 `BotGuardToken`）是隐式规则，字段缺失、为空或 null 时同样判为失败；规则一执行就消耗 token，而 Laravel 在其他字段失败后仍会继续校验其余字段，所以应先校验普通字段、通过后再单独校验 botguard，或在同一校验器中把它放最后并使用 `stopOnFirstFailure()`。同一请求内同一 token 与 action 最多核验一次。`request_id` 与业务幂等键由服务端建立稳定映射。`passes()` 与 Validation Rule 是“失败即关闭”的布尔接口：Rejected 为验证失败；CallerError（含未配置 `NOT_CONFIGURED`）与 Unknown 同样返回 false，但会写 error 日志，便于与“用户没通过”区分。需要区分各类结果（例如对 Unknown 返回 503）时用 `verify()`，它对 CallerError 与 Unknown 抛出异常。未配置不影响应用启动和页面渲染。
 
 未来发布后安装命令：
 ```sh

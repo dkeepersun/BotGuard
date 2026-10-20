@@ -41,8 +41,8 @@
 | 风险等级 | 出题 | PoW 难度 |
 |---|---|---|
 | low | invisible | action 配置值 |
-| medium | slider | action 配置值 |
-| high | slider | action 配置值 × 4 |
+| medium | 从 action 的题型列表随机抽一种（第一期只有 slider） | action 配置值 |
+| high | 列表中最难的题型（click_shape > click_text > slider） | action 配置值 × 4（选 fallback 时再 × 8） |
 
 **第一期不做“直接拒绝”**（已确认）。误判会把真实用户挡在门外，而高风险用户仍需解出更难的题。等有真实流量数据后再评估是否加入按 action 开启的硬拒绝。
 
@@ -153,7 +153,7 @@
 | `pointer_moves_before_click` | 点击前的指针移动次数 |
 | `click_without_move` | 点击前没有任何指针移动或键盘焦点变化 |
 | `untrusted_event` | 事件 `isTrusted` 为 false（脚本伪造的事件） |
-| `pointer_type` | mouse / touch / pen / keyboard |
+| `pointer_type` | mouse / touch / pen / keyboard；其他值一律按 mouse（最严格）处理 |
 
 **服务端信号**（攻击者无法伪造）：
 

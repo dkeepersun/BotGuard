@@ -57,7 +57,7 @@ docker compose -f examples/demo/docker-compose.yml down -v   # 连数据一起�
 
 | 按钮 | 预期结果 | 说明 |
 |---|---|---|
-| 不带 token 提交 | 拒绝 · TOKEN_INVALID | 跳过前端组件直接提交表单 |
+| 不带 token 提交 | 拒绝 · TOKEN_INVALID | 跳过前端组件直接提交表单；SDK 本地拒绝，不请求 gateway |
 | 伪造 token | 拒绝 · TOKEN_INVALID | token 是服务端随机数，拼不出来 |
 | 重放已用过的 token | 拒绝 · TOKEN_CONSUMED | token 只能用一次（需先登录一次） |
 | ★ 登录 token 用于注册 | 拒绝 · ACTION_MISMATCH | token 绑定 action；不消耗 token |

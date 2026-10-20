@@ -151,3 +151,60 @@
 - 紧凑模式下的滑块：图片与滑轨同宽（240px）且左边缘对齐，键盘移动时拼图块与滑块位置一致。
 
 未验证：真机（iOS Safari、Android Chrome、微信内置浏览器、各 App 的 WebView）。
+
+## 2026-10-21：整体审查与缺陷修复
+
+四路代码审查（gateway、浏览器组件、PHP/Laravel SDK、运维与文档）共发现约 50 条问题。每条都先复现或核对代码，确认后修复并补测试。
+
+**浏览器组件**
+- 修复了一轮验证的生命周期问题：上一轮的超时会杀掉新一轮的 Worker；`verify()` 在 reset、元素移除、冷却期间永不返回；元素移除后插回会卡死；bindTo 双击会提交两次，第二次 token 为空。
+- 客户端时钟偏快时 token 一拿到就过期，改为以服务端新增的 `expires_in` 计时。
+- 高回报率鼠标的拖动轨迹满 400 点后，结尾被截掉，服务端判为 END_MISMATCH。
+- bindTo 改在表单 submit 阶段拦截，覆盖回车和其他提交按钮。
+- 弹窗模式补上加载、出错的界面反馈和焦点管理；pointercancel 后复位滑块；处理多指针。
+- 打包工具能识别 Worker；SSR 中 import 不再报错；CSP 下优先用 adoptedStyleSheets。
+
+**PHP / Laravel**
+- `botguard` 规则和 `BotGuardToken` 改为隐式规则：少写 `required` 不再绕过验证。
+- 非法 UTF-8、数组、null 形式的 token 不再导致 500，在本地判为 TOKEN_INVALID。
+- 超时为 0 时不再无限等待。
+- 除 429 外的 3xx/4xx 归为调用方错误，不重试。
+- 未配置时 `passes()` 返回 false 并记日志。
+- Octane 下解析当前请求的容器。
+- 文档纠正了“规则放最后就不会消耗 token”的错误说法。
+
+**gateway**
+- `pointer_type` 只认四种取值，其余一律按鼠标规则校验；触摸输入在 verify 中带 `TOUCH_INPUT`。
+- “challenge 已用”标记的有效期补上时钟偏差余量，多副本下不会被重复兑换。
+- 同一 IP 验签失败过多时，在查密钥之前返回 429；未命中的缓存单独存放。
+- 限流、challenge 过期等提前返回的错误也带 CORS 头。
+- 关闭 go-zero 的熔断和 MaxBytes 中间件：请求体超限返回 JSON 400，不再是空的 413。
+- 高风险用户选 fallback 时，难度倍数改为相乘。
+- 遇到未知模式时按 adaptive 处理，不再降级为无感。
+- 校验 `MaxDifficulty`，并要求 DSN 带库名。
+
+**运维**
+- `/readyz` 检查库结构版本，落后时返回 `schema_outdated`。
+- 迁移前检查 MySQL ≥ 8.0 / MariaDB ≥ 10.5.2；checksum 不受 CRLF 影响。
+- botguard-ctl 的错误改写到 stderr；创建密钥对前检查 KEK 与库中已有密钥对是否一致；轮换时显示真实的失效时间；`-mode slider` 与 `-kinds` 同时给出时报冲突；题型去重。
+- demo 的 seed、start 脚本在失败时不再静默。
+- npm 发布改用 Trusted Publishing。
+
+**结果**
+- `make check` 通过。
+- 临时 MySQL 8.4.9、Redis 8.4.0 上 `go test -race -p 1 ./...` 全部通过，确认 MySQL 用例实际执行、没有被跳过。
+- PHP 97 项、浏览器 45 项通过。浏览器新增的行为测试放到旧代码上跑，26 项中 22 项失败，说明这些测试能抓到原来的缺陷。
+- 重建 demo 后用真实浏览器验证：
+  - 无感登录 → PHP SDK 核验通过；
+  - 弹窗滑块：焦点进入对话框，Esc 关闭后焦点回到按钮；
+  - 全部攻击与误用场景结果符合预期；
+  - 黑盒探测：超限请求体返回 JSON 400；随机 secret_id 第 61 次起返回 429；限流和坏 challenge 的响应对允许的来源带 CORS。
+- 本次修好的 demo 场景：「脚本自动求解 PoW」原来不带信号，被 NO_SIGNALS 升级成交互题，没有演示出预期效果。现在脚本伪造一份干净信号；如果 IP 风险已经升高，会说明原因。
+- Laravel 13 应用跨源实测：
+  - `load.js + botguard()->passes()` 通过；
+  - `popup bind + BotGuardToken` 在双击后只提交一次，通过 fallback 自动续交并核验通过。
+
+**仍未验证**
+- 真人在真机上（iOS Safari、安卓、1000Hz 鼠标）拖动滑块和点选。
+- Node 22 上运行浏览器测试（本机为 Node 26，CI 用 Node 22）。
+- Laravel 9–12 和 PHP 8.1 的实际运行：CI 新增了 PHP 8.1 / 8.4 矩阵，但还没有推送跑过。

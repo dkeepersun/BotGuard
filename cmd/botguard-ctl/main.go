@@ -12,5 +12,5 @@ func main() {
 	// Errors are reported by the command itself; go-zero's JSON logs would
 	// only add noise, and could echo connection details.
 	logx.Disable()
-	os.Exit(ctl.New(os.Getenv, os.Stdout).Run(context.Background(), os.Args[1:]))
+	os.Exit(ctl.New(os.Getenv, os.Stdout, os.Stderr).Run(context.Background(), os.Args[1:]))
 }

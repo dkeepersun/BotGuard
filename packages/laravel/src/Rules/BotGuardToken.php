@@ -5,24 +5,33 @@ declare(strict_types=1);
 namespace BotGuard\Laravel\Rules;
 
 use BotGuard\Laravel\BotGuard;
-use Illuminate\Contracts\Validation\Rule;
+use Illuminate\Container\Container;
+use Illuminate\Contracts\Validation\ImplicitRule;
 
 /**
- * 'botguard_token' => ['required', new BotGuardToken('login')]
+ * 'botguard_token' => [new BotGuardToken('login')]
  *
- * Put it last: Laravel stops at the first failing attribute only with
- * `bail`, and the token is consumed when this rule runs, so other fields
- * should be validated before it.
+ * Implicit: a missing, empty or null field fails instead of being skipped,
+ * with or without `required`.
+ *
+ * Running this rule consumes the token, and Laravel keeps validating the
+ * remaining attributes after one fails, wherever this rule is placed (`bail`
+ * only stops the rules of a single attribute). Validate the other fields
+ * first and this rule in a separate step, or use stopOnFirstFailure() with
+ * this rule last, so a typo in another field does not burn the token.
  */
-final class BotGuardToken implements Rule
+final class BotGuardToken implements ImplicitRule
 {
     public function __construct(private readonly string $action)
     {
+        if ($action === '') {
+            throw new \InvalidArgumentException('BotGuardToken 需要 action，例如 new BotGuardToken(\'login\')');
+        }
     }
 
     public function passes($attribute, $value): bool
     {
-        return app(BotGuard::class)->passes(is_string($value) ? $value : '', $this->action);
+        return Container::getInstance()->make(BotGuard::class)->passes($value, $this->action);
     }
 
     public function message(): string

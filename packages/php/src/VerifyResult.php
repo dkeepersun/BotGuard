@@ -10,6 +10,9 @@ namespace BotGuard;
  */
 final class VerifyResult
 {
+    /** Reason for a missing or malformed token; the SDK also returns it locally without calling the gateway. */
+    public const TOKEN_INVALID = 'TOKEN_INVALID';
+
     private function __construct(
         private readonly bool $ok,
         /** Contract reason code when rejected, e.g. TOKEN_EXPIRED. Unknown codes are still rejections. */
@@ -43,6 +46,12 @@ final class VerifyResult
     public function passed(): bool
     {
         return $this->ok;
+    }
+
+    /** The token was refused (see $reason); ask the user to verify again. */
+    public function rejected(): bool
+    {
+        return !$this->ok;
     }
 
     /** @return array<string, mixed> */

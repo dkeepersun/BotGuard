@@ -8,6 +8,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,6 +19,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/challenge"
 	"github.com/dkeepersun/BotGuard/internal/service/click"
+	"github.com/dkeepersun/BotGuard/internal/service/clientip"
 	"github.com/dkeepersun/BotGuard/internal/service/signature"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -30,6 +32,7 @@ const (
 	dimChallenge = "challenge"
 	dimSolve     = "solve"
 	dimVerify    = "verify"
+	dimAuthFail  = "authfail"
 	signedPath   = "/v1/verify"
 )
 
@@ -45,7 +48,10 @@ type Settings struct {
 	ChallengePerIPPerMinute int
 	SolvePerIPPerMinute     int
 	VerifyPerKeyPerMinute   int
-	FallbackPerIPPerMinute  int
+	// AuthFailuresPerIPPerMinute bounds failed verify signatures per IP;
+	// beyond it the IP gets 429 before any secret lookup.
+	AuthFailuresPerIPPerMinute int
+	FallbackPerIPPerMinute     int
 
 	// Risk thresholds and the PoW multipliers they trigger.
 	RiskMedium               int
@@ -100,6 +106,29 @@ func (g *Gateway) app(ctx context.Context, appKey string) (*domain.App, error) {
 	return app, nil
 }
 
+// appPeeker is implemented by stores that can answer from cache alone.
+type appPeeker interface {
+	PeekApp(appKey string) (*domain.App, bool)
+}
+
+// cachedOrigin returns origin when an already-cached app allows it, so errors
+// raised before the app lookup (rate limits, broken challenges) still carry
+// CORS headers. It never queries storage, keeping those paths cheap.
+func (g *Gateway) cachedOrigin(appKey, rawOrigin string) string {
+	peeker, ok := g.Apps.(appPeeker)
+	if !ok {
+		return ""
+	}
+	origin, ok := domain.NormalizeOrigin(rawOrigin)
+	if !ok {
+		return ""
+	}
+	if app, ok := peeker.PeekApp(appKey); ok && app.Enabled && app.AllowsOrigin(origin) {
+		return origin
+	}
+	return ""
+}
+
 // Tokens embed the public app key so a token from another app is rejected
 // as APP_MISMATCH without a Redis lookup.
 func newToken(appKey string) (string, error) {
@@ -133,6 +162,7 @@ func tokenApp(token string) (string, bool) {
 // VerifyInput carries the signature headers and the exact body bytes that
 // were signed, alongside the decoded fields.
 type VerifyInput struct {
+	ClientIP  netip.Addr
 	SecretID  string
 	Timestamp string
 	Nonce     string
@@ -186,8 +216,9 @@ func (g *Gateway) authenticate(ctx context.Context, in VerifyInput) (*domain.Sec
 	if !signature.Equal(pair.SecretKey, canonical, in.Signature) {
 		return nil, errx.ErrUnauthorized
 	}
-	// Keep nonces for the whole window on both sides of now.
-	fresh, err := g.State.MarkNonce(ctx, in.SecretID, in.Nonce, 2*g.Settings.SignatureWindow)
+	// Keep nonces for the whole window on both sides of now, plus the clock
+	// skew between replicas.
+	fresh, err := g.State.MarkNonce(ctx, in.SecretID, in.Nonce, 2*g.Settings.SignatureWindow+g.Settings.ClockSkew)
 	if err != nil {
 		logx.WithContext(ctx).Errorf("mark nonce: %v", err)
 		return nil, errx.ErrUnavailable
@@ -205,7 +236,28 @@ func (g *Gateway) Verify(ctx context.Context, in VerifyInput) (*VerifyOutput, er
 	if !domain.ValidAppKey(in.AppKey) || !domain.ValidAction(in.Action) || !domain.ValidRequestID(in.RequestID) {
 		return nil, errx.InvalidRequest("app_key、action 或 request_id 格式错误")
 	}
+	// Unknown secret ids miss every cache, so an IP that keeps failing
+	// authentication is cut off before it can turn into MySQL queries.
+	// Zero disables the limit (tests and embedded use; config requires >= 1).
+	ipBucket, authLimit := clientip.Bucket(in.ClientIP), g.Settings.AuthFailuresPerIPPerMinute
+	if authLimit > 0 {
+		fails, retry, err := g.Limiter.Count(ctx, dimAuthFail, ipBucket, rateWindow)
+		if err != nil {
+			logx.WithContext(ctx).Errorf("rate limiter %s: %v", dimAuthFail, err)
+			return nil, errx.ErrUnavailable
+		}
+		if fails >= int64(authLimit) {
+			return nil, errx.RateLimited(retry)
+		}
+	}
 	pair, err := g.authenticate(ctx, in)
+	// Clock errors are rejected before any lookup and must stay visible as
+	// TIMESTAMP_EXPIRED, so only signature failures count.
+	if authLimit > 0 && errors.Is(err, errx.ErrUnauthorized) {
+		if _, _, lerr := g.Limiter.Take(ctx, dimAuthFail, ipBucket, rateWindow); lerr != nil {
+			logx.WithContext(ctx).Errorf("rate limiter %s: %v", dimAuthFail, lerr)
+		}
+	}
 	if err != nil {
 		return nil, err
 	}

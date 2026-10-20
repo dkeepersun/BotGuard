@@ -23,4 +23,7 @@ func TestNormalizeMySQLDSN(t *testing.T) {
 	if _, err := NormalizeMySQLDSN(""); err == nil {
 		t.Fatal("empty DSN accepted")
 	}
+	if _, err := NormalizeMySQLDSN("u:p@tcp(127.0.0.1:3306)/"); err == nil {
+		t.Fatal("DSN without a database accepted")
+	}
 }

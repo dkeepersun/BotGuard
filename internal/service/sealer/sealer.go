@@ -74,6 +74,9 @@ func New(active string, previous ...string) (*Sealer, error) {
 	return s, nil
 }
 
+// Active is the id of the KEK that seals new secrets.
+func (s *Sealer) Active() string { return s.active }
+
 // Seal returns the active KEK id and nonce||ciphertext.
 func (s *Sealer) Seal(secretID string, plaintext []byte) (string, []byte, error) {
 	aead := s.aeads[s.active]

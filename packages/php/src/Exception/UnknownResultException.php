@@ -16,7 +16,7 @@ class UnknownResultException extends BotGuardException
         int $httpStatus = 0,
         ?string $errorCode = null,
         ?string $requestId = null,
-        /** Seconds from Retry-After on 429, if any. */
+        /** Seconds from Retry-After (delay-seconds or HTTP-date), if present and parseable. */
         public readonly ?int $retryAfter = null,
         ?\Throwable $previous = null,
     ) {

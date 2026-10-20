@@ -56,16 +56,19 @@ const usage = `用法：botguard-ctl <命令> [参数]
 应用、来源、action、密钥对的变更会在 gateway 的应用缓存过期后生效（默认 10 秒内）。
 `
 
-// App runs one command. Env and output are injected for tests.
+// App runs one command. Env and output are injected for tests. Errors and
+// warnings go to Err, so scripts that capture Out (app_key, secret pairs)
+// still show why a command failed.
 type App struct {
 	Env    func(string) string
 	Out    io.Writer
+	Err    io.Writer
 	Now    func() time.Time
 	openDB func(dsn string) sqlx.SqlConn
 }
 
-func New(env func(string) string, out io.Writer) *App {
-	return &App{Env: env, Out: out, Now: time.Now, openDB: func(dsn string) sqlx.SqlConn { return sqlx.NewMysql(dsn) }}
+func New(env func(string) string, out, errOut io.Writer) *App {
+	return &App{Env: env, Out: out, Err: errOut, Now: time.Now, openDB: func(dsn string) sqlx.SqlConn { return sqlx.NewMysql(dsn) }}
 }
 
 type usageError string
@@ -80,10 +83,10 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	}
 	var ue usageError
 	if errors.As(err, &ue) {
-		fmt.Fprintf(a.Out, "错误：%s\n\n%s", ue, usage)
+		fmt.Fprintf(a.Err, "错误：%s\n\n%s", ue, usage)
 		return 2
 	}
-	fmt.Fprintf(a.Out, "错误：%s\n", describe(err))
+	fmt.Fprintf(a.Err, "错误：%s\n", describe(err))
 	return 1
 }
 
@@ -97,6 +100,9 @@ func describe(err error) string {
 		return "记录已存在"
 	case errors.Is(err, domain.ErrInvalidState):
 		return "密钥对已吊销，不能轮换"
+	case errors.Is(err, logic.ErrKEKMismatch):
+		return strings.TrimPrefix(err.Error(), logic.ErrKEKMismatch.Error()+": ") +
+			"。BOTGUARD_SECRET_KEK 与 gateway 使用的不一致，用它生成的密钥对在 gateway 上无法解密（verify 返回 503）。请使用与 gateway 完全相同的值"
 	default:
 		return err.Error()
 	}
@@ -387,6 +393,11 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 	if err := parse(fs, args, "app", "action"); err != nil {
 		return err
 	}
+	set := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { set[f.Name] = true })
+	if set["mode"] && set["kinds"] && *mode == domain.ModeSlider {
+		return usageError("-mode slider 只出滑块，不能同时指定 -kinds；请改用 -mode interactive -kinds ...")
+	}
 	adm, err := a.admin()
 	if err != nil {
 		return err
@@ -435,6 +446,19 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 	return nil
 }
 
+// checkKEK refuses to seal new secrets with a KEK that cannot open the
+// existing ones under the same id.
+func (a *App) checkKEK(ctx context.Context, adm *logic.AppAdmin) error {
+	others, err := adm.CheckKEK(ctx)
+	if err != nil {
+		return err
+	}
+	if others {
+		fmt.Fprintf(a.Err, "提示：库中有用其他 KEK id 加密的密钥对。如果不是正在轮换 KEK，请确认 %s 的 id 与 gateway 一致。\n", KEKEnv)
+	}
+	return nil
+}
+
 func printSecret(out io.Writer, p credential.SecretPair) {
 	fmt.Fprintf(out, "secret_id: %s\nsecret_key: %s\n\n", p.SecretID, p.SecretKey)
 	fmt.Fprintln(out, "这是 secret_key 唯一一次显示，数据库只保存加密后的密文。请立即存入业务服务器的配置，不要提交到代码仓库或放进前端。")
@@ -449,6 +473,9 @@ func (a *App) secretCreate(ctx context.Context, args []string) error {
 	}
 	adm, err := a.admin()
 	if err != nil {
+		return err
+	}
+	if err := a.checkKEK(ctx, adm); err != nil {
 		return err
 	}
 	p, exp, err := adm.CreateSecret(ctx, *app, *ttl)
@@ -491,6 +518,9 @@ func (a *App) secretRotate(ctx context.Context, args []string) error {
 	}
 	adm, err := a.admin()
 	if err != nil {
+		return err
+	}
+	if err := a.checkKEK(ctx, adm); err != nil {
 		return err
 	}
 	p, oldUntil, err := adm.RotateSecret(ctx, *id, *grace, *ttl)

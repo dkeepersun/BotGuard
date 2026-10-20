@@ -28,7 +28,7 @@ func newRunner(t *testing.T, dsn string) *runner {
 			return r.kek
 		}
 		return ""
-	}, r.out)
+	}, r.out, r.out)
 	return r
 }
 
@@ -58,6 +58,7 @@ func TestUsageErrorsNeedNoDatabase(t *testing.T) {
 	r.run(2, "app", "create")
 	r.run(2, "origin", "add", "-app", "pk_x")
 	r.run(2, "app", "list", "extra")
+	r.run(2, "action", "set", "-app", "pk_x", "-action", "login", "-mode", "slider", "-kinds", "click_text")
 	if out := r.run(1, "app", "list"); !strings.Contains(out, "BOTGUARD_MYSQL_DSN") {
 		t.Fatalf("missing DSN message: %s", out)
 	}
@@ -119,6 +120,24 @@ func TestOperatorWorkflow(t *testing.T) {
 	r.run(1, "secret", "rotate", "-secret", key)
 	r.run(1, "secret", "revoke", "-secret", "sid_does_not_exist")
 
+	// Rotation prints when the old pair really stops: a 30m pair stays 30m.
+	short := field(t, r.run(0, "secret", "create", "-app", app, "-ttl", "30m"), "secret_id")
+	if out := r.run(0, "secret", "rotate", "-secret", short, "-grace", "1h"); !strings.Contains(out, "2026-10-20T00:30:00Z") {
+		t.Fatalf("short pair rotation: %s", out)
+	}
+	// A KEK with the gateway's id but another value would seal secrets the
+	// gateway cannot open: refuse before creating anything.
+	good := r.kek
+	r.kek = "k1:" + strings.Repeat("B", 43) + "="
+	if out := r.run(1, "secret", "create", "-app", app); !strings.Contains(out, "不一致") {
+		t.Fatalf("KEK mismatch: %s", out)
+	}
+	r.kek = "k2:" + strings.Repeat("B", 43) + "="
+	if out := r.run(0, "secret", "create", "-app", app); !strings.Contains(out, "其他 KEK id") {
+		t.Fatalf("other KEK id: %s", out)
+	}
+	r.kek = good
+
 	r.run(0, "app", "disable", "-app", app)
 	show := r.run(0, "app", "show", "-app", app)
 	flat := strings.Join(strings.Fields(show), " ")
@@ -138,5 +157,17 @@ func TestOperatorWorkflow(t *testing.T) {
 	}
 	if out := r.run(0, "migrate", "status"); !strings.Contains(out, "已执行") {
 		t.Fatalf("status: %s", out)
+	}
+}
+
+// Scripts capture stdout for app keys and secrets; errors must not vanish into it.
+func TestErrorsGoToStderr(t *testing.T) {
+	var out, errOut bytes.Buffer
+	app := New(func(string) string { return "" }, &out, &errOut)
+	if code := app.Run(context.Background(), []string{"app", "list"}); code != 1 {
+		t.Fatalf("exit %d", code)
+	}
+	if out.Len() != 0 || !strings.Contains(errOut.String(), "BOTGUARD_MYSQL_DSN") {
+		t.Fatalf("stdout %q, stderr %q", out.String(), errOut.String())
 	}
 }

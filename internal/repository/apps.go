@@ -18,6 +18,8 @@ import (
 
 const (
 	statusEnabled = 1
+	// legacyModeSlider is the pre-0004 name of interactive + [slider].
+	legacyModeSlider = "slider"
 )
 
 // AppStore is what the gateway needs from app configuration.
@@ -99,12 +101,11 @@ func (r *MySQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, e
 		app.Origins = append(app.Origins, n)
 	}
 	for _, a := range actions {
-		mode := a.Mode
-		if !domain.ValidMode(mode) {
-			logx.WithContext(ctx).Errorf("app %d action %s has unknown mode %q, using invisible", row.ID, a.Action, mode)
-			mode = domain.ModeInvisible
+		mode, kinds, known := storedMode(a.Mode, a.Kinds)
+		if !known {
+			logx.WithContext(ctx).Errorf("app %d action %s has unknown mode %q, using adaptive", row.ID, a.Action, a.Mode)
 		}
-		app.Actions[a.Action] = domain.ActionPolicy{Enabled: a.Enabled, Mode: mode, Kinds: ParseKinds(a.Kinds),
+		app.Actions[a.Action] = domain.ActionPolicy{Enabled: a.Enabled, Mode: mode, Kinds: kinds,
 			Puzzles: a.Puzzles, Difficulty: a.Difficulty}
 	}
 	return app, nil
@@ -139,15 +140,15 @@ func (r *MySQLApps) SecretPair(ctx context.Context, secretID string) (*domain.Se
 }
 
 // CachedApps bounds both staleness (ttl) and memory (limit). Misses are
-// cached too, so random app keys on the public endpoint cannot turn into one
-// MySQL query each.
+// cached separately, so repeated unknown keys cost no query and a flood of
+// random keys cannot evict the apps and secret pairs that are in use. Callers
+// must still rate-limit unknown keys: each new one is one MySQL query.
 type CachedApps struct {
-	src  AppStore
-	apps *collection.Cache
-	keys *collection.Cache
+	src    AppStore
+	apps   *collection.Cache
+	keys   *collection.Cache
+	misses *collection.Cache
 }
-
-type miss struct{}
 
 func NewCachedApps(src AppStore, ttl time.Duration, limit int) (*CachedApps, error) {
 	apps, err := collection.NewCache(ttl, collection.WithLimit(limit), collection.WithName("bg-apps"))
@@ -158,35 +159,58 @@ func NewCachedApps(src AppStore, ttl time.Duration, limit int) (*CachedApps, err
 	if err != nil {
 		return nil, err
 	}
-	return &CachedApps{src: src, apps: apps, keys: keys}, nil
-}
-
-func take[T any](c *collection.Cache, key string, fetch func() (*T, error)) (*T, error) {
-	v, err := c.Take(key, func() (any, error) {
-		got, err := fetch()
-		if errors.Is(err, domain.ErrNotFound) {
-			return miss{}, nil
-		}
-		if err != nil {
-			return nil, err
-		}
-		return got, nil
-	})
+	misses, err := collection.NewCache(ttl, collection.WithLimit(limit), collection.WithName("bg-misses"))
 	if err != nil {
 		return nil, err
 	}
-	if got, ok := v.(*T); ok {
-		return got, nil
+	return &CachedApps{src: src, apps: apps, keys: keys, misses: misses}, nil
+}
+
+func take[T any](c *CachedApps, cache *collection.Cache, key string, fetch func() (*T, error)) (*T, error) {
+	if _, ok := c.misses.Get(key); ok {
+		return nil, domain.ErrNotFound
 	}
-	return nil, domain.ErrNotFound
+	v, err := cache.Take(key, func() (any, error) { return fetch() })
+	if errors.Is(err, domain.ErrNotFound) {
+		c.misses.Set(key, struct{}{})
+	}
+	if err != nil {
+		return nil, err
+	}
+	return v.(*T), nil
 }
 
 func (c *CachedApps) AppByKey(ctx context.Context, appKey string) (*domain.App, error) {
-	return take(c.apps, appKey, func() (*domain.App, error) { return c.src.AppByKey(ctx, appKey) })
+	return take(c, c.apps, "app:"+appKey, func() (*domain.App, error) { return c.src.AppByKey(ctx, appKey) })
 }
 
 func (c *CachedApps) SecretPair(ctx context.Context, secretID string) (*domain.SecretPair, error) {
-	return take(c.keys, secretID, func() (*domain.SecretPair, error) { return c.src.SecretPair(ctx, secretID) })
+	return take(c, c.keys, "secret:"+secretID, func() (*domain.SecretPair, error) { return c.src.SecretPair(ctx, secretID) })
+}
+
+// PeekApp returns an app only if it is already cached; it never queries.
+func (c *CachedApps) PeekApp(appKey string) (*domain.App, bool) {
+	v, ok := c.apps.Get("app:" + appKey)
+	if !ok {
+		return nil, false
+	}
+	app, ok := v.(*domain.App)
+	return app, ok
+}
+
+// storedMode interprets a stored mode. The legacy "slider" was written by
+// botguard-ctl before migration 0004 (or by an old ctl against a migrated
+// database) and meant "always the slider". Anything unknown becomes adaptive,
+// never invisible: a typo must not silently drop to the weakest mode.
+func storedMode(mode, kinds string) (string, []string, bool) {
+	switch {
+	case mode == legacyModeSlider:
+		return domain.ModeInteractive, []string{domain.KindSlider}, true
+	case domain.ValidMode(mode):
+		return mode, ParseKinds(kinds), true
+	default:
+		return domain.ModeAdaptive, ParseKinds(kinds), false
+	}
 }
 
 // ParseKinds reads a stored kind list, dropping unknown kinds and falling

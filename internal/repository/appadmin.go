@@ -175,9 +175,11 @@ func (r *AppAdmin) RevokeSecret(ctx context.Context, secretID string) error {
 }
 
 // RotateSecret adds a replacement for an enabled secret pair and shortens the
-// old pair's life to oldUntil (never extends it), in one transaction.
-func (r *AppAdmin) RotateSecret(ctx context.Context, oldSecretID string, k NewSecret, oldUntil time.Time) error {
-	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
+// old pair's life to oldUntil (never extends it), in one transaction. It
+// returns when the old pair actually stops working.
+func (r *AppAdmin) RotateSecret(ctx context.Context, oldSecretID string, k NewSecret, oldUntil time.Time) (time.Time, error) {
+	until := oldUntil.UTC()
+	err := r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
 		var old secretRow
 		err := s.QueryRowCtx(ctx, &old,
 			"SELECT "+secretColumns+" FROM bg_app_secret WHERE secret_id = ? FOR UPDATE", oldSecretID)
@@ -194,13 +196,40 @@ func (r *AppAdmin) RotateSecret(ctx context.Context, oldSecretID string, k NewSe
 		if err := insertSecret(ctx, s, old.AppID, k); err != nil {
 			return err
 		}
-		until := oldUntil.UTC()
 		if old.ExpiresAt.Valid && old.ExpiresAt.Time.Before(until) {
-			until = old.ExpiresAt.Time
+			until = old.ExpiresAt.Time.UTC()
 		}
 		_, err = s.ExecCtx(ctx, "UPDATE bg_app_secret SET expires_at = ? WHERE secret_id = ?", until, oldSecretID)
 		return err
 	})
+	return until, err
+}
+
+// SealedSample is the newest secret sealed under one KEK id, used to check
+// that an operator's KEK is the one the gateway decrypts with.
+type SealedSample struct {
+	SecretID   string `db:"secret_id"`
+	Ciphertext []byte `db:"secret_ciphertext"`
+}
+
+// SampleSealed returns the newest secret sealed under kekID, and whether any
+// secret is sealed under another id (normal during a KEK rotation).
+func (r *AppAdmin) SampleSealed(ctx context.Context, kekID string) (*SealedSample, bool, error) {
+	var others int
+	if err := r.conn.QueryRowCtx(ctx, &others,
+		"SELECT COUNT(*) FROM bg_app_secret WHERE secret_ciphertext IS NOT NULL AND kek_id <> ?", kekID); err != nil {
+		return nil, false, err
+	}
+	var s SealedSample
+	err := r.conn.QueryRowCtx(ctx, &s,
+		"SELECT secret_id, secret_ciphertext FROM bg_app_secret WHERE kek_id = ? AND secret_ciphertext IS NOT NULL ORDER BY id DESC LIMIT 1", kekID)
+	if errors.Is(err, sqlx.ErrNotFound) {
+		return nil, others > 0, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &s, others > 0, nil
 }
 
 type AppSummary struct {

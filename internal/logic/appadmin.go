@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -91,6 +92,13 @@ func (a *AppAdmin) SetAction(ctx context.Context, appKey, action string, p domai
 	if !domain.ValidMode(p.Mode) {
 		return invalid("mode 只能是 invisible、interactive、adaptive（或 slider，等同 interactive 且只出滑块）")
 	}
+	var kinds []string
+	for _, k := range p.Kinds {
+		if !slices.Contains(kinds, k) {
+			kinds = append(kinds, k)
+		}
+	}
+	p.Kinds = kinds
 	if len(p.Kinds) == 0 {
 		return invalid("kinds 至少要有一种题型")
 	}
@@ -139,6 +147,28 @@ func (a *AppAdmin) sealed(ttl time.Duration) (credential.SecretPair, repository.
 	return p, repository.NewSecret{SecretID: p.SecretID, Ciphertext: ct, KEKID: kek, ExpiresAt: exp}, nil
 }
 
+// ErrKEKMismatch means the operator's KEK cannot open a secret the gateway
+// sealed under the same id: new secrets would fail on the gateway with 503.
+var ErrKEKMismatch = errors.New("KEK mismatch")
+
+// CheckKEK opens the newest secret sealed under the active KEK id. It returns
+// otherKEKs when secrets exist under other ids only, which is expected during
+// a KEK rotation but also what a wrong id looks like.
+func (a *AppAdmin) CheckKEK(ctx context.Context) (otherKEKs bool, err error) {
+	if a.Sealer == nil {
+		return false, errors.New("未配置 BOTGUARD_SECRET_KEK，无法加密保存 secret_key")
+	}
+	kek := a.Sealer.Active()
+	sample, others, err := a.Repo.SampleSealed(ctx, kek)
+	if err != nil || sample == nil {
+		return others, err
+	}
+	if _, err := a.Sealer.Open(kek, sample.SecretID, sample.Ciphertext); err != nil {
+		return others, fmt.Errorf("%w: 无法用 KEK %q 解开库中已有的密钥对 %s", ErrKEKMismatch, kek, sample.SecretID)
+	}
+	return others, nil
+}
+
 // CreateSecret returns the only plaintext copy of the secret key; the database
 // keeps it sealed with the KEK, and it is never shown again.
 func (a *AppAdmin) CreateSecret(ctx context.Context, appKey string, ttl time.Duration) (credential.SecretPair, *time.Time, error) {
@@ -169,8 +199,8 @@ func (a *AppAdmin) RotateSecret(ctx context.Context, oldSecretID string, grace, 
 	if err != nil {
 		return credential.SecretPair{}, time.Time{}, err
 	}
-	oldUntil := a.Now().Add(grace).UTC()
-	return p, oldUntil, a.Repo.RotateSecret(ctx, oldSecretID, rec, oldUntil)
+	until, err := a.Repo.RotateSecret(ctx, oldSecretID, rec, a.Now().Add(grace).UTC())
+	return p, until, err
 }
 
 func (a *AppAdmin) ListApps(ctx context.Context) ([]repository.AppSummary, error) {
