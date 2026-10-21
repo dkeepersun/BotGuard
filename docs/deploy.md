@@ -109,6 +109,48 @@ journalctl -u botguard-gateway -f
 
 服务崩溃后 systemd 在 5 秒后自动拉起；2 分钟内连续失败 5 次就停止重试（通常是配置或密钥错误），修好后 `scripts/botguard.sh restart` 即可。自动拉起不会重新编译。
 
+## 前置 nginx
+
+gateway 和 admin-web 建议都放在 nginx 后面，由 nginx 负责 TLS、慢速客户端和第一层限流。程序本身也有兜底：请求头必须在 5 秒内收完、整个请求 10 秒内收完、请求头不超过 64 KiB、空闲连接 120 秒后关闭；按 IP 的限流在 Redis 计数，已经超限的 IP 在本进程内直接拒绝，不再访问 Redis；库里不存在的 app_key 和 secret_id 每个进程每秒最多查 20 次 MySQL（每 10 秒从库里加载一次已有 key 的清单，新建的 key 最多 10 秒后可用，和应用缓存一致）。
+
+必须同时配置 `gateway.yaml` 的 `TrustedProxies`（nginx 与 gateway 同机时填 `127.0.0.1/32`）。不配时所有用户的 IP 都是 nginx 的地址，共用一份限流额度，几个用户就会把所有人限住。
+
+参考配置（gateway，按实际流量调整数值）：
+
+```nginx
+# http 块
+limit_req_zone  $binary_remote_addr zone=bg_req:20m rate=20r/s;
+limit_conn_zone $binary_remote_addr zone=bg_conn:20m;
+
+upstream botguard_gateway {
+    server 127.0.0.1:8090;
+    keepalive 64;
+}
+
+# server 块
+client_header_timeout 10s;
+client_body_timeout   10s;
+send_timeout          10s;
+client_max_body_size  64k;     # gateway 最大请求体 32 KiB
+
+location / {
+    limit_req  zone=bg_req burst=40 nodelay;
+    limit_conn bg_conn 20;
+    limit_req_status  429;
+    limit_conn_status 429;
+
+    proxy_pass http://botguard_gateway;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $remote_addr;   # 前面还有 CDN 时改用 $proxy_add_x_forwarded_for，并把 CDN 网段加进 TrustedProxies
+    proxy_connect_timeout 2s;
+    proxy_read_timeout    10s;
+}
+```
+
+nginx 的 `limit_req` 只是粗粒度的第一道闸，按接口的精确额度仍由 gateway 的 `RateLimit` 决定，所以 nginx 的值要比 gateway 宽松，避免先于 gateway 拒绝正常用户。upstream 的 `keepalive_timeout`（默认 60 秒）要小于 gateway 的 120 秒空闲超时，否则可能偶发 502。
+
 ## 注意
 
 - `botguard.env` 里不要写 `export`：systemd 的 EnvironmentFile 不认，带 `export` 的行会被忽略，服务因缺少密钥起不来。`install-systemd` 发现这种行会拒绝安装并给出修正命令。
