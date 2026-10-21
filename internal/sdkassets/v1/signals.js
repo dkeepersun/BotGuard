@@ -80,23 +80,32 @@ export async function collectEnvironment(win = globalThis.window, nav = globalTh
  */
 export function trackInteraction(doc = globalThis.document, now = () => performance.now()) {
   let moves = 0;
+  // iOS WebKit synthesises the click after a tap with an empty or "mouse"
+  // pointerType; the pointerdown that started it carries the real one.
+  let lastDown = { type: '', at: -Infinity };
   const onMove = (e) => {
     if (e.isTrusted) moves++;
   };
+  const onDown = (e) => {
+    if (e.isTrusted) lastDown = { type: e.pointerType || '', at: now() };
+  };
   doc.addEventListener('pointermove', onMove, { passive: true, capture: true });
+  doc.addEventListener('pointerdown', onDown, { passive: true, capture: true });
   return {
     /** Snapshot at activation. trigger is the click/keydown event. */
     snapshot(trigger) {
       const keyboard = trigger && trigger.type === 'keydown';
+      const recentTouch = (lastDown.type === 'touch' || lastDown.type === 'pen') && now() - lastDown.at < 1000;
       return {
         ms_to_click: Math.round(now()),
         pointer_moves_before_click: moves,
         untrusted_event: !!trigger && trigger.isTrusted === false,
-        pointer_type: keyboard ? 'keyboard' : (trigger && trigger.pointerType) || 'mouse',
+        pointer_type: keyboard ? 'keyboard' : recentTouch ? lastDown.type : (trigger && trigger.pointerType) || 'mouse',
       };
     },
     stop() {
       doc.removeEventListener('pointermove', onMove, { capture: true });
+      doc.removeEventListener('pointerdown', onDown, { capture: true });
     },
   };
 }

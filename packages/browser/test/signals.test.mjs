@@ -50,3 +50,21 @@ test('interaction tracker counts trusted moves and classifies the trigger', () =
   assert.equal(tracker.snapshot({ type: 'keydown', isTrusted: true }).pointer_type, 'keyboard');
   assert.equal(tracker.snapshot({ type: 'click', isTrusted: false }).untrusted_event, true);
 });
+
+test('interaction tracker takes a tap\'s pointer type from its pointerdown', () => {
+  const listeners = {};
+  const doc = { addEventListener: (t, fn) => (listeners[t] = fn), removeEventListener: () => {} };
+  let clock = 1000;
+  const tracker = trackInteraction(doc, () => clock);
+  // iOS WebKit: the synthesised click says "mouse" (or nothing) after a tap.
+  listeners.pointerdown({ isTrusted: true, pointerType: 'touch' });
+  clock += 120;
+  assert.equal(tracker.snapshot({ type: 'click', isTrusted: true, pointerType: 'mouse' }).pointer_type, 'touch');
+  assert.equal(tracker.snapshot({ type: 'click', isTrusted: true }).pointer_type, 'touch');
+  // A stale touch does not relabel a later mouse click.
+  clock += 5000;
+  assert.equal(tracker.snapshot({ type: 'click', isTrusted: true, pointerType: 'mouse' }).pointer_type, 'mouse');
+  // Script-dispatched pointerdowns are ignored.
+  listeners.pointerdown({ isTrusted: false, pointerType: 'touch' });
+  assert.equal(tracker.snapshot({ type: 'click', isTrusted: true, pointerType: 'mouse' }).pointer_type, 'mouse');
+});
