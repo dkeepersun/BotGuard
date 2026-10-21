@@ -2,11 +2,13 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 
 	"github.com/dkeepersun/BotGuard/internal/config"
 	"github.com/dkeepersun/BotGuard/internal/handler"
 	"github.com/dkeepersun/BotGuard/internal/svc"
+	"github.com/dkeepersun/BotGuard/internal/version"
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/zeromicro/go-zero/rest"
@@ -14,7 +16,12 @@ import (
 
 func main() {
 	path := flag.String("f", "configs/gateway.yaml", "configuration file")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("gateway", version.String())
+		return
+	}
 	var c config.GatewayConfig
 	// Secrets and DSNs come from the environment, never the YAML file.
 	conf.MustLoad(*path, &c, conf.UseEnv())

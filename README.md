@@ -71,12 +71,12 @@ bin/botguard-ctl app show -app app_xxx
 
 ## 服务器部署
 
-`scripts/botguard.sh` 管理 gateway 和 admin-web：编译、启停、迁移、看日志，`install-systemd` 一条命令装成开机自启的 systemd 服务，之后发布新代码用 `scripts/botguard.sh update`（拉代码 → 编译 → 迁移 → 重启）。目录约定、首次部署步骤和注意事项见 [docs/deploy.md](docs/deploy.md)。
+[GitHub Releases](https://github.com/dkeepersun/BotGuard/releases) 提供编译好的 Linux 发布包（amd64 / arm64），解压即可部署，服务器上不需要 Go。`scripts/botguard.sh` 管理 gateway 和 admin-web：启停、迁移、看日志，`install-systemd` 一条命令装成开机自启的 systemd 服务，之后用 `scripts/botguard.sh upgrade` 升级到新版本（源码部署用 `update`）。目录约定、首次部署步骤和注意事项见 [docs/deploy.md](docs/deploy.md)，发版流程见 [docs/release.md](docs/release.md)。
 
 ```sh
 scripts/botguard.sh install-systemd   # 安装 botguard-gateway / botguard-admin-web 并启动
 scripts/botguard.sh status            # 状态、PID 和 /readyz
-scripts/botguard.sh rebuild           # 重新编译、迁移并重启
+scripts/botguard.sh upgrade           # 下载最新发布包、校验、迁移并重启
 scripts/botguard.sh logs gateway -f
 ```
 

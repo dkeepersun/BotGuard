@@ -1,6 +1,15 @@
-# 发布清单（npm 与 Composer）
+# 发布清单
 
-三个包的发布渠道：
+服务端程序和三个 SDK 包分开发版，各用各的标签：
+
+| 内容 | 渠道 | 标签 | 安装方式 |
+|---|---|---|---|
+| 服务端（gateway、admin-web、botguard-ctl） | GitHub Releases | `vX.Y.Z` | 下载发布包，见 [deploy.md](deploy.md) |
+| `@botguard/browser` | npm | `browser-vX.Y.Z` | `npm install @botguard/browser` |
+| `botguard/php-sdk` | Packagist | `php-vX.Y.Z` | `composer require botguard/php-sdk` |
+| `botguard/laravel` | Packagist | `laravel-vX.Y.Z` | `composer require botguard/laravel` |
+
+服务端的发布步骤见文末「四、服务端发布」。下面先是三个 SDK 包。
 
 | 包 | 渠道 | 安装命令 |
 |---|---|---|
@@ -70,3 +79,41 @@ Packagist 只认仓库根目录的 `composer.json`，所以两个 PHP 包要先�
 1. 在干净目录里执行 `npm install @botguard/browser`：从 registry.npmjs.org 装上 0.1.0（MIT）。包里有 LICENSE、`src/` 和 `dist/botguard.legacy.js`。`exports` 指向 `src/botguard.js`，`main` / `module` 指向 legacy 构建，`@botguard/browser/legacy` 可以导入，在服务端 import 不报错。
 2. 新建 Laravel 13 项目，执行 `composer require botguard/laravel`：lock 显示两个包都经 Packagist 解析，压缩包来自镜像仓库的 v0.1.0 标签。接上单独起的 gateway 后，`<x-botguard>` 从 gateway 加载组件，在浏览器中无感通过，控制器 `BotGuard::verify()` 返回通过。伪造的 token 返回 `TOKEN_INVALID`，`botguard:login` 规则判定失败。
 3. 从 gateway 跨域加载 `load.js` 的方式，已在 yihui-h5 模拟中验证（`docs/validation.md`）。
+
+## 四、服务端发布（GitHub Releases）
+
+推送 `vX.Y.Z` 标签后，`release` 工作流（`.github/workflows/release.yml`）依次执行：
+
+1. `make check`；
+2. `scripts/release.sh vX.Y.Z`：用 `CGO_ENABLED=0` 交叉编译 linux/amd64 和 linux/arm64 的静态二进制，版本号写进程序（`gateway -version`、`botguard-ctl version`、管理后台「系统信息」）；
+3. 为每个包生成构建来源证明（`actions/attest-build-provenance`），用户可以用 `gh attestation verify <文件> -R dkeepersun/BotGuard` 核对；
+4. 创建 GitHub Release，附上两个 tar.gz 和 `checksums.txt`，说明由 GitHub 自动生成（列出上一个 Release 以来合并的 PR，并附上两个版本的对比链接；直接提交到 main 的改动不会逐条列出，需要手动补充）。带 `-` 的版本（如 `v0.2.0-rc.1`）标为预发布，`upgrade` 默认取的“最新版”不包括预发布。
+
+每个包解压后是一个可以直接部署的目录：
+
+```
+botguard_0.2.0_linux_amd64/
+  bin/gateway  bin/admin-web  bin/botguard-ctl
+  configs/gateway.yaml  configs/admin-web.yaml     # 配置样例
+  deploy/systemd/botguard.service.tmpl  deploy/botguard.env.example
+  scripts/botguard.sh  docs/deploy.md  LICENSE  README.md  VERSION
+```
+
+包里的文件清单在 `scripts/release.sh` 里写死，`deploy/` 下其他文件不会被带进去。
+
+### 发一个版本
+
+1. 确认 main 上的 CI 通过。新版本需要改配置或有不兼容变更时，先想好要写进 Release 说明的内容。
+2. 本机可以先试打包：`scripts/release.sh v0.2.0`，产物在 `dist/`（已加入 `.gitignore`）。
+3. 打标签并推送：
+
+   ```bash
+   git tag -a v0.2.0 -m "BotGuard v0.2.0"
+   git push origin v0.2.0
+   ```
+
+4. 工作流结束后，在 Release 页面检查附件和自动生成的说明，需要时手动补充升级注意事项（配置变化、迁移耗时等）。
+
+第一次发版建议先推 `v0.1.0-rc.1` 这样的预发布标签，确认工作流、附件和 `upgrade` 都正常后再发正式版。标签一旦推送就不要移动或复用；发错了就发下一个版本号。
+
+`vX.Y.Z` 标签同时也是 Go 模块版本，所以 `go install github.com/dkeepersun/BotGuard/cmd/gateway@v0.2.0` 也能装上对应版本（这样编译的程序版本号显示为模块版本）。

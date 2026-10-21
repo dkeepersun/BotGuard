@@ -2,6 +2,7 @@
 # BotGuard 服务管理：编译、启停、迁移、日志，以及安装 systemd 服务。
 # 装了 systemd 服务后，start/stop/restart/status/logs 都转给 systemctl/journalctl，
 # 不会和 systemd 拉起的进程重复启动；没装时用 nohup 在后台运行，日志写 logs/。
+# 同一个脚本既用于源码目录（build/rebuild/update），也随 GitHub Release 发布包分发（upgrade）。
 # 说明见 docs/deploy.md。
 set -euo pipefail
 
@@ -11,6 +12,14 @@ BIN_DIR="$ROOT_DIR/bin"
 LOG_DIR="$ROOT_DIR/logs"
 TEMPLATE_FILE="$ROOT_DIR/deploy/systemd/botguard.service.tmpl"
 UNIT_DIR=/etc/systemd/system
+RELEASE_BASE="${BOTGUARD_RELEASE_BASE:-https://github.com/dkeepersun/BotGuard/releases}"
+
+# 有 go.mod 是源码目录；发布包里只有编译好的二进制和 VERSION 文件。
+if [[ -f "$ROOT_DIR/go.mod" ]]; then
+  FROM_SOURCE=1
+else
+  FROM_SOURCE=0
+fi
 
 # gateway 先启动、后停止：admin-web 会检查 gateway 的 /readyz。
 ALL_SERVICES="gateway admin-web"
@@ -46,9 +55,10 @@ usage() {
   start [服务]          启动；二进制不存在时先编译
   stop [服务]           停止
   restart [服务]        重启，不重新编译
-  rebuild [服务]        编译 → 迁移库结构 → 重启（发布新代码用这个）
-  update [服务]         git pull --ff-only 后执行 rebuild
-  build [服务]          只编译到 bin/（同时编译 botguard-ctl）
+  rebuild [服务]        源码目录：编译 → 迁移库结构 → 重启
+  update [服务]         源码目录：git pull --ff-only 后执行 rebuild
+  build [服务]          源码目录：只编译到 bin/（同时编译 botguard-ctl）
+  upgrade [版本]        发布包：下载 GitHub Release（默认最新版）→ 校验 → 替换 → 迁移 → 重启
   migrate               执行 botguard-ctl migrate up
   ctl <参数...>          加载环境变量后执行 botguard-ctl，例如 ctl admin create -username admin
   status [服务]         运行状态、PID 和 /readyz
@@ -64,7 +74,8 @@ usage() {
 环境变量:
   BOTGUARD_CONF_DIR       gateway.yaml / admin-web.yaml 所在目录
   BOTGUARD_ENV_FILE       密钥与 DSN 文件（KEY='value' 格式，不写 export）
-  BOTGUARD_SKIP_MIGRATE=1 rebuild/update 时跳过迁移
+  BOTGUARD_SKIP_MIGRATE=1 rebuild/update/upgrade 时跳过迁移
+  BOTGUARD_RELEASE_BASE   upgrade 的下载地址，默认 $RELEASE_BASE
   GO_BUILD_FLAGS          额外的 go build 参数
 USAGE
 }
@@ -160,6 +171,7 @@ build_one() {
 
 build() {
   local svc
+  [[ "$FROM_SOURCE" -eq 1 ]] || die "这是发布包，没有源码，不能编译；升级用 scripts/botguard.sh upgrade [版本]"
   require_go
   mkdir -p "$BIN_DIR"
   for svc in $1; do build_one "$svc"; done
@@ -350,14 +362,77 @@ rebuild() {
 }
 
 update() {
+  [[ "$FROM_SOURCE" -eq 1 ]] || die "这是发布包，升级用 scripts/botguard.sh upgrade [版本]"
   echo "拉取代码 ..."
   git -C "$ROOT_DIR" pull --ff-only
   git -C "$ROOT_DIR" log -1 --format='当前版本 %h %s'
   rebuild "$1"
 }
 
+# 替换发布包里的程序和脚本；配置目录 configs/ 不动。
+UPGRADE_FILES="bin/gateway bin/admin-web bin/botguard-ctl scripts/botguard.sh
+  deploy/systemd/botguard.service.tmpl deploy/botguard.env.example docs/deploy.md LICENSE README.md VERSION"
+
+upgrade() {
+  local want="${1:-latest}" os arch tag current name tmp f
+  [[ "$FROM_SOURCE" -eq 0 ]] || die "这是源码目录，升级用 scripts/botguard.sh update（git pull 后重新编译）"
+  command -v curl >/dev/null 2>&1 || die "需要 curl"
+  case "$(uname -s)" in
+    Linux) os=linux ;;
+    *) die "发布包只提供 Linux 版本" ;;
+  esac
+  case "$(uname -m)" in
+    x86_64 | amd64) arch=amd64 ;;
+    aarch64 | arm64) arch=arm64 ;;
+    *) die "发布包没有这个架构: $(uname -m)" ;;
+  esac
+  if [[ "$want" == latest ]]; then
+    # releases/latest 重定向到 releases/tag/vX.Y.Z，不用调 GitHub API。
+    tag="$(curl -fsSIL -o /dev/null -w '%{url_effective}' "$RELEASE_BASE/latest" 2>/dev/null || true)"
+    tag="${tag##*/}"
+    [[ "$tag" == v* ]] || die "查不到最新版本，请指定版本号，例如 upgrade v0.2.0"
+  else
+    tag="v${want#v}"
+  fi
+  current="$(cat "$ROOT_DIR/VERSION" 2>/dev/null || echo 未知)"
+  if [[ "$tag" == "$current" ]]; then
+    echo "已经是 $tag"
+    return 0
+  fi
+  echo "升级 $current → $tag"
+
+  name="botguard_${tag#v}_${os}_${arch}"
+  # 临时目录放在同一个文件系统里，下面的 mv 才是原子改名。
+  tmp="$(mktemp -d "$ROOT_DIR/.upgrade.XXXXXX")"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" EXIT
+  curl -fL --progress-bar -o "$tmp/$name.tar.gz" "$RELEASE_BASE/download/$tag/$name.tar.gz" || die "下载失败: $RELEASE_BASE/download/$tag/$name.tar.gz"
+  curl -fsSL -o "$tmp/checksums.txt" "$RELEASE_BASE/download/$tag/checksums.txt" || die "下载 checksums.txt 失败"
+  (cd "$tmp" && grep " $name.tar.gz\$" checksums.txt | sha256sum -c --quiet -) || die "校验和不符，已放弃升级，没有改动任何文件"
+  tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
+  for f in $UPGRADE_FILES; do
+    [[ -e "$tmp/$name/$f" ]] || die "发布包缺少 $f，已放弃升级"
+  done
+  # 逐个改名替换：运行中的服务和正在执行的本脚本仍持有旧文件，不受影响。
+  for f in $UPGRADE_FILES; do
+    mkdir -p "$(dirname "$ROOT_DIR/$f")"
+    mv -f "$tmp/$name/$f" "$ROOT_DIR/$f"
+  done
+  echo "程序已替换为 $tag"
+
+  if [[ "${BOTGUARD_SKIP_MIGRATE:-}" == 1 ]]; then
+    echo "跳过迁移（BOTGUARD_SKIP_MIGRATE=1）"
+  else
+    migrate
+  fi
+  restart "$ALL_SERVICES"
+}
+
 status() {
   local svc pid state
+  if [[ -x "$BIN_DIR/gateway" ]]; then
+    echo "版本 $("$BIN_DIR/gateway" -version 2>/dev/null | cut -d' ' -f2-)"
+  fi
   for svc in $1; do
     if uses_systemd "$svc"; then
       state="$(systemctl is-active "$(unit_name "$svc")" 2>/dev/null || true)"
@@ -513,6 +588,10 @@ main() {
       "$cmd" "$(parse_services "${1:-all}")"
       ;;
     migrate) migrate ;;
+    upgrade)
+      [[ $# -le 1 ]] || die "upgrade 只接受一个版本参数"
+      upgrade "${1:-latest}"
+      ;;
     ctl) ctl "$@" ;;
     logs) logs "$@" ;;
     install-systemd) install_systemd "$@" ;;

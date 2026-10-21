@@ -1,0 +1,38 @@
+# Publishes the server (gateway, admin-web, botguard-ctl) as a GitHub Release
+# when a tag vX.Y.Z is pushed; vX.Y.Z-rc.1 and the like become pre-releases.
+# scripts/release.sh builds static linux/amd64 and linux/arm64 packages plus
+# checksums.txt; each package also gets a build provenance attestation
+# (gh attestation verify <file> -R dkeepersun/BotGuard). See docs/release.md.
+# The SDK tags (browser-v*, php-v*, laravel-v*) never match v*.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the release
+  id-token: write # sign the attestation
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: make check
+      - run: scripts/release.sh "$GITHUB_REF_NAME"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.tar.gz
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          flags=()
+          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/checksums.txt \
+            --verify-tag --title "BotGuard $GITHUB_REF_NAME" --generate-notes "${flags[@]}"
