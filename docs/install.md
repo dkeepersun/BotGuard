@@ -5,9 +5,10 @@ BotGuard 服务端由两个常驻服务组成：**gateway**（对外提供验证
 ## 系统要求
 
 - Linux x86_64 或 arm64，推荐 Debian 11+、Ubuntu 20.04+、RHEL / Rocky / Alma 8+
+- 或 macOS 12+（Apple 芯片或 Intel），用于本机开发测试；需要 [Homebrew](https://brew.sh) 来安装 Redis
 - 1 核 CPU、512 MB 内存起步
 - Redis（安装脚本自动安装发行版自带的版本）
-- root 权限或 sudo
+- Linux 上需要 root 权限或 sudo；macOS 上用普通用户安装，不需要 sudo
 
 ## 一键安装（推荐）
 
@@ -66,11 +67,27 @@ curl -fsSL https://raw.githubusercontent.com/dkeepersun/BotGuard/main/scripts/in
 | 方式 | 适合 | 升级命令 |
 |---|---|---|
 | `package`：deb / rpm 包 | 有 apt 或 dnf 的服务器，和系统软件一起管理 | `sudo apt upgrade` / `sudo dnf upgrade` |
-| `binary`：发布包 | 任意 Linux，包括没有软件源的环境 | `sudo botguard upgrade` |
+| `binary`：发布包 | 任意 Linux，包括没有软件源的环境；macOS 的默认方式 | `sudo botguard upgrade`（macOS 不加 sudo） |
 | `docker`：Docker Compose | 已在用 Docker 的环境；手动部署时也能在 macOS、Windows 上运行 | 重新执行安装命令 |
 | `source`：源码编译 | 需要运行未发布代码的测试环境 | `sudo botguard update` |
 
-除 Docker 外，其余方式安装后的目录结构和管理命令都相同，见 [deploy.md](deploy.md)。
+除 Docker 外，其余方式在 Linux 上安装后的目录结构和管理命令都相同，见 [deploy.md](deploy.md)。macOS 见下一节。
+
+### macOS
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dkeepersun/BotGuard/main/scripts/install.sh | sh
+```
+
+在 Mac 上用普通用户执行（不要加 sudo）。与 Linux 的区别：
+
+- 用 Homebrew 安装并启动 Redis（`brew install redis`、`brew services start redis`）；
+- 全部文件都在 `~/Library/Application Support/BotGuard/` 下：程序在 `bin/`，配置在 `etc/`，SQLite 数据库在 `data/`，日志在 `logs/`；
+- 服务注册为当前用户的 launchd 服务（`~/Library/LaunchAgents/com.botguard.gateway.plist`、`com.botguard.admin-web.plist`），登录后自动启动，退出后自动拉起；
+- `botguard` 命令链接到 Homebrew 的 `bin` 目录（没有 Homebrew 时为 `~/.local/bin`），用法和 Linux 相同，只是不需要 `sudo`：`botguard status`、`botguard restart`、`botguard logs gateway -f`、`botguard upgrade`、`botguard ctl ...`；
+- gateway 默认只监听 `127.0.0.1`。要让手机等局域网设备访问，执行 `botguard init --listen 0.0.0.0 --public-endpoint http://本机IP:8090` 后 `botguard restart`。
+
+macOS 版本适合开发和测试，生产环境请部署在 Linux 上。
 
 ### 软件源（apt / dnf）
 
@@ -166,6 +183,7 @@ curl -fsSL https://raw.githubusercontent.com/dkeepersun/BotGuard/main/scripts/in
 |---|---|
 | package | `sudo apt remove botguard` 或 `sudo dnf remove botguard` |
 | binary / source | `sudo botguard uninstall-systemd && sudo rm -rf /opt/botguard /usr/local/bin/botguard` |
+| macOS | `botguard uninstall-launchd && rm -rf ~/Library/Application\ Support/BotGuard "$(brew --prefix)/bin/botguard"`（同时删除了配置和数据） |
 | docker | `cd /opt/botguard && docker compose down`（加 `-v` 同时删除数据卷） |
 
 卸载不会删除配置和数据。确认不再需要后，手动删除：

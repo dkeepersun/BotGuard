@@ -1,6 +1,6 @@
 # 部署与运维
 
-安装方法见 [install.md](install.md)。本文说明安装后的目录、配置修改、日常运维、升级和反向代理，以及不用安装脚本的手动部署。
+安装方法见 [install.md](install.md)。本文说明 Linux 服务器上安装后的目录、配置修改、日常运维、升级和反向代理，以及不用安装脚本的手动部署。macOS 本机安装的目录和区别见 [install.md 的 macOS 一节](install.md#macos)，管理命令相同。
 
 ## 目录与文件
 

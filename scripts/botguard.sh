@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
-# BotGuard 服务管理：编译、启停、迁移、日志，以及安装 systemd 服务。
-# 装了 systemd 服务后，start/stop/restart/status/logs 都转给 systemctl/journalctl，
-# 不会和 systemd 拉起的进程重复启动；没装时用 nohup 在后台运行，日志写 logs/。
+# BotGuard 服务管理：编译、启停、迁移、日志，以及安装 systemd 服务（Linux）或 launchd 服务（macOS）。
+# 装了服务后，start/stop/restart/status/logs 都转给 systemctl/journalctl 或 launchctl，
+# 不会和它们拉起的进程重复启动；没装时用 nohup 在后台运行，日志写 logs/。
+# 要兼容 macOS 自带的 bash 3.2：不用关联数组、mapfile 等 bash 4 特性，也不用 GNU 专有参数。
 # 同一个脚本既用于源码目录（build/rebuild/update），也随 GitHub Release 发布包分发（upgrade）。
 # 说明见 docs/deploy.md。
 set -euo pipefail
 
-# 安装脚本会把 /usr/local/bin/botguard 链接到这里，先解开链接再定位程序目录。
-SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+# 安装脚本会把 botguard 命令链接到这里，先解开链接再定位程序目录（旧版 macOS 的 readlink 没有 -f）。
+resolve_path() {
+  local p="$1" dir
+  while [[ -L "$p" ]]; do
+    dir="$(cd "$(dirname "$p")" && pwd)"
+    p="$(readlink "$p")"
+    [[ "$p" == /* ]] || p="$dir/$p"
+  done
+  echo "$p"
+}
+SCRIPT_PATH="$(resolve_path "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN_DIR="$ROOT_DIR/bin"
@@ -15,9 +25,18 @@ LOG_DIR="$ROOT_DIR/logs"
 TEMPLATE_FILE="$ROOT_DIR/deploy/systemd/botguard.service.tmpl"
 UNIT_DIR=/etc/systemd/system
 RELEASE_BASE="${BOTGUARD_RELEASE_BASE:-https://github.com/dkeepersun/BotGuard/releases}"
-# init 生成的服务器配置和 SQLite 数据目录。
-ETC_DIR=/etc/botguard
-DATA_DIR=/var/lib/botguard
+OS="$(uname -s)"
+# init 生成的配置和 SQLite 数据目录。Linux 是系统级安装；macOS 按当前用户安装，
+# 都放在程序目录里，服务注册为 launchd 的 LaunchAgent（登录后自动运行）。
+if [[ "$OS" == Darwin ]]; then
+  ETC_DIR="$ROOT_DIR/etc"
+  DATA_DIR="$ROOT_DIR/data"
+else
+  ETC_DIR=/etc/botguard
+  DATA_DIR=/var/lib/botguard
+fi
+AGENT_DIR="$HOME/Library/LaunchAgents"
+PLIST_TEMPLATE="$ROOT_DIR/deploy/launchd/botguard.plist.tmpl"
 
 # 有 go.mod 是源码目录；发布包里只有编译好的二进制和 VERSION 文件。
 if [[ -f "$ROOT_DIR/go.mod" ]]; then
@@ -29,24 +48,26 @@ fi
 # gateway 先启动、后停止：admin-web 会检查 gateway 的 /readyz。
 ALL_SERVICES="gateway admin-web"
 
-# 服务器上的配置放 /etc/botguard，本机开发用仓库里的 configs/ 和 .env。
+# 用 init 生成的配置（Linux 的 /etc/botguard，macOS 的程序目录 etc/）；没有时是本机开发，
+# 用仓库里的 configs/ 和 .env。
 if [[ -z "${BOTGUARD_CONF_DIR:-}" ]]; then
-  if [[ -f /etc/botguard/gateway.yaml ]]; then
-    BOTGUARD_CONF_DIR=/etc/botguard
+  if [[ -f "$ETC_DIR/gateway.yaml" ]]; then
+    BOTGUARD_CONF_DIR="$ETC_DIR"
   else
     BOTGUARD_CONF_DIR="$ROOT_DIR/configs"
   fi
 fi
 if [[ -z "${BOTGUARD_ENV_FILE:-}" ]]; then
-  if [[ -e /etc/botguard/botguard.env ]]; then
-    BOTGUARD_ENV_FILE=/etc/botguard/botguard.env
+  if [[ -e "$ETC_DIR/botguard.env" ]]; then
+    BOTGUARD_ENV_FILE="$ETC_DIR/botguard.env"
   else
     BOTGUARD_ENV_FILE="$ROOT_DIR/.env"
   fi
 fi
 
+# macOS 按当前用户安装，不需要 sudo。
 SUDO=""
-if [[ "$(id -u)" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
+if [[ "$OS" != Darwin && "$(id -u)" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
   SUDO="sudo"
 fi
 
@@ -69,12 +90,16 @@ usage() {
                         装了 systemd 服务时以服务的运行用户执行（SQLite 文件属于它）
   status [服务]         运行状态、PID 和 /readyz
   logs <服务> [-n 行数] [-f]
+  run <服务>            在前台运行（launchd 服务用它启动，也可用于调试）
   init [-y] [--user 用户] [--public-endpoint 地址] [--listen 地址]
-                        生成服务器配置：创建运行用户、$ETC_DIR 下的配置和密钥、
-                        $DATA_DIR 数据目录；已有的文件不覆盖，只改参数指定的项
+                        生成配置：$ETC_DIR 下的配置和密钥、$DATA_DIR 数据目录；
+                        Linux 上还会创建运行用户。已有的文件不覆盖，只改参数指定的项
   install-systemd [--user 用户] [--group 组] [--no-start]
-                        安装 systemd 服务并设为开机自启，默认装完立即（重新）启动
+                        Linux：安装 systemd 服务并设为开机自启，默认装完立即（重新）启动
   uninstall-systemd     停止、禁用并删除 systemd 服务（不删二进制、配置和日志）
+  install-launchd [--no-start]
+                        macOS：安装 launchd 服务（当前用户登录后自动运行），默认立即（重新）启动
+  uninstall-launchd     停止并删除 launchd 服务（不删二进制、配置和日志）
 
 当前配置:
   配置目录  $BOTGUARD_CONF_DIR
@@ -116,6 +141,46 @@ unit_name() {
 
 uses_systemd() {
   command -v systemctl >/dev/null 2>&1 && [[ -f "$UNIT_DIR/$(unit_name "$1").service" ]]
+}
+
+# ---------- launchd（macOS） ----------
+
+launchd_label() { echo "com.botguard.$1"; }
+plist_file() { echo "$AGENT_DIR/$(launchd_label "$1").plist"; }
+launchd_domain() { echo "gui/$(id -u)"; }
+launchd_target() { echo "$(launchd_domain)/$(launchd_label "$1")"; }
+
+uses_launchd() {
+  [[ "$OS" == Darwin && -f "$(plist_file "$1")" ]]
+}
+
+launchd_loaded() {
+  launchctl print "$(launchd_target "$1")" >/dev/null 2>&1
+}
+
+launchd_start() {
+  if launchd_loaded "$1"; then
+    launchctl kickstart "$(launchd_target "$1")"
+  else
+    launchctl bootstrap "$(launchd_domain)" "$(plist_file "$1")"
+  fi
+}
+
+launchd_restart() {
+  if launchd_loaded "$1"; then
+    launchctl kickstart -k "$(launchd_target "$1")"
+  else
+    launchctl bootstrap "$(launchd_domain)" "$(plist_file "$1")"
+  fi
+}
+
+launchd_stop() {
+  if launchd_loaded "$1"; then launchctl bootout "$(launchd_target "$1")" 2>/dev/null || true; fi
+}
+
+# launchctl print 里的 "state = running" 和 "pid = 123"。
+launchd_field() {
+  launchctl print "$(launchd_target "$1")" 2>/dev/null | awk -v k="$2" '$1 == k && $2 == "=" { print $3; exit }'
 }
 
 conf_file() {
@@ -355,6 +420,9 @@ start() {
     if uses_systemd "$svc"; then
       $SUDO systemctl start "$(unit_name "$svc")"
       wait_healthy "$svc" || true
+    elif uses_launchd "$svc"; then
+      launchd_start "$svc"
+      wait_healthy "$svc" || true
     else
       manual_start "$svc"
     fi
@@ -366,6 +434,9 @@ stop() {
   for svc in $(reverse_words "$1"); do
     if uses_systemd "$svc"; then
       $SUDO systemctl stop "$(unit_name "$svc")"
+      echo "$svc 已停止"
+    elif uses_launchd "$svc"; then
+      launchd_stop "$svc"
       echo "$svc 已停止"
     else
       manual_stop "$svc"
@@ -380,6 +451,10 @@ restart() {
     if uses_systemd "$svc"; then
       echo "重启 $svc ..."
       $SUDO systemctl restart "$(unit_name "$svc")"
+      wait_healthy "$svc" || true
+    elif uses_launchd "$svc"; then
+      echo "重启 $svc ..."
+      launchd_restart "$svc"
       wait_healthy "$svc" || true
     else
       manual_stop "$svc"
@@ -409,7 +484,16 @@ update() {
 
 # 替换发布包里的程序和脚本；配置目录 configs/ 不动。
 UPGRADE_FILES="bin/gateway bin/admin-web bin/botguard-ctl scripts/botguard.sh
-  deploy/systemd/botguard.service.tmpl deploy/botguard.env.example docs/deploy.md LICENSE README.md VERSION"
+  deploy/systemd/botguard.service.tmpl deploy/launchd/botguard.plist.tmpl deploy/botguard.env.example
+  docs/deploy.md LICENSE README.md VERSION"
+
+sha256_check() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum -c --quiet -
+  else
+    shasum -a 256 -c - >/dev/null
+  fi
+}
 
 upgrade() {
   local want="${1:-latest}" os arch tag current name tmp f
@@ -419,9 +503,10 @@ upgrade() {
   fi
   [[ -w "$ROOT_DIR" ]] || die "没有写 $ROOT_DIR 的权限，请用 sudo 执行"
   command -v curl >/dev/null 2>&1 || die "需要 curl"
-  case "$(uname -s)" in
+  case "$OS" in
     Linux) os=linux ;;
-    *) die "发布包只提供 Linux 版本" ;;
+    Darwin) os=darwin ;;
+    *) die "发布包只提供 Linux 和 macOS 版本" ;;
   esac
   case "$(uname -m)" in
     x86_64 | amd64) arch=amd64 ;;
@@ -450,7 +535,7 @@ upgrade() {
   trap "rm -rf '$tmp'" EXIT
   curl -fL --progress-bar -o "$tmp/$name.tar.gz" "$RELEASE_BASE/download/$tag/$name.tar.gz" || die "下载失败: $RELEASE_BASE/download/$tag/$name.tar.gz"
   curl -fsSL -o "$tmp/checksums.txt" "$RELEASE_BASE/download/$tag/checksums.txt" || die "下载 checksums.txt 失败"
-  (cd "$tmp" && grep " $name.tar.gz\$" checksums.txt | sha256sum -c --quiet -) || die "校验和不符，已放弃升级，没有改动任何文件"
+  (cd "$tmp" && grep " $name.tar.gz\$" checksums.txt | sha256_check) || die "校验和不符，已放弃升级，没有改动任何文件"
   tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
   for f in $UPGRADE_FILES; do
     [[ -e "$tmp/$name/$f" ]] || die "发布包缺少 $f，已放弃升级"
@@ -480,6 +565,10 @@ status() {
       state="$(systemctl is-active "$(unit_name "$svc")" 2>/dev/null || true)"
       pid="$(systemctl show -p MainPID --value "$(unit_name "$svc")" 2>/dev/null || true)"
       echo "$svc  [systemd $(unit_name "$svc")]  $state  PID ${pid:-0}"
+    elif uses_launchd "$svc"; then
+      state="$(launchd_field "$svc" state)"
+      pid="$(launchd_field "$svc" pid)"
+      echo "$svc  [launchd $(launchd_label "$svc")]  ${state:-未加载}  PID ${pid:-0}"
     elif pid="$(running_pid "$svc")"; then
       echo "$svc  [脚本]  运行中  PID $pid"
     else
@@ -516,13 +605,32 @@ logs() {
       $SUDO journalctl -u "$(unit_name "$svc")" -n "$lines" --no-pager
     fi
   else
-    [[ -f "$(log_file "$svc")" ]] || die "还没有日志: $(log_file "$svc")"
+    # 标准输出（启动信息、崩溃）在 logs/<服务>.log；配置为 Mode: file 时，
+    # 程序日志在 logs/<服务>/ 下，按大小切分。
+    local files=() f
+    for f in "$(log_file "$svc")" "$LOG_DIR/$svc/access.log" "$LOG_DIR/$svc/error.log" "$LOG_DIR/$svc/severe.log"; do
+      if [[ -f "$f" ]]; then files+=("$f"); fi
+    done
+    [[ "${#files[@]}" -gt 0 ]] || die "还没有日志: $LOG_DIR/$svc*"
     if [[ "$follow" -eq 1 ]]; then
-      tail -n "$lines" -f "$(log_file "$svc")"
+      tail -n "$lines" -F "${files[@]}"
     else
-      tail -n "$lines" "$(log_file "$svc")"
+      tail -n "$lines" "${files[@]}"
     fi
   fi
+}
+
+# 前台运行一个服务：加载环境变量后 exec，launchd 用它启动服务。
+run_service() {
+  local svc conf
+  svc="$(parse_services "${1:-}")"
+  [[ "$svc" != *" "* ]] || die "run 需要指定服务: gateway 或 admin-web"
+  conf="$(conf_file "$svc")"
+  [[ -f "$conf" ]] || die "配置文件不存在: $conf"
+  [[ -x "$BIN_DIR/$svc" ]] || die "程序不存在: $BIN_DIR/$svc"
+  load_env
+  cd "$ROOT_DIR"
+  exec "$BIN_DIR/$svc" -f "$conf"
 }
 
 # ---------- 服务器初始化 ----------
@@ -538,6 +646,8 @@ default_ip() {
     ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}')"
   fi
   [[ -n "$ip" ]] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  # macOS
+  [[ -n "$ip" ]] || ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
   echo "${ip:-127.0.0.1}"
 }
 
@@ -584,17 +694,28 @@ create_system_user() {
   echo "已创建系统用户 $1"
 }
 
-# 从 configs/ 渲染 /etc/botguard 下的配置：日志改为输出到标准输出（systemd 收进 journal），
-# gateway 监听指定的地址；发行版自带的 Redis 常是 7.0，不发 7.2 才有的 CLIENT SETINFO。
-# 其余保持样例的默认值。
+# 从 configs/ 渲染 $ETC_DIR 下的配置：gateway 监听指定的地址；发行版自带的 Redis 常是 7.0，
+# 不发 7.2 才有的 CLIENT SETINFO。Linux 上日志改为输出到标准输出（systemd 收进 journal）；
+# macOS 保留按大小切分的日志文件（程序目录的 logs/）。其余保持样例的默认值。
 render_conf() {
   local svc="$1" listen="$2" args=()
-  args+=(-e '/^Log:/,/^[^[:space:]]/ s/^\([[:space:]]*Mode:\) file/\1 console/')
+  if [[ "$OS" != Darwin ]]; then
+    args+=(-e '/^Log:/,/^[^[:space:]]/ s/^\([[:space:]]*Mode:\) file/\1 console/')
+  fi
   args+=(-e 's/^\([[:space:]]*DisableIdentity:\) false/\1 true/')
   if [[ "$svc" == gateway ]]; then
     args+=(-e "s|^Host:.*|Host: $listen|")
   fi
   sed "${args[@]}" "$ROOT_DIR/configs/$svc.yaml"
+}
+
+# 改 yaml 顶层的 Host（BSD sed 没有 GNU 的 sed -i 用法，用临时文件）。
+set_yaml_host() {
+  local file="$1" host="$2" tmp
+  tmp="$(mktemp "$file.XXXXXX")"
+  awk -v line="Host: $host" '/^Host:/ { print line; next } { print }' "$file" > "$tmp"
+  chmod 0644 "$tmp"
+  mv -f "$tmp" "$file"
 }
 
 init_server() {
@@ -617,7 +738,11 @@ init_server() {
       *) die "init 不认识的参数: $1" ;;
     esac
   done
-  if [[ "$(id -u)" -ne 0 ]]; then
+  if [[ "$OS" == Darwin ]]; then
+    # macOS 按当前用户安装，服务以当前用户运行。
+    [[ "$(id -u)" -ne 0 ]] || die "macOS 上请用普通用户执行（不要 sudo），服务会以当前用户运行"
+    run_user="$(id -un)"
+  elif [[ "$(id -u)" -ne 0 ]]; then
     [[ -n "$SUDO" ]] || die "init 需要 root"
     exec $SUDO "$SCRIPT_PATH" init ${orig[@]+"${orig[@]}"}
   fi
@@ -629,12 +754,21 @@ init_server() {
   port="$(awk '/^Port:/{print $2; exit}' "$ROOT_DIR/configs/gateway.yaml")"
 
   if [[ ! -f "$ETC_DIR/gateway.yaml" && -z "$listen" ]]; then
-    [[ "$INIT_INTERACTIVE" -eq 0 ]] || echo "gateway 监听地址：直接对外提供服务填 0.0.0.0；放在 nginx 等反向代理后面填 127.0.0.1。"
-    ask listen "监听地址" 0.0.0.0
+    if [[ "$OS" == Darwin ]]; then
+      [[ "$INIT_INTERACTIVE" -eq 0 ]] || echo "gateway 监听地址：只在本机访问填 127.0.0.1；要让手机等局域网设备访问填 0.0.0.0。"
+      ask listen "监听地址" 127.0.0.1
+    else
+      [[ "$INIT_INTERACTIVE" -eq 0 ]] || echo "gateway 监听地址：直接对外提供服务填 0.0.0.0；放在 nginx 等反向代理后面填 127.0.0.1。"
+      ask listen "监听地址" 0.0.0.0
+    fi
   fi
   if [[ ! -e "$env_file" && -z "$endpoint" ]]; then
     if is_loopback "${listen:-127.0.0.1}"; then
-      endpoint="https://$(hostname -f 2>/dev/null || hostname)"
+      if [[ "$OS" == Darwin ]]; then
+        endpoint="http://127.0.0.1:$port"
+      else
+        endpoint="https://$(hostname -f 2>/dev/null || hostname)"
+      fi
     else
       endpoint="http://$(default_ip):$port"
     fi
@@ -643,11 +777,15 @@ init_server() {
     [[ "$endpoint" =~ ^https?://[^[:space:]\']+$ ]] || die "公开地址应以 http:// 或 https:// 开头: $endpoint"
   fi
 
-  if ! id "$run_user" >/dev/null 2>&1; then create_system_user "$run_user"; fi
-  group="$(id -gn "$run_user")"
   install -d -m 0755 "$ETC_DIR"
   # 数据库里有加密的应用密钥和密码哈希，只有运行用户能进。
-  install -d -m 0750 -o "$run_user" -g "$group" "$DATA_DIR"
+  if [[ "$OS" == Darwin ]]; then
+    install -d -m 0700 "$DATA_DIR"
+  else
+    if ! id "$run_user" >/dev/null 2>&1; then create_system_user "$run_user"; fi
+    group="$(id -gn "$run_user")"
+    install -d -m 0750 -o "$run_user" -g "$group" "$DATA_DIR"
+  fi
 
   for svc in $ALL_SERVICES; do
     conf="$ETC_DIR/$svc.yaml"
@@ -658,7 +796,7 @@ init_server() {
       mv -f "$tmp" "$conf"
       echo "已生成 $conf"
     elif [[ "$svc" == gateway && -n "$listen" ]]; then
-      sed -i "s|^Host:.*|Host: $listen|" "$conf"
+      set_yaml_host "$conf" "$listen"
       echo "已更新 $conf：Host: $listen"
     fi
   done
@@ -697,6 +835,7 @@ ENV
 # ---------- systemd ----------
 
 require_systemd() {
+  [[ "$OS" != Darwin ]] || die "macOS 上用 install-launchd / uninstall-launchd"
   command -v systemctl >/dev/null 2>&1 || die "找不到 systemctl，这台机器不是 systemd 系统"
   [[ "$(id -u)" -eq 0 || -n "$SUDO" ]] || die "需要 root 或 sudo"
 }
@@ -790,6 +929,78 @@ uninstall_systemd() {
   $SUDO systemctl daemon-reload
 }
 
+# ---------- launchd ----------
+
+# 路径写进 XML：转义 &、<、>，再转义 sed 替换串里的特殊字符。
+# 不用 ${v//&/...}：bash 5.2 起替换串里的 & 表示匹配到的文本。
+escape_plist() {
+  escape_sed "$(printf '%s' "$1" | sed -e 's/&/\&amp;/g' -e 's/</\&lt;/g' -e 's/>/\&gt;/g')"
+}
+
+install_launchd() {
+  local start_now=1 svc conf plist tmp
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --no-start)
+        start_now=0
+        shift
+        ;;
+      *) die "install-launchd 不认识的参数: $1" ;;
+    esac
+  done
+  [[ "$OS" == Darwin ]] || die "install-launchd 只用于 macOS；Linux 用 install-systemd"
+  [[ "$(id -u)" -ne 0 ]] || die "请用普通用户执行（不要 sudo），服务会以当前用户运行"
+  [[ -f "$PLIST_TEMPLATE" ]] || die "找不到模板: $PLIST_TEMPLATE"
+  [[ -e "$BOTGUARD_ENV_FILE" ]] || die "环境变量文件不存在: $BOTGUARD_ENV_FILE（先执行 botguard init）"
+  for svc in $ALL_SERVICES; do
+    conf="$(conf_file "$svc")"
+    [[ -f "$conf" ]] || die "配置文件不存在: $conf"
+  done
+  ensure_built "$ALL_SERVICES"
+  mkdir -p "$AGENT_DIR" "$LOG_DIR"
+  for svc in $ALL_SERVICES; do
+    plist="$(plist_file "$svc")"
+    # 脚本方式启动的进程先停掉，否则和 launchd 抢端口；已加载的旧服务先卸下，新的 plist 才会生效。
+    if uses_launchd "$svc"; then
+      launchd_stop "$svc"
+    elif running_pid "$svc" >/dev/null; then
+      manual_stop "$svc"
+    fi
+    tmp="$(mktemp "$plist.XXXXXX")"
+    sed \
+      -e "s|__PROJECT_DIR__|$(escape_plist "$ROOT_DIR")|g" \
+      -e "s|__SERVICE__|$svc|g" \
+      "$PLIST_TEMPLATE" > "$tmp"
+    chmod 0644 "$tmp"
+    mv -f "$tmp" "$plist"
+    echo "已安装 $plist"
+  done
+  echo "程序目录 $ROOT_DIR，以当前用户 $(id -un) 运行，登录后自动启动"
+  echo "配置目录 $BOTGUARD_CONF_DIR，环境变量 $BOTGUARD_ENV_FILE，日志 $LOG_DIR"
+  if [[ "$start_now" -eq 1 ]]; then
+    for svc in $ALL_SERVICES; do
+      launchd_start "$svc"
+      wait_healthy "$svc" || true
+    done
+    status "$ALL_SERVICES"
+  fi
+}
+
+uninstall_launchd() {
+  local svc plist
+  [[ "$OS" == Darwin ]] || die "uninstall-launchd 只用于 macOS"
+  for svc in $(reverse_words "$ALL_SERVICES"); do
+    plist="$(plist_file "$svc")"
+    if [[ ! -f "$plist" ]]; then
+      echo "$(launchd_label "$svc") 没有安装"
+      continue
+    fi
+    launchd_stop "$svc"
+    rm -f "$plist"
+    echo "已停止并删除 $(launchd_label "$svc")"
+  done
+}
+
 main() {
   local cmd="${1:-help}"
   [[ $# -gt 0 ]] && shift
@@ -806,7 +1017,13 @@ main() {
     ctl) ctl "$@" ;;
     logs) logs "$@" ;;
     init) init_server "$@" ;;
+    run)
+      [[ $# -eq 1 ]] || die "run 需要指定服务: gateway 或 admin-web"
+      run_service "$1"
+      ;;
     install-systemd) install_systemd "$@" ;;
+    install-launchd) install_launchd "$@" ;;
+    uninstall-launchd) uninstall_launchd ;;
     uninstall-systemd) uninstall_systemd ;;
     help | -h | --help) usage ;;
     *)

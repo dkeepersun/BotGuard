@@ -14,18 +14,21 @@ BotGuard 是一个可以自己部署的人机验证服务，用来防止机器�
 
 ## 快速开始
 
-在一台 Linux 服务器（x86_64 或 arm64）上执行：
+在 Linux 服务器或 Mac（x86_64 / arm64）上执行同一条命令：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dkeepersun/BotGuard/main/scripts/install.sh | sh
 ```
 
-脚本会自动安装 Redis、下载程序、生成配置和密钥、注册开机自启的 systemd 服务，并创建管理员账号（初始密码只显示一次）。安装完成后：
+脚本会自动安装 Redis、下载程序、生成配置和密钥、注册开机自启的服务，并创建管理员账号（初始密码只显示一次）。
 
-- gateway（验证接口）：`http://服务器IP:8090`
-- 管理后台：`http://127.0.0.1:8091`，只在本机监听。在自己电脑上执行 `ssh -L 8091:127.0.0.1:8091 用户@服务器`，再用浏览器打开
+| | Linux 服务器 | Mac（本机开发测试） |
+|---|---|---|
+| 运行方式 | systemd 服务，开机启动 | launchd 服务，登录后启动；不需要 sudo |
+| gateway（验证接口） | `http://服务器IP:8090` | `http://127.0.0.1:8090` |
+| 管理后台 | `http://127.0.0.1:8091`，只在本机监听；先执行 `ssh -L 8091:127.0.0.1:8091 用户@服务器`，再用浏览器打开 | `http://127.0.0.1:8091` |
 
-只想在本机体验一下？用 Docker 启动完整的演示环境：`examples/demo/start.sh`，见 [examples/demo](examples/demo/README.md)。
+想看一个带演示网站的完整环境？用 Docker 执行 `examples/demo/start.sh`，见 [examples/demo](examples/demo/README.md)。
 
 ## 安装方式
 
@@ -33,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/dkeepersun/BotGuard/main/scripts/in
 |---|---|---|
 | 一键脚本 | `curl -fsSL …/install.sh \| sh` | 大多数服务器，自动选择下面的一种方式 |
 | apt / dnf 软件源 | `sudo apt install botguard` | 希望和系统软件一起升级 |
-| 发布包 | `install.sh --method binary` | 任意 Linux，包括离线环境 |
+| 发布包 | `install.sh --method binary` | 任意 Linux 和 macOS（macOS 的默认方式） |
 | Docker | `install.sh --method docker` | 已在使用 Docker 的环境 |
 | 源码 | `install.sh --method source` | 开发和测试 |
 
