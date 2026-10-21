@@ -360,3 +360,21 @@
   - blob Worker 能否启动：不能时退回主线程计算，较慢但能完成；
   - `uni.request` 确实不带 Origin。
 - 真人在 App 里拖动滑块。
+
+## 2026-10-22：首次发布与发布后验证
+
+三个包发布 0.1.0（MIT）：`@botguard/browser` 发到 npm，`botguard/php-sdk`、`botguard/laravel` 发到 Packagist（由 split-php 工作流同步到镜像仓库，标签 `php-v0.1.0` / `laravel-v0.1.0` 在镜像上成为 `v0.1.0`）。推送后 CI 全部通过（主任务、PHP 8.1、PHP 8.4）。
+
+**发布后验证**（都在干净的临时目录中进行，验证结束后删除）
+- npm：`npm install @botguard/browser` 从 registry.npmjs.org 装上 0.1.0。
+  - 包内容：LICENSE、README、`src/`、`dist/botguard.legacy.js`；
+  - 解析：`exports` 指向源码，`main` / `module` 指向 legacy 构建，`/legacy` 子路径可以导入；
+  - Node 中 import 不报错，`init()` 给出“只能在浏览器中调用”。
+- Composer：
+  - 先把两个镜像仓库作为 VCS 仓库装了一次，确认标签与依赖关系；
+  - 收录到 Packagist 后，新建 Laravel 13.38 项目执行 `composer require botguard/laravel`。lock 中两个包的 notification-url 都是 packagist.org，压缩包来自镜像仓库的 v0.1.0；清掉缓存重装也成功；
+  - 两个镜像仓库都已装好 Packagist 的 webhook。
+- 端到端：
+  - 单独起了一个 gateway（基于发布提交 4c25d82，独立的 Redis 容器和数据库），Laravel 页面用 `<x-botguard action="login" />`；
+  - 在浏览器中点击后无感通过（约 1.7 万次哈希，0.03 秒），提交后控制器 `BotGuard::verify()` 返回 passed，风险等级 low；
+  - 伪造的 token 返回 `TOKEN_INVALID`，`passes(null)` 返回 false，`botguard:login` 规则判定失败。

@@ -2,13 +2,31 @@
 
 三个包的发布渠道：
 
-| 包 | 渠道 | 安装命令（发布后） |
+| 包 | 渠道 | 安装命令 |
 |---|---|---|
 | `@botguard/browser` | npm | `npm install @botguard/browser` |
 | `botguard/php-sdk` | Packagist | `composer require botguard/php-sdk` |
 | `botguard/laravel` | Packagist | `composer require botguard/laravel` |
 
 另外，不想用 npm 的页面可以直接引用 gateway 托管的脚本，和易盾的 `load.min.js` 一样：`<script src="https://你的gateway/sdk/v1/load.js">`。
+
+## 当前状态（2026-10-22）
+
+三个包都已发布 0.1.0，许可证 MIT：
+
+- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。0.1.0 是在本机手动发布的。
+- Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
+- 镜像仓库：[botguard-php-sdk](https://github.com/dkeepersun/botguard-php-sdk)、[botguard-laravel](https://github.com/dkeepersun/botguard-laravel)。已关闭 issues 和 wiki；部署密钥已配置，私钥只保存在主仓库的 Actions secrets 里。
+- 待办：在 npm 包设置里配置 Trusted Publisher（见下文 npm 第 3 步），之后的版本才能由工作流自动发布。
+
+第一次发布时遇到的问题，下次可以提前避开：
+
+- 推送 `.github/workflows/` 需要 gh 登录令牌带 `workflow` 权限：`gh auth refresh -h github.com -s workflow`。在终端里要按回车，否则 gh 不会去取新令牌。
+- npm 发布要求账号开启 2FA，且要先在网站上建好 `botguard` 组织，否则会报 403 或 `Scope not found`。
+- `npm login`、`npm publish` 要在真正的终端里运行。在 Claude Code 里用 `!` 运行时无法交互，`npm login` 会直接报错退出。
+- 发布后 npm 会自动留下一个 `0.0.0-stage` 版本，描述为 “Temporary package placeholder for staged publishing”。它不影响安装：`latest` 指向正式版本，`^0.1.0` 也不会匹配预发布版本。
+- 不要补推 `browser-v0.1.0` 标签：0.1.0 已经手动发布，工作流会因为版本已存在而失败。下一个版本从 `browser-v0.1.1` 开始。
+
 
 ## 一、只能由你完成的步骤
 
@@ -47,10 +65,8 @@ Packagist 只认仓库根目录的 `composer.json`，所以两个 PHP 包要先�
 - `npm pack` 打出的真实包装进全新项目，在浏览器中跑通。
 - 在全新的 Laravel 项目中用 Composer 安装两个包（path 仓库，复制模式），跑通“页面验证 → 控制器核验”的完整流程，包括组件从 gateway 跨域加载。
 
-## 三、发布后验证
+## 三、发布后验证（2026-10-22 已完成，见 docs/validation.md）
 
-发布完成后告诉我，我会在干净的临时目录中：
-
-1. `npm install @botguard/browser`，检查装上的版本、文件和导入路径，再跑一遍浏览器流程；
-2. 新建 Laravel 项目，执行 `composer require botguard/laravel`，确认会从 Packagist 拉取，并带上依赖的 `botguard/php-sdk`，然后跑通端到端流程；
-3. 确认 `<script src="https://你的gateway/sdk/v1/load.js">` 在非同源页面可用。
+1. 在干净目录里执行 `npm install @botguard/browser`：从 registry.npmjs.org 装上 0.1.0（MIT）。包里有 LICENSE、`src/` 和 `dist/botguard.legacy.js`。`exports` 指向 `src/botguard.js`，`main` / `module` 指向 legacy 构建，`@botguard/browser/legacy` 可以导入，在服务端 import 不报错。
+2. 新建 Laravel 13 项目，执行 `composer require botguard/laravel`：lock 显示两个包都经 Packagist 解析，压缩包来自镜像仓库的 v0.1.0 标签。接上单独起的 gateway 后，`<x-botguard>` 从 gateway 加载组件，在浏览器中无感通过，控制器 `BotGuard::verify()` 返回通过。伪造的 token 返回 `TOKEN_INVALID`，`botguard:login` 规则判定失败。
+3. 从 gateway 跨域加载 `load.js` 的方式，已在 yihui-h5 模拟中验证（`docs/validation.md`）。

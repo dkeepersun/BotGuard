@@ -12,7 +12,9 @@
 - PHP SDK `packages/php` 与 Laravel 适配包 `packages/laravel`（Facade、`botguard:action` 验证规则、`<x-botguard>` Blade 组件、`botguard()` 辅助函数）；
 - Docker 一键演示 `examples/demo`。
 
-尚未实现：Go SDK、自定义角色、多租户隔离。三个包**尚未发布**到 npm / Packagist，发布步骤见 [docs/release.md](docs/release.md)。
+尚未实现：Go SDK、自定义角色、多租户隔离。
+
+三个包已发布 0.1.0（MIT）：[`@botguard/browser`](https://www.npmjs.com/package/@botguard/browser)（npm）、[`botguard/php-sdk`](https://packagist.org/packages/botguard/php-sdk) 和 [`botguard/laravel`](https://packagist.org/packages/botguard/laravel)（Packagist）。发布流程见 [docs/release.md](docs/release.md)。
 
 ## 先看演示
 
@@ -95,4 +97,4 @@ make test-integration
 - [SDK 与发布方案](docs/sdk-integration.md)
 - [验证记录与边界](docs/validation.md)
 
-`packages/` 下是三个 SDK 的源码（`@botguard/browser`、`botguard/php-sdk`、`botguard/laravel`），尚未发布到 npm / Packagist，见 [docs/release.md](docs/release.md)。
+`packages/` 下是三个 SDK 的源码（`@botguard/browser`、`botguard/php-sdk`、`botguard/laravel`），已发布 0.1.0：`npm install @botguard/browser`、`composer require botguard/laravel`（会一并装上 `botguard/php-sdk`）。两个 PHP 包从这里自动同步到只读镜像仓库再进入 Packagist，见 [docs/release.md](docs/release.md)。

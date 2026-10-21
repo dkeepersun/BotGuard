@@ -1,17 +1,14 @@
 # BotGuard PHP SDK
 
-业务服务器用它调用 BotGuard 的 `/v1/verify` 核验浏览器提交的 token。要求 PHP ≥ 8.1，只依赖 `ext-curl` 和 `ext-json`，不依赖任何框架。尚未发布到 Packagist。
+业务服务器用它调用 BotGuard 的 `/v1/verify` 核验浏览器提交的 token。要求 PHP ≥ 8.1，只依赖 `ext-curl` 和 `ext-json`，不依赖任何框架。已发布到 [Packagist](https://packagist.org/packages/botguard/php-sdk)。
 
 ## 安装
 
-Composer（发布前可用 path 仓库）：
-
-```json
-{
-  "repositories": [{"type": "path", "url": "../BotGuard/packages/php"}],
-  "require": {"botguard/php-sdk": "*"}
-}
+```sh
+composer require botguard/php-sdk
 ```
+
+Laravel 项目请改装 [`botguard/laravel`](../laravel/README.md)，它会一并装上本包。
 
 不用 Composer 时，直接 `require 'packages/php/autoload.php';`。
 

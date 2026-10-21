@@ -28,7 +28,7 @@
 
 ## 首批接入约定
 
-浏览器组件、PHP SDK 和 Laravel 适配包已实现，并做过发布前的真实安装验证，但**尚未发布**（发布步骤见 `docs/release.md`）。可运行示例见 `examples/demo`；Go SDK 仍是提案。
+浏览器组件、PHP SDK 和 Laravel 适配包已实现，并于 2026-10-22 发布 0.1.0（MIT，发布流程见 `docs/release.md`）。可运行示例见 `examples/demo`；Go SDK 仍是提案。
 
 浏览器（`packages/browser`，已实现）：业务页引入 `<botguard-widget>` 并配置 endpoint/app-key/action；题型由服务端决定（无感 / 滑块 / 文字点选 / 图形点选 / 无障碍备用），组件自动处理，业务页不需要改；组件拿到 token 后交给业务表单的 `botguard_token` 字段。token 到期、业务拒绝、页面 reset 后清理；有效期以 solve 响应的相对时长 `expires_in` 为准（旧 gateway 退回 `expires_at`），不受客户端时钟偏差影响。Worker 不能冻结主线程；超时可取消，每轮验证只停止自己的 Worker 和定时器。`verify()` 必定有结果（成功、出错，或以 `CANCELLED` / `TOO_MANY_FAILURES` reject），并发调用共享同一个 Promise。`bindTo` 绑定表单内按钮时在表单 `submit` 事件拦截（覆盖回车和其他提交按钮），只提交一次。模块可在 SSR 环境 import。不能只隐藏提交按钮作为防护。
 
@@ -52,16 +52,14 @@ PHP（`packages/php`，已实现，见其 README）：`Client::verify(VerifyRequ
 
 Laravel（`packages/laravel`，已实现，见其 README）：ServiceProvider 注入 PHP client，发布配置，支持 config cache；只在配置读取 env。默认推荐 controller/service 显式验证，便于控制消费时机。Validation Rule（`botguard:action` 与 `BotGuardToken`）是隐式规则，字段缺失、为空或 null 时同样判为失败；规则一执行就消耗 token，而 Laravel 在其他字段失败后仍会继续校验其余字段，所以应先校验普通字段、通过后再单独校验 botguard，或在同一校验器中把它放最后并使用 `stopOnFirstFailure()`。同一请求内同一 token 与 action 最多核验一次。`request_id` 与业务幂等键由服务端建立稳定映射。`passes()` 与 Validation Rule 是“失败即关闭”的布尔接口：Rejected 为验证失败；CallerError（含未配置 `NOT_CONFIGURED`）与 Unknown 同样返回 false，但会写 error 日志，便于与“用户没通过”区分。需要区分各类结果（例如对 Unknown 返回 503）时用 `verify()`，它对 CallerError 与 Unknown 抛出异常。未配置不影响应用启动和页面渲染。
 
-未来发布后安装命令：
+安装命令（0.1.0 已发布）：
 ```sh
 npm install @botguard/browser
-# Go 模块使用实际已发布版本：
-go get github.com/dkeepersun/BotGuard/packages/go@v0.1.0
 composer require botguard/php-sdk
-# Laravel 项目安装适配包，传递引入 core：
+# Laravel 项目安装适配包，会一并装上 php-sdk：
 composer require botguard/laravel
 ```
-这些名字/版本目前未发布，不能作为现在可运行的指令。
+Go SDK 仍是提案，尚未发布。
 
 ## 发布流水线计划
 

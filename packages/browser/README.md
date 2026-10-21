@@ -11,7 +11,7 @@
 
 完成后换取一次性 token，放进表单的隐藏字段。组件里没有任何密钥，也拿不到自己的风险分。
 
-原生 ES 模块，不需要构建工具。尚未发布到 npm。
+原生 ES 模块，不需要构建工具。已发布到 [npm](https://www.npmjs.com/package/@botguard/browser)。
 
 ## 三种引入方式
 

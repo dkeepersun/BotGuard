@@ -69,10 +69,10 @@ BotGuard/
 │   └── testdb/                     # P1 隔离集成测试
 ├── api/contract-v1.md              # v1 契约草案；api/fixtures/ 为跨语言 PoW 用例
 ├── packages/
-│   ├── browser/                   # 已建立：<botguard-widget> + Worker 求解（原生 ES 模块，未发布）
+│   ├── browser/                   # 已建立：<botguard-widget> + Worker 求解（原生 ES 模块 + webpack 4 用的 legacy 构建，npm 已发布 0.1.0）
 │   ├── go/                        # 仅说明；P1 独立 Go module
-│   ├── php/                       # 已建立：签名 verify 客户端，仅依赖 ext-curl（未发布）
-│   └── laravel/                   # 已建立：Laravel 适配包（未发布）
+│   ├── php/                       # 已建立：签名 verify 客户端，仅依赖 ext-curl（Packagist 已发布 0.1.0）
+│   └── laravel/                   # 已建立：Laravel 适配包（Packagist 已发布 0.1.0）
 ├── examples/demo/                 # 已建立：Docker 一键演示（浏览器组件 + PHP SDK + gateway）
 ├── docs/                          # 本次架构、发布、验收文档
 └── Makefile                       # 已建立 build / test / check / admin / gateway
