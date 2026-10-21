@@ -4,7 +4,8 @@
 [Unit]
 Description=BotGuard __SERVICE__
 Documentation=file://__PROJECT_DIR__/docs/deploy.md
-After=network-online.target
+# 本机的 Redis（各发行版的服务名不同，不存在的名字会被忽略）先启动。
+After=network-online.target redis-server.service redis.service valkey.service
 Wants=network-online.target
 # 配置错误时连续失败 5 次就停下，不无限重启刷日志。
 StartLimitIntervalSec=120
@@ -25,6 +26,10 @@ RestartSec=5
 KillSignal=SIGTERM
 TimeoutStopSec=20
 LimitNOFILE=65535
+
+# botguard init 把 SQLite 数据库放在这里：/var/lib/botguard，属于运行用户。
+StateDirectory=botguard
+StateDirectoryMode=0750
 
 NoNewPrivileges=true
 PrivateTmp=true

@@ -6,3 +6,4 @@ bin
 **/vendor
 data
 logs
+dist
