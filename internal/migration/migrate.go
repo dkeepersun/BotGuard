@@ -4,6 +4,10 @@
 // version is recorded with a checksum; editing an applied file, or running a
 // binary older than the database, is an error rather than a silent skip.
 //
+// Every table is prefixed botguard_, so BotGuard can share a database with
+// another application. Databases from before the prefix (bg_* and sys_*
+// tables) are renamed in place the next time migrations run.
+//
 // MySQL DDL commits implicitly, so a migration that fails part-way leaves its
 // earlier statements applied and is not recorded. Fix the schema by hand and
 // rerun; keep migrations small to limit that window.
@@ -35,13 +39,41 @@ const lockName = "botguard_migrate"
 
 var namePattern = regexp.MustCompile(`^(\d{4})_([a-z0-9_]+)\.sql$`)
 
-const trackingTable = `CREATE TABLE IF NOT EXISTS bg_schema_migration (
+const trackingTable = `CREATE TABLE IF NOT EXISTS botguard_schema_migration (
   version INT UNSIGNED NOT NULL,
   name VARCHAR(128) NOT NULL,
   checksum CHAR(64) NOT NULL,
   applied_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   PRIMARY KEY (version)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`
+
+// legacyTables maps each table name used before the botguard_ prefix to its
+// current name.
+var legacyTables = [][2]string{
+	{"bg_schema_migration", "botguard_schema_migration"},
+	{"bg_site", "botguard_site"},
+	{"bg_site_origin", "botguard_site_origin"},
+	{"bg_site_action", "botguard_site_action"},
+	{"bg_api_key", "botguard_api_key"},
+	{"bg_app", "botguard_app"},
+	{"bg_app_origin", "botguard_app_origin"},
+	{"bg_app_action", "botguard_app_action"},
+	{"bg_app_secret", "botguard_app_secret"},
+	{"sys_admin", "botguard_admin"},
+	{"sys_audit_log", "botguard_audit_log"},
+}
+
+// legacyChecksums are the checksums the migrations had before the prefix.
+// The files changed only in table names, so an applied version recorded with
+// its legacy checksum is the same migration.
+var legacyChecksums = map[int]string{
+	1: "5231644877c5a7cd2745d4526c005dfb832520e0de004dd12b7ecf5dfaa90215",
+	2: "7fa414baac06afce024afe5b5ba864b05d218322aa949120c7800e7e5ead76f8",
+	3: "74da1dc6aff06ebf7a805fccd2a0714ea1e2a202b7462fb161acafe54e764215",
+	4: "c056f4a9ba86b833de221ffc1fc1dee7831237ff8ed4c9dbba3360b8d366ec3a",
+	5: "cba30eaf462a35463f4bfb660c7ab41f85407d688d3d00d624fc5cef7c04f8cc",
+	6: "a3826d6629ffaf881cdba84564a6ce2475d939079dfac0d1f11b86ffcb3ef283",
+}
 
 type Migration struct {
 	Version    int
@@ -156,11 +188,60 @@ func open(ctx context.Context, db *sql.DB, ms []Migration) (*Runner, error) {
 		conn.Close()
 		return nil, errors.New("另一个迁移正在执行（30 秒内未获得锁）")
 	}
+	if err := adoptLegacy(ctx, conn, ms); err != nil {
+		conn.Close()
+		return nil, err
+	}
 	if _, err := conn.ExecContext(ctx, trackingTable); err != nil {
 		conn.Close()
 		return nil, err
 	}
 	return &Runner{conn: conn, migrations: ms}, nil
+}
+
+// adoptLegacy renames a database from before the botguard_ prefix. It acts
+// only when the old tracking table exists, which proves the bg_ and sys_
+// tables are BotGuard's and not another application's.
+func adoptLegacy(ctx context.Context, conn *sql.Conn, ms []Migration) error {
+	rows, err := conn.QueryContext(ctx, "SELECT table_name FROM information_schema.tables WHERE table_schema = DATABASE()")
+	if err != nil {
+		return err
+	}
+	present := map[string]bool{}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return err
+		}
+		present[n] = true
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !present["bg_schema_migration"] || present["botguard_schema_migration"] {
+		return nil
+	}
+	var pairs []string
+	for _, t := range legacyTables {
+		if present[t[0]] {
+			pairs = append(pairs, fmt.Sprintf("`%s` TO `%s`", t[0], t[1]))
+		}
+	}
+	// One statement: MySQL renames all of them atomically.
+	if _, err := conn.ExecContext(ctx, "RENAME TABLE "+strings.Join(pairs, ", ")); err != nil {
+		return fmt.Errorf("旧表改名为 botguard_ 前缀失败：%w", err)
+	}
+	for _, m := range ms {
+		if old, ok := legacyChecksums[m.Version]; ok {
+			if _, err := conn.ExecContext(ctx, "UPDATE botguard_schema_migration SET checksum = ? WHERE version = ? AND checksum = ?",
+				m.Checksum, m.Version, old); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // CheckServerVersion rejects servers the migrations do not run on: they use
@@ -212,7 +293,7 @@ func Latest() (int, error) {
 // takes no lock, so the gateway can call it from its readiness probe.
 func Applied(ctx context.Context, db *sql.DB) (int, error) {
 	var v sql.NullInt64
-	err := db.QueryRowContext(ctx, "SELECT MAX(version) FROM bg_schema_migration").Scan(&v)
+	err := db.QueryRowContext(ctx, "SELECT MAX(version) FROM botguard_schema_migration").Scan(&v)
 	var me *mysql.MySQLError
 	if errors.As(err, &me) && me.Number == 1146 { // table does not exist
 		return 0, nil
@@ -231,7 +312,7 @@ func (r *Runner) Close() error {
 // Status lists every known migration with its applied time, after checking
 // that the database history matches this binary.
 func (r *Runner) Status(ctx context.Context) ([]Status, error) {
-	rows, err := r.conn.QueryContext(ctx, "SELECT version, checksum, applied_at FROM bg_schema_migration ORDER BY version")
+	rows, err := r.conn.QueryContext(ctx, "SELECT version, checksum, applied_at FROM botguard_schema_migration ORDER BY version")
 	if err != nil {
 		return nil, err
 	}
@@ -297,7 +378,7 @@ func (r *Runner) Up(ctx context.Context) ([]Migration, error) {
 			}
 		}
 		if _, err := r.conn.ExecContext(ctx,
-			"INSERT INTO bg_schema_migration (version, name, checksum) VALUES (?, ?, ?)",
+			"INSERT INTO botguard_schema_migration (version, name, checksum) VALUES (?, ?, ?)",
 			s.Version, s.Name, s.Checksum); err != nil {
 			return done, err
 		}

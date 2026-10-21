@@ -93,7 +93,7 @@ func writeAudit(ctx context.Context, s sqlx.Session, target string) error {
 		}
 		detail = string(b)
 	}
-	_, err := s.ExecCtx(ctx, "INSERT INTO sys_audit_log (actor, operation, target, detail, ip) VALUES (?, ?, ?, ?, ?)",
+	_, err := s.ExecCtx(ctx, "INSERT INTO botguard_audit_log (actor, operation, target, detail, ip) VALUES (?, ?, ?, ?, ?)",
 		truncate(e.Actor, 64), truncate(e.Operation, 64), truncate(target, 160), detail, truncate(e.IP, 64))
 	return err
 }
@@ -136,14 +136,14 @@ func (r *AppAdmin) Audit(ctx context.Context, q AuditQuery) ([]AuditRecord, int,
 	}
 	cond := strings.Join(where, " AND ")
 	var total int
-	if err := r.conn.QueryRowCtx(ctx, &total, "SELECT COUNT(*) FROM sys_audit_log WHERE "+cond, args...); err != nil {
+	if err := r.conn.QueryRowCtx(ctx, &total, "SELECT COUNT(*) FROM botguard_audit_log WHERE "+cond, args...); err != nil {
 		return nil, 0, err
 	}
 	if q.Limit <= 0 || q.Limit > 200 {
 		q.Limit = 20
 	}
 	var out []AuditRecord
-	err := r.conn.QueryRowsCtx(ctx, &out, "SELECT id, actor, operation, target, COALESCE(detail, '') AS detail, ip, created_at FROM sys_audit_log WHERE "+
+	err := r.conn.QueryRowsCtx(ctx, &out, "SELECT id, actor, operation, target, COALESCE(detail, '') AS detail, ip, created_at FROM botguard_audit_log WHERE "+
 		cond+" ORDER BY id DESC LIMIT ? OFFSET ?", append(args, q.Limit, max(0, q.Offset))...)
 	return out, total, err
 }

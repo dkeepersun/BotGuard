@@ -217,7 +217,7 @@
   - 账号与安全：管理员登录（PBKDF2 密码、可选 TOTP 动态码，二维码由自带的 QR 编码器生成）、三种角色、Redis 会话（空闲与绝对超时）、CSRF、同源检查、CSP（带 nonce）、登录失败锁定；
   - 页面：控制台、统计报表、实时事件、应用管理（来源、验证策略、密钥对、接入代码）、题型预览、审计日志、管理员、个人设置、系统状态。
 - gateway 统计：按小时写入 Redis 计数和最近事件。
-- 迁移 0005（`sys_admin`、`sys_audit_log`、`bg_app.remark`）；后台和命令行的所有变更都与审计记录同事务写入。
+- 迁移 0005（`botguard_admin`、`botguard_audit_log`、`botguard_app.remark`）；后台和命令行的所有变更都与审计记录同事务写入。
 - 命令行：新增 `botguard-ctl admin create|list|reset-password|enable|disable`。
 
 **结果**

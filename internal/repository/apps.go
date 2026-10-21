@@ -68,7 +68,7 @@ const secretColumns = "secret_id, app_id, secret_ciphertext, kek_id, status, exp
 func (r *MySQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, error) {
 	var row appRow
 	err := r.conn.QueryRowCtx(ctx, &row,
-		"SELECT id, app_key, status, active_policy_version FROM bg_app WHERE app_key = ?", appKey)
+		"SELECT id, app_key, status, active_policy_version FROM botguard_app WHERE app_key = ?", appKey)
 	if errors.Is(err, sqlx.ErrNotFound) {
 		return nil, domain.ErrNotFound
 	}
@@ -76,12 +76,12 @@ func (r *MySQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, e
 		return nil, err
 	}
 	var origins []string
-	if err := r.conn.QueryRowsCtx(ctx, &origins, "SELECT origin FROM bg_app_origin WHERE app_id = ?", row.ID); err != nil {
+	if err := r.conn.QueryRowsCtx(ctx, &origins, "SELECT origin FROM botguard_app_origin WHERE app_id = ?", row.ID); err != nil {
 		return nil, err
 	}
 	var actions []actionRow
 	if err := r.conn.QueryRowsCtx(ctx, &actions,
-		"SELECT action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty FROM bg_app_action WHERE app_id = ?", row.ID); err != nil {
+		"SELECT action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty FROM botguard_app_action WHERE app_id = ?", row.ID); err != nil {
 		return nil, err
 	}
 	app := &domain.App{
@@ -117,7 +117,7 @@ func (r *MySQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, e
 // callers as if their signature were wrong.
 func (r *MySQLApps) SecretPair(ctx context.Context, secretID string) (*domain.SecretPair, error) {
 	var row secretRow
-	err := r.conn.QueryRowCtx(ctx, &row, "SELECT "+secretColumns+" FROM bg_app_secret WHERE secret_id = ?", secretID)
+	err := r.conn.QueryRowCtx(ctx, &row, "SELECT "+secretColumns+" FROM botguard_app_secret WHERE secret_id = ?", secretID)
 	if errors.Is(err, sqlx.ErrNotFound) {
 		return nil, domain.ErrNotFound
 	}

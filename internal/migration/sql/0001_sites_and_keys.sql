@@ -1,7 +1,7 @@
 -- Sites, origins, actions and server API keys for the verification path.
 -- Connections must use time_zone '+00:00'; all DATETIME values are UTC.
 
-CREATE TABLE bg_site (
+CREATE TABLE botguard_site (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   public_key VARCHAR(64) NOT NULL,
   name VARCHAR(128) NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE bg_site (
   UNIQUE KEY uk_public_key (public_key)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
-CREATE TABLE bg_site_origin (
+CREATE TABLE botguard_site_origin (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   site_id BIGINT UNSIGNED NOT NULL,
   origin VARCHAR(255) NOT NULL COMMENT 'normalized scheme://host[:port]',
@@ -22,7 +22,7 @@ CREATE TABLE bg_site_origin (
   UNIQUE KEY uk_site_origin (site_id, origin)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
-CREATE TABLE bg_site_action (
+CREATE TABLE botguard_site_action (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   site_id BIGINT UNSIGNED NOT NULL,
   action VARCHAR(32) NOT NULL,
@@ -35,7 +35,7 @@ CREATE TABLE bg_site_action (
   UNIQUE KEY uk_site_action (site_id, action)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
-CREATE TABLE bg_api_key (
+CREATE TABLE botguard_api_key (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   key_id VARCHAR(64) NOT NULL,
   site_id BIGINT UNSIGNED NOT NULL,

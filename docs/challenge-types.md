@@ -234,7 +234,7 @@ solve 时按从便宜到贵的顺序校验：签名 → 期限 → 应用 / Orig
 迁移 0003：
 
 ```sql
-ALTER TABLE bg_app_action
+ALTER TABLE botguard_app_action
   ADD COLUMN challenge_mode VARCHAR(16) NOT NULL DEFAULT 'invisible' COMMENT 'invisible | slider | adaptive';
 ```
 

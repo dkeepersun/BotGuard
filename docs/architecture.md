@@ -82,21 +82,21 @@ BotGuard/
 
 ## 5. MySQL 数据模型草案
 
-默认 `utf8mb4`；ID 使用 bigint，外部 app_key 使用不可枚举的随机字符串；时间统一 UTC（连接设置 `time_zone='+00:00'`）。`bg_app`、`bg_app_origin`、`bg_app_action`、`bg_app_secret` 由 `internal/migration/sql/0001`、`0002` 建立（0002 把 0001 的 site 表改名为 app，并把 Bearer 密钥表改造为密钥对表），迁移执行器见 `internal/migration`；`sys_admin`、`sys_audit_log` 由 0005 建立，其余表（策略版本、名单、事件持久化）尚未建立。
+默认 `utf8mb4`；ID 使用 bigint，外部 app_key 使用不可枚举的随机字符串；时间统一 UTC（连接设置 `time_zone='+00:00'`）。`botguard_app`、`botguard_app_origin`、`botguard_app_action`、`botguard_app_secret` 由 `internal/migration/sql/0001`、`0002` 建立（0002 把 0001 的 site 表改名为 app，并把 Bearer 密钥表改造为密钥对表），迁移执行器见 `internal/migration`；`botguard_admin`、`botguard_audit_log` 由 0005 建立，其余表（策略版本、名单、事件持久化）尚未建立。
 
 | 表 | 主要字段与约束 |
 |---|---|
-| `bg_app` | id、app_key UNIQUE（对应易盾 captchaId，公开）、name、status、active_policy_version、timestamps |
-| `bg_app_origin` | id、app_id、origin；UNIQUE(app_id, origin)；精确 scheme+host+port，不允许含糊后缀匹配 |
-| `bg_app_action` | app_id、action、enabled、challenge_mode（invisible / interactive / adaptive）、challenge_kinds（slider、rotate、click_text、click_shape 的逗号列表；0003、0004 加入）、pow_puzzles、pow_difficulty（每题期望尝试次数）；UNIQUE(app_id, action) |
-| `bg_app_secret` | id、app_id、secret_id UNIQUE、secret_ciphertext（AES-256-GCM，附加数据为 secret_id）、kek_id、status、expires_at、rotated_from；secret_key 仅创建时展示一次 |
-| `bg_policy_version` | id、app_id、version、schema_version、rules_json、status、created_by；UNIQUE(app_id, version) |
-| `bg_list_entry` | id、app_id、kind、value_hash 或 CIDR、action、expires_at；固定类型，禁止任意脚本规则 |
-| `bg_verify_event` | id、app_id、request_id、action、result、reason_code、policy_version、created_at；UNIQUE(app_id, request_id)；按应用和时间检索 |
-| `sys_admin` | id、username UNIQUE、password_hash、status、session_version、totp_secret_ciphertext（启用时） |
-| `sys_role` / `sys_admin_role` / `sys_role_permission` | 管理员与权限关联，关联键唯一 |
-| `sys_audit_log` | actor、operation、target、脱敏差异、request_id、created_at；变更与成功审计同事务 |
-| `sys_outbox` | 配置缓存失效事件、重试时间、状态；与配置发布同事务 |
+| `botguard_app` | id、app_key UNIQUE（对应易盾 captchaId，公开）、name、status、active_policy_version、timestamps |
+| `botguard_app_origin` | id、app_id、origin；UNIQUE(app_id, origin)；精确 scheme+host+port，不允许含糊后缀匹配 |
+| `botguard_app_action` | app_id、action、enabled、challenge_mode（invisible / interactive / adaptive）、challenge_kinds（slider、rotate、click_text、click_shape 的逗号列表；0003、0004 加入）、pow_puzzles、pow_difficulty（每题期望尝试次数）；UNIQUE(app_id, action) |
+| `botguard_app_secret` | id、app_id、secret_id UNIQUE、secret_ciphertext（AES-256-GCM，附加数据为 secret_id）、kek_id、status、expires_at、rotated_from；secret_key 仅创建时展示一次 |
+| `botguard_policy_version` | id、app_id、version、schema_version、rules_json、status、created_by；UNIQUE(app_id, version) |
+| `botguard_list_entry` | id、app_id、kind、value_hash 或 CIDR、action、expires_at；固定类型，禁止任意脚本规则 |
+| `botguard_verify_event` | id、app_id、request_id、action、result、reason_code、policy_version、created_at；UNIQUE(app_id, request_id)；按应用和时间检索 |
+| `botguard_admin` | id、username UNIQUE、password_hash、status、session_version、totp_secret_ciphertext（启用时） |
+| `botguard_role` / `botguard_admin_role` / `botguard_role_permission` | 管理员与权限关联，关联键唯一 |
+| `botguard_audit_log` | actor、operation、target、脱敏差异、request_id、created_at；变更与成功审计同事务 |
+| `botguard_outbox` | 配置缓存失效事件、重试时间、状态；与配置发布同事务 |
 
 MVP 单平台管理多个应用，所有业务查询都必须带 app_id；不声称已有多租户 SaaS。以后加入组织/租户时，先重构授权边界和联合索引。不要先建一套没有隔离测试的租户模型。
 

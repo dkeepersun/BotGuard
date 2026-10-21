@@ -2,8 +2,14 @@ package migration
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"fmt"
+	"io/fs"
 	"os"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -36,6 +42,39 @@ func TestChecksumIgnoresLineEndings(t *testing.T) {
 	crlf, err2 := load(fstest.MapFS{"sql/0001_a.sql": {Data: []byte(strings.ReplaceAll(body, "\n", "\r\n"))}}, "sql")
 	if err1 != nil || err2 != nil || lf[0].Checksum != crlf[0].Checksum {
 		t.Fatalf("%v %v", err1, err2)
+	}
+}
+
+// The legacy checksums must be today's files with the old table names, so
+// adoptLegacy only ever re-labels the same migrations.
+func TestLegacyChecksumsMatchRenamedFiles(t *testing.T) {
+	ms, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pairs := append([][2]string(nil), legacyTables...)
+	// Longest new name first, so botguard_app_origin is not cut at botguard_app.
+	sort.Slice(pairs, func(i, j int) bool { return len(pairs[i][1]) > len(pairs[j][1]) })
+	for _, m := range ms {
+		want, ok := legacyChecksums[m.Version]
+		if !ok {
+			continue
+		}
+		body, err := fs.ReadFile(files, fmt.Sprintf("sql/%04d_%s.sql", m.Version, m.Name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		old := string(body)
+		for _, p := range pairs {
+			old = regexp.MustCompile(`\b`+p[1]+`\b`).ReplaceAllString(old, p[0])
+		}
+		sum := sha256.Sum256([]byte(old))
+		if got := hex.EncodeToString(sum[:]); got != want {
+			t.Errorf("%04d: legacy checksum %s, renamed file gives %s", m.Version, want, got)
+		}
+		if strings.Contains(string(body), "bg_") || strings.Contains(string(body), "sys_") {
+			t.Errorf("%04d still uses an unprefixed table name", m.Version)
+		}
 	}
 }
 
@@ -174,6 +213,87 @@ func TestEmbeddedMigrationsApply(t *testing.T) {
 	}
 }
 
+// A database from before the botguard_ prefix is renamed in place and its
+// history still matches; data survives.
+func TestAdoptsLegacyTableNames(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	up := func() []Migration {
+		t.Helper()
+		r, err := Open(ctx, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer r.Close()
+		done, err := r.Up(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return done
+	}
+	up()
+	if _, err := db.Exec("INSERT INTO botguard_app (app_key, name) VALUES ('app_legacy', 'legacy')"); err != nil {
+		t.Fatal(err)
+	}
+	// Turn it back into a pre-prefix database.
+	var back []string
+	for _, p := range legacyTables {
+		var n int
+		_ = db.QueryRow("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?", p[1]).Scan(&n)
+		if n == 1 {
+			back = append(back, p[1]+" TO "+p[0])
+		}
+	}
+	if _, err := db.Exec("RENAME TABLE " + strings.Join(back, ", ")); err != nil {
+		t.Fatal(err)
+	}
+	for v, sum := range legacyChecksums {
+		if _, err := db.Exec("UPDATE bg_schema_migration SET checksum = ? WHERE version = ?", sum, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if done := up(); len(done) != 0 {
+		t.Fatalf("re-applied %v", done)
+	}
+	var name string
+	if err := db.QueryRow("SELECT name FROM botguard_app WHERE app_key = 'app_legacy'").Scan(&name); err != nil || name != "legacy" {
+		t.Fatalf("data lost: %q %v", name, err)
+	}
+	var left int
+	_ = db.QueryRow("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND (table_name LIKE 'bg\\_%' OR table_name LIKE 'sys\\_%')").Scan(&left)
+	if left != 0 {
+		t.Fatalf("%d legacy tables left", left)
+	}
+}
+
+// Sharing a database: another application's sys_admin is never touched.
+func TestLeavesOtherApplicationsTablesAlone(t *testing.T) {
+	db := testDB(t)
+	ctx := context.Background()
+	if _, err := db.Exec("CREATE TABLE sys_admin (id INT PRIMARY KEY, owner VARCHAR(16))"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO sys_admin VALUES (1, 'other-app')"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := Open(ctx, db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if _, err := r.Up(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var owner string
+	if err := db.QueryRow("SELECT owner FROM sys_admin WHERE id = 1").Scan(&owner); err != nil || owner != "other-app" {
+		t.Fatalf("other application's table changed: %q %v", owner, err)
+	}
+	if _, err := db.Exec("SELECT username FROM botguard_admin LIMIT 1"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestUpgradeFromV1 applies 0001, writes a site and a legacy Bearer key, then
 // applies the rest: data must survive the rename and the key must be revoked.
 func TestUpgradeFromV1(t *testing.T) {
@@ -196,10 +316,10 @@ func TestUpgradeFromV1(t *testing.T) {
 	}
 	run(all[:1])
 	for _, q := range []string{
-		"INSERT INTO bg_site (id, public_key, name) VALUES (1, 'pk_legacy_site', 'legacy')",
-		"INSERT INTO bg_site_origin (site_id, origin) VALUES (1, 'https://legacy.example')",
-		"INSERT INTO bg_site_action (site_id, action) VALUES (1, 'login')",
-		"INSERT INTO bg_api_key (key_id, site_id, secret_hash) VALUES ('sk_legacy_key', 1, UNHEX(SHA2('x', 256)))",
+		"INSERT INTO botguard_site (id, public_key, name) VALUES (1, 'pk_legacy_site', 'legacy')",
+		"INSERT INTO botguard_site_origin (site_id, origin) VALUES (1, 'https://legacy.example')",
+		"INSERT INTO botguard_site_action (site_id, action) VALUES (1, 'login')",
+		"INSERT INTO botguard_api_key (key_id, site_id, secret_hash) VALUES ('sk_legacy_key', 1, UNHEX(SHA2('x', 256)))",
 	} {
 		if _, err := db.ExecContext(ctx, q); err != nil {
 			t.Fatal(err)
@@ -207,12 +327,12 @@ func TestUpgradeFromV1(t *testing.T) {
 	}
 	// A phase-one slider action (0003) must become interactive + [slider] (0004).
 	run(all[:3])
-	if _, err := db.ExecContext(ctx, "UPDATE bg_app_action SET challenge_mode = 'slider'"); err != nil {
+	if _, err := db.ExecContext(ctx, "UPDATE botguard_app_action SET challenge_mode = 'slider'"); err != nil {
 		t.Fatal(err)
 	}
 	run(all)
 	var mode, kinds string
-	if err := db.QueryRowContext(ctx, "SELECT challenge_mode, challenge_kinds FROM bg_app_action").Scan(&mode, &kinds); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT challenge_mode, challenge_kinds FROM botguard_app_action").Scan(&mode, &kinds); err != nil {
 		t.Fatal(err)
 	}
 	if mode != "interactive" || kinds != "slider" {
@@ -220,8 +340,8 @@ func TestUpgradeFromV1(t *testing.T) {
 	}
 
 	var appKey, origin, action string
-	if err := db.QueryRowContext(ctx, `SELECT a.app_key, o.origin, x.action FROM bg_app a
-JOIN bg_app_origin o ON o.app_id = a.id JOIN bg_app_action x ON x.app_id = a.id`).Scan(&appKey, &origin, &action); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT a.app_key, o.origin, x.action FROM botguard_app a
+JOIN botguard_app_origin o ON o.app_id = a.id JOIN botguard_app_action x ON x.app_id = a.id`).Scan(&appKey, &origin, &action); err != nil {
 		t.Fatal(err)
 	}
 	if appKey != "pk_legacy_site" || origin != "https://legacy.example" || action != "login" {
@@ -229,7 +349,7 @@ JOIN bg_app_origin o ON o.app_id = a.id JOIN bg_app_action x ON x.app_id = a.id`
 	}
 	var status int
 	var ct []byte
-	if err := db.QueryRowContext(ctx, "SELECT status, secret_ciphertext FROM bg_app_secret WHERE secret_id = 'sk_legacy_key' AND app_id = 1").Scan(&status, &ct); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT status, secret_ciphertext FROM botguard_app_secret WHERE secret_id = 'sk_legacy_key' AND app_id = 1").Scan(&status, &ct); err != nil {
 		t.Fatal(err)
 	}
 	if status != 2 || ct != nil {

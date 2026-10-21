@@ -1,6 +1,6 @@
 -- Admin console accounts and the audit log (docs/admin.md).
 
-CREATE TABLE sys_admin (
+CREATE TABLE botguard_admin (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   username VARCHAR(32) NOT NULL,
   display_name VARCHAR(64) NOT NULL DEFAULT '',
@@ -20,7 +20,7 @@ CREATE TABLE sys_admin (
   UNIQUE KEY uk_username (username)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
-CREATE TABLE sys_audit_log (
+CREATE TABLE botguard_audit_log (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   actor VARCHAR(64) NOT NULL COMMENT 'admin:<username> or cli:<os user>',
   operation VARCHAR(64) NOT NULL,
@@ -34,4 +34,4 @@ CREATE TABLE sys_audit_log (
   KEY idx_operation (operation, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 
-ALTER TABLE bg_app ADD COLUMN remark VARCHAR(255) NOT NULL DEFAULT '' AFTER name;
+ALTER TABLE botguard_app ADD COLUMN remark VARCHAR(255) NOT NULL DEFAULT '' AFTER name;

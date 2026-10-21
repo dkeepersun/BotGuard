@@ -196,7 +196,7 @@ func TestWrongKEKFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stored []byte
-	if err := db.QueryRowContext(ctx, "SELECT secret_ciphertext FROM bg_app_secret WHERE secret_id = ?", key.SecretID).Scan(&stored); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT secret_ciphertext FROM botguard_app_secret WHERE secret_id = ?", key.SecretID).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
 	if bytes.Contains(stored, []byte(key.SecretKey)) {

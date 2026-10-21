@@ -50,8 +50,8 @@ action 配置改为“模式 + 题型列表”：
 迁移 0004：
 
 ```sql
-ALTER TABLE bg_app_action ADD COLUMN challenge_kinds VARCHAR(64) NOT NULL DEFAULT 'slider' AFTER challenge_mode;
-UPDATE bg_app_action SET challenge_mode = 'interactive' WHERE challenge_mode = 'slider';
+ALTER TABLE botguard_app_action ADD COLUMN challenge_kinds VARCHAR(64) NOT NULL DEFAULT 'slider' AFTER challenge_mode;
+UPDATE botguard_app_action SET challenge_mode = 'interactive' WHERE challenge_mode = 'slider';
 ```
 
 命令行：`botguard-ctl action set -app app_xxx -action login -mode adaptive -kinds slider,click_text,click_shape`。
