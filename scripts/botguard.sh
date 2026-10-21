@@ -174,8 +174,19 @@ launchd_restart() {
   fi
 }
 
+# bootout 发出 SIGTERM 就返回，不等进程退出；等它真正退出，紧接着的 start 才不会
+# 撞上还没释放的端口，uninstall 返回时服务也确实停了。
 launchd_stop() {
-  if launchd_loaded "$1"; then launchctl bootout "$(launchd_target "$1")" 2>/dev/null || true; fi
+  local pid
+  launchd_loaded "$1" || return 0
+  pid="$(launchd_field "$1" pid)"
+  launchctl bootout "$(launchd_target "$1")" 2>/dev/null || true
+  [[ -n "$pid" ]] || return 0
+  for _ in $(seq 1 40); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.5
+  done
+  echo "警告: ${1}（PID ${pid}）20 秒内没有退出" >&2
 }
 
 # launchctl print 里的 "state = running" 和 "pid = 123"。
