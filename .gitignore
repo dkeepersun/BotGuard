@@ -11,3 +11,4 @@ vendor/
 .idea/
 /third_party/fonts/*.otf
 /examples/demo/lan/*.png
+/logs/

@@ -69,9 +69,20 @@ bin/botguard-ctl app show -app app_xxx
 
 轮换密钥对用 `secret rotate -secret sid_xxx -grace 24h`：立即生成新密钥对，旧的在宽限期结束后失效，期间两组都能用。变更在 gateway 应用缓存过期后生效（默认 10 秒内）。
 
+## 服务器部署
+
+`scripts/botguard.sh` 管理 gateway 和 admin-web：编译、启停、迁移、看日志，`install-systemd` 一条命令装成开机自启的 systemd 服务，之后发布新代码用 `scripts/botguard.sh update`（拉代码 → 编译 → 迁移 → 重启）。目录约定、首次部署步骤和注意事项见 [docs/deploy.md](docs/deploy.md)。
+
+```sh
+scripts/botguard.sh install-systemd   # 安装 botguard-gateway / botguard-admin-web 并启动
+scripts/botguard.sh status            # 状态、PID 和 /readyz
+scripts/botguard.sh rebuild           # 重新编译、迁移并重启
+scripts/botguard.sh logs gateway -f
+```
+
 ## 升级
 
-先迁移，再换 gateway：
+先迁移，再换 gateway（`scripts/botguard.sh rebuild` 已按这个顺序执行）：
 
 1. 用新版 `botguard-ctl migrate up`。迁移只向前、带 checksum，并用数据库锁防止并发执行。
 2. 滚动替换 gateway。新版 gateway 在库结构落后时 `/readyz` 返回 503 `schema_outdated`，不会接流量。

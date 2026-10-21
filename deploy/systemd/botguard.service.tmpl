@@ -1,0 +1,37 @@
+# systemd 单元模板，由 scripts/botguard.sh install-systemd 渲染成
+# /etc/systemd/system/botguard-gateway.service 和 botguard-admin-web.service。
+# 不要直接复制：__XXX__ 占位符会被替换成仓库路径、运行用户和配置位置。
+[Unit]
+Description=BotGuard __SERVICE__
+Documentation=file://__PROJECT_DIR__/docs/deploy.md
+After=network-online.target
+Wants=network-online.target
+# 配置错误时连续失败 5 次就停下，不无限重启刷日志。
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_GROUP__
+WorkingDirectory=__PROJECT_DIR__
+# 密钥和 DSN 只从这里读取，文件里不要写 export。
+EnvironmentFile=__ENV_FILE__
+ExecStart=__PROJECT_DIR__/bin/__SERVICE__ -f __CONF_DIR__/__SERVICE__.yaml
+
+# 崩溃自动拉起；重启不会重新编译，发布新代码用 scripts/botguard.sh rebuild。
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=20
+LimitNOFILE=65535
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+# 日志进 journal：journalctl -u botguard-__SERVICE__ -f
+SyslogIdentifier=botguard-__SERVICE__
+
+[Install]
+WantedBy=multi-user.target
