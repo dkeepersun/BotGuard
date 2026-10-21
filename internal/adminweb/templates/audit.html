@@ -1,0 +1,27 @@
+{{template "head" .}}{{$d := .Data}}
+<div class="wrap">
+  <div class="page-head">
+    <div><h1>审计日志</h1><div class="sub">管理后台与 botguard-ctl 的全部变更、登录与登录失败。变更与审计记录在同一事务中写入；密钥、密码、动态码永远不会出现在这里。</div></div>
+    <form class="tools form-inline" method="get" action="/audit">
+      <input class="input sm" name="actor" value="{{$d.Actor}}" placeholder="操作人，如 admin:root">
+      <select class="input sm" name="op"><option value="">全部操作</option>
+        {{range $op := split "app.,origin.,action.,secret.,admin.,auth."}}<option value="{{$op}}" {{if eq $d.Operation $op}}selected{{end}}>{{opGroup $op}}</option>{{end}}</select>
+      <input class="input sm" name="target" value="{{$d.Target}}" placeholder="对象，如 app_xxx">
+      <button class="btn sm">筛选</button>{{if or $d.Actor $d.Operation $d.Target}}<a class="btn sm ghost" href="/audit">清除</a>{{end}}
+    </form>
+  </div>
+  <div class="card"><div class="card-body flush table-wrap"><table class="table">
+    <thead><tr><th>时间</th><th>操作人</th><th>操作</th><th>对象</th><th>详情</th><th>IP</th></tr></thead><tbody>
+    {{range $d.Records}}<tr><td class="nowrap mono cell-sub">{{time .CreatedAt}}</td>
+      <td class="mono nowrap">{{.Actor}}</td>
+      <td class="nowrap"><span class="badge plain {{opColor .Operation}}">{{opName .Operation}}</span><div class="cell-sub mono">{{.Operation}}</div></td>
+      <td class="mono">{{if .Target}}{{.Target}}{{else}}—{{end}}</td>
+      <td class="cell-sub" style="min-width:220px;max-width:460px">{{range detail .Detail}}<span class="tag"><span class="muted">{{.Label}}</span> {{.Value}}</span>{{else}}—{{end}}</td>
+      <td class="mono cell-sub">{{if .IP}}{{.IP}}{{else}}—{{end}}</td></tr>
+    {{else}}<tr><td colspan="6"><div class="empty">没有匹配的记录</div></td></tr>{{end}}
+    </tbody></table></div>
+    <div class="pager"><span>共 {{num $d.Total}} 条 · 第 {{$d.Page}} / {{$d.Pages}} 页</span><span class="pages">
+      {{if gt $d.Page 1}}<a class="btn sm" href="/audit?actor={{query $d.Actor}}&op={{query $d.Operation}}&target={{query $d.Target}}&page={{sub $d.Page 1}}">上一页</a>{{end}}
+      {{if lt $d.Page $d.Pages}}<a class="btn sm" href="/audit?actor={{query $d.Actor}}&op={{query $d.Operation}}&target={{query $d.Target}}&page={{add $d.Page 1}}">下一页</a>{{end}}</span></div></div>
+</div>
+{{template "foot" .}}

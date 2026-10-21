@@ -138,3 +138,43 @@ test('a drag on a stage with no width is ignored, and the scale is measured at e
   assert.equal(answer.x, 120);
   assert.ok(answer.trajectory.every((p) => p.every(Number.isFinite)));
 });
+
+test('rotate turns the disc with the drag and answers with the drag distance', async () => {
+  gateway.kind = 'rotate';
+  const el = widget();
+  el.verify().catch(() => {});
+  await flush();
+  assert.equal(state(el), 'puzzle');
+  const stage = $(el, '.stage');
+  const disc = $(el, '.disc');
+  const handle = $(el, '.handle');
+  assert.equal(stage.dataset.kind, 'rotate');
+  assert.equal(disc.hidden, false);
+  assert.equal($(el, '.piece').hidden, true);
+  assert.equal(disc.style.width, '136px');
+  assert.equal(disc.style.left, '92px');
+  assert.equal(handle.style.width, '40px', 'the handle covers what the track does not');
+  assert.equal(handle.getAttribute('aria-valuemax'), '280');
+  const pointer = (type, x, t) => {
+    const e = new PointerEvent(type, { pointerId: 1, clientX: x, clientY: 0, pointerType: 'mouse', button: 0, isPrimary: true, bubbles: true, cancelable: true });
+    Object.defineProperty(e, 'timeStamp', { value: t });
+    handle.dispatchEvent(e);
+  };
+  pointer('pointerdown', 0, 0);
+  for (let t = 10; t <= 600; t += 10) pointer('pointermove', 140 * (t / 600), t);
+  assert.equal(disc.style.transform, 'rotate(180.00deg)', '140 of 280 px is half a turn');
+  assert.equal(handle.getAttribute('aria-valuetext'), '180 度');
+  pointer('pointerup', 140, 610);
+  await solveAll();
+  const { answer } = solutions()[0].body;
+  assert.equal(answer.x, 140);
+  checkTrajectory(answer);
+  // The next slider puzzle in the same widget is a jigsaw again.
+  gateway.kind = 'slider';
+  el.reset();
+  el.verify().catch(() => {});
+  await flush();
+  assert.equal(stage.dataset.kind, 'slider');
+  assert.equal(disc.hidden, true);
+  assert.equal(handle.hasAttribute('aria-valuetext'), false);
+});

@@ -1,0 +1,36 @@
+{{template "head" .}}
+<div class="wrap">
+  <div class="page-head">
+    <div><h1>管理员</h1><div class="sub">超级管理员可以管理所有内容；运维可以管理应用、策略和密钥对；只读只能查看。修改角色、停用、重置密码会让该账号重新登录。</div></div>
+    <div class="tools"><button class="btn primary" data-open="dlg-admin">＋ 新建管理员</button></div>
+  </div>
+  <div class="card"><div class="card-body flush table-wrap"><table class="table">
+    <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>动态码</th><th>最近登录</th><th>创建时间</th><th class="actions">操作</th></tr></thead><tbody>
+    {{range .Data}}{{$self := eq .ID $.Me.Admin.ID}}<tr>
+      <td><span class="cell-title">{{.Username}}</span>{{if $self}} <span class="badge plain blue">我</span>{{end}}{{if .DisplayName}}<div class="cell-sub">{{.DisplayName}}</div>{{end}}</td>
+      <td>{{if $self}}{{role .Role}}{{else}}<form class="inline" method="post" action="/admins/{{.ID}}/role">{{template "csrf" $.CSRF}}
+        <select class="input sm" name="role">{{$r := .Role}}{{range $k := split "owner,operator,viewer"}}<option value="{{$k}}" {{if eq $k $r}}selected{{end}}>{{role $k}}</option>{{end}}</select>
+        <button class="btn sm">修改</button></form>{{end}}</td>
+      <td>{{if .Enabled}}<span class="badge ok">启用</span>{{else}}<span class="badge">停用</span>{{end}}{{if .MustChangePassword}} <span class="badge warn plain">待改密码</span>{{end}}</td>
+      <td>{{if .TOTPEnabled}}<span class="badge ok plain">已开启</span>{{else}}<span class="muted">未开启</span>{{end}}</td>
+      <td class="cell-sub nowrap">{{if .LastLoginAt.Valid}}{{time .LastLoginAt.Time}}<div class="mono">{{.LastLoginIP.String}}</div>{{else}}从未登录{{end}}</td>
+      <td class="cell-sub nowrap">{{time .CreatedAt}}</td>
+      <td class="actions">
+        <form method="post" action="/admins/{{.ID}}/reset" data-confirm="将为 {{.Username}} 生成新密码，其所有登录会话立即失效。确定重置？" data-ok-text="重置">{{template "csrf" $.CSRF}}<button class="btn sm">重置密码</button></form>
+        {{if not $self}}<form method="post" action="/admins/{{.ID}}/status" {{if .Enabled}}data-confirm="停用后 {{.Username}} 将立即退出且无法登录。确定停用？" data-danger data-ok-text="停用"{{end}}>{{template "csrf" $.CSRF}}
+          <input type="hidden" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}"><button class="btn sm {{if .Enabled}}danger{{end}}">{{if .Enabled}}停用{{else}}启用{{end}}</button></form>{{end}}</td></tr>
+    {{end}}</tbody></table></div></div>
+</div>
+<dialog class="modal" id="dlg-admin"><form method="post" action="/admins/create">{{template "csrf" .CSRF}}
+  <div class="m-head"><h3>新建管理员</h3><button type="button" class="x" data-close aria-label="关闭">×</button></div>
+  <div class="m-body">
+    <div class="form-row"><label>用户名</label><input class="input" name="username" required pattern="[a-zA-Z][a-zA-Z0-9_.\-]{2,31}" placeholder="3–32 位，字母开头"></div>
+    <div class="form-row"><label>显示名称</label><input class="input" name="display_name" maxlength="64" placeholder="可选，如 张三"></div>
+    <div class="form-row"><span class="label">角色</span><div class="radio-cards">
+      <label class="radio-card"><input type="radio" name="role" value="viewer" checked><b>只读</b><span>查看应用与数据</span></label>
+      <label class="radio-card"><input type="radio" name="role" value="operator"><b>运维</b><span>管理应用、策略、密钥对</span></label>
+      <label class="radio-card"><input type="radio" name="role" value="owner"><b>超级管理员</b><span>全部权限，含管理员</span></label></div></div>
+    <div class="alert info" style="margin:0">系统会生成随机初始密码（只显示一次），对方首次登录时必须修改。</div>
+  </div>
+  <div class="m-foot"><button type="button" class="btn" data-close>取消</button><button class="btn primary">创建</button></div></form></dialog>
+{{template "foot" .}}

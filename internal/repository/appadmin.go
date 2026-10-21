@@ -41,12 +41,17 @@ func bumpPolicy(ctx context.Context, s sqlx.Session, appID int64) error {
 	return err
 }
 
-func (r *AppAdmin) CreateApp(ctx context.Context, appKey, name string) error {
-	_, err := r.conn.ExecCtx(ctx, "INSERT INTO bg_app (app_key, name, status) VALUES (?, ?, ?)", appKey, name, statusEnabled)
-	if isDuplicate(err) {
-		return domain.ErrDuplicate
-	}
-	return err
+func (r *AppAdmin) CreateApp(ctx context.Context, appKey, name, remark string) error {
+	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
+		_, err := s.ExecCtx(ctx, "INSERT INTO bg_app (app_key, name, remark, status) VALUES (?, ?, ?, ?)", appKey, name, remark, statusEnabled)
+		if isDuplicate(err) {
+			return domain.ErrDuplicate
+		}
+		if err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, appKey)
+	})
 }
 
 func (r *AppAdmin) SetAppEnabled(ctx context.Context, appKey string, enabled bool) error {
@@ -54,27 +59,49 @@ func (r *AppAdmin) SetAppEnabled(ctx context.Context, appKey string, enabled boo
 	if enabled {
 		status = statusEnabled
 	}
-	res, err := r.conn.ExecCtx(ctx, "UPDATE bg_app SET status = ? WHERE app_key = ?", status, appKey)
-	if err != nil {
-		return err
-	}
-	return requireRow(ctx, r.conn, res, "SELECT COUNT(*) FROM bg_app WHERE app_key = ?", appKey)
+	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
+		if _, err := appIDForUpdate(ctx, s, appKey); err != nil {
+			return err
+		}
+		if _, err := s.ExecCtx(ctx, "UPDATE bg_app SET status = ? WHERE app_key = ?", status, appKey); err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, appKey)
+	})
 }
 
-// requireRow distinguishes "no such row" from "row already had this value",
-// since MySQL reports zero affected rows for both.
-func requireRow(ctx context.Context, conn sqlx.SqlConn, res sql.Result, countQuery string, args ...any) error {
-	if n, err := res.RowsAffected(); err == nil && n > 0 {
-		return nil
-	}
-	var count int
-	if err := conn.QueryRowCtx(ctx, &count, countQuery, args...); err != nil {
-		return err
-	}
-	if count == 0 {
-		return domain.ErrNotFound
-	}
-	return nil
+// UpdateApp changes the display name and remark; neither affects issued
+// challenges, so the policy version stays.
+func (r *AppAdmin) UpdateApp(ctx context.Context, appKey, name, remark string) error {
+	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
+		if _, err := appIDForUpdate(ctx, s, appKey); err != nil {
+			return err
+		}
+		if _, err := s.ExecCtx(ctx, "UPDATE bg_app SET name = ?, remark = ? WHERE app_key = ?", name, remark, appKey); err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, appKey)
+	})
+}
+
+func (r *AppAdmin) DeleteAction(ctx context.Context, appKey, action string) error {
+	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
+		id, err := appIDForUpdate(ctx, s, appKey)
+		if err != nil {
+			return err
+		}
+		res, err := s.ExecCtx(ctx, "DELETE FROM bg_app_action WHERE app_id = ? AND action = ?", id, action)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return domain.ErrNotFound
+		}
+		if err := bumpPolicy(ctx, s, id); err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, appKey)
+	})
 }
 
 func (r *AppAdmin) AddOrigin(ctx context.Context, appKey, origin string) error {
@@ -89,7 +116,10 @@ func (r *AppAdmin) AddOrigin(ctx context.Context, appKey, origin string) error {
 			}
 			return err
 		}
-		return bumpPolicy(ctx, s, id)
+		if err := bumpPolicy(ctx, s, id); err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, appKey)
 	})
 }
 
@@ -106,7 +136,10 @@ func (r *AppAdmin) RemoveOrigin(ctx context.Context, appKey, origin string) erro
 		if n, _ := res.RowsAffected(); n == 0 {
 			return domain.ErrNotFound
 		}
-		return bumpPolicy(ctx, s, id)
+		if err := bumpPolicy(ctx, s, id); err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, appKey)
 	})
 }
 
@@ -116,6 +149,16 @@ func (r *AppAdmin) UpsertAction(ctx context.Context, appKey, action string, p do
 		if err != nil {
 			return err
 		}
+		// Saving the same policy again is a no-op: no new policy version, no
+		// audit row (seed scripts and retries re-apply configuration).
+		var cur []actionRow
+		if err := s.QueryRowsCtx(ctx, &cur, "SELECT action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty FROM bg_app_action WHERE app_id = ? AND action = ? FOR UPDATE", id, action); err != nil {
+			return err
+		}
+		if len(cur) == 1 && cur[0].Enabled == p.Enabled && cur[0].Mode == p.Mode && cur[0].Kinds == strings.Join(p.Kinds, ",") &&
+			cur[0].Puzzles == p.Puzzles && cur[0].Difficulty == p.Difficulty {
+			return nil
+		}
 		if _, err := s.ExecCtx(ctx, `INSERT INTO bg_app_action (app_id, action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), challenge_mode = VALUES(challenge_mode),
@@ -123,7 +166,10 @@ ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), challenge_mode = VALUES(chall
 			id, action, p.Enabled, p.Mode, strings.Join(p.Kinds, ","), p.Puzzles, p.Difficulty); err != nil {
 			return err
 		}
-		return bumpPolicy(ctx, s, id)
+		if err := bumpPolicy(ctx, s, id); err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, appKey)
 	})
 }
 
@@ -152,7 +198,10 @@ func (r *AppAdmin) CreateSecret(ctx context.Context, appKey string, k NewSecret)
 		if err != nil {
 			return err
 		}
-		return insertSecret(ctx, s, id, k)
+		if err := insertSecret(ctx, s, id, k); err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, k.SecretID)
 	})
 }
 
@@ -167,11 +216,19 @@ func insertSecret(ctx context.Context, s sqlx.Session, appID int64, k NewSecret)
 }
 
 func (r *AppAdmin) RevokeSecret(ctx context.Context, secretID string) error {
-	res, err := r.conn.ExecCtx(ctx, "UPDATE bg_app_secret SET status = ? WHERE secret_id = ?", statusDisabled, secretID)
-	if err != nil {
-		return err
-	}
-	return requireRow(ctx, r.conn, res, "SELECT COUNT(*) FROM bg_app_secret WHERE secret_id = ?", secretID)
+	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
+		var n int
+		if err := s.QueryRowCtx(ctx, &n, "SELECT COUNT(*) FROM bg_app_secret WHERE secret_id = ? FOR UPDATE", secretID); err != nil {
+			return err
+		}
+		if n == 0 {
+			return domain.ErrNotFound
+		}
+		if _, err := s.ExecCtx(ctx, "UPDATE bg_app_secret SET status = ? WHERE secret_id = ?", statusDisabled, secretID); err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, secretID)
+	})
 }
 
 // RotateSecret adds a replacement for an enabled secret pair and shortens the
@@ -199,8 +256,10 @@ func (r *AppAdmin) RotateSecret(ctx context.Context, oldSecretID string, k NewSe
 		if old.ExpiresAt.Valid && old.ExpiresAt.Time.Before(until) {
 			until = old.ExpiresAt.Time.UTC()
 		}
-		_, err = s.ExecCtx(ctx, "UPDATE bg_app_secret SET expires_at = ? WHERE secret_id = ?", until, oldSecretID)
-		return err
+		if _, err = s.ExecCtx(ctx, "UPDATE bg_app_secret SET expires_at = ? WHERE secret_id = ?", until, oldSecretID); err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, oldSecretID)
 	})
 	return until, err
 }
@@ -233,8 +292,10 @@ func (r *AppAdmin) SampleSealed(ctx context.Context, kekID string) (*SealedSampl
 }
 
 type AppSummary struct {
+	ID            int64     `db:"id"`
 	AppKey        string    `db:"app_key"`
 	Name          string    `db:"name"`
+	Remark        string    `db:"remark"`
 	Enabled       bool      `db:"enabled"`
 	PolicyVersion int64     `db:"active_policy_version"`
 	CreatedAt     time.Time `db:"created_at"`
@@ -243,7 +304,7 @@ type AppSummary struct {
 func (r *AppAdmin) ListApps(ctx context.Context) ([]AppSummary, error) {
 	var out []AppSummary
 	err := r.conn.QueryRowsCtx(ctx, &out,
-		"SELECT app_key, name, status = 1 AS enabled, active_policy_version, created_at FROM bg_app ORDER BY id")
+		"SELECT id, app_key, name, remark, status = 1 AS enabled, active_policy_version, created_at FROM bg_app ORDER BY id")
 	return out, err
 }
 
@@ -283,7 +344,7 @@ func (r *AppAdmin) AppDetail(ctx context.Context, appKey string) (*AppDetail, er
 		return nil, err
 	}
 	if err := r.conn.QueryRowCtx(ctx, &d.AppSummary,
-		"SELECT app_key, name, status = 1 AS enabled, active_policy_version, created_at FROM bg_app WHERE id = ?", id); err != nil {
+		"SELECT id, app_key, name, remark, status = 1 AS enabled, active_policy_version, created_at FROM bg_app WHERE id = ?", id); err != nil {
 		return nil, err
 	}
 	if err := r.conn.QueryRowsCtx(ctx, &d.Origins, "SELECT origin FROM bg_app_origin WHERE app_id = ? ORDER BY origin", id); err != nil {

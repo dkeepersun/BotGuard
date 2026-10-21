@@ -1,0 +1,19 @@
+{{template "head" .}}{{$d := .Data}}
+<div class="wrap">
+  <div class="page-head"><div><h1>系统状态</h1><div class="sub">依赖检查与运行配置 · {{time $d.Now}}</div></div><div class="tools"><a class="btn" href="/system">刷新</a></div></div>
+  <div class="grid g-2">
+    <div class="card"><div class="card-head"><h2>依赖检查</h2></div><div class="card-body flush"><table class="table"><tbody>
+      {{range $d.Checks}}<tr><td style="width:180px"><span class="dot {{if .OK}}ok{{else}}bad{{end}}"></span>{{.Name}}</td><td>{{if .OK}}<span class="ok-text">正常</span>{{else}}<span class="bad-text">异常</span>{{end}}</td><td class="cell-sub">{{.Detail}}</td></tr>{{end}}
+    </tbody></table></div></div>
+    <div class="card"><div class="card-head"><h2>运行配置</h2></div><div class="card-body"><dl class="kv">
+      {{range $k, $v := $d.Info}}<dt>{{$k}}</dt><dd class="mono">{{$v}}</dd>{{end}}
+    </dl></div></div>
+  </div>
+  <div class="card mt"><div class="card-head"><h2>运维提示</h2></div><div class="card-body"><ul style="margin:0;padding-left:18px;line-height:2">
+    <li>升级时先执行 <code>botguard-ctl migrate up</code>，再滚动替换 gateway；库结构落后时 gateway 的 /readyz 会返回 <code>schema_outdated</code>。</li>
+    <li>管理后台和 gateway 必须使用同一个 <code>BOTGUARD_SECRET_KEK</code>；更换 KEK 时把旧值放进 <code>BOTGUARD_SECRET_KEK_PREVIOUS</code>。</li>
+    <li>忘记管理员密码：在服务器上执行 <code>botguard-ctl admin reset-password -username 用户名</code>。</li>
+    <li>统计数据存在 Redis，按小时保留 32 天；审计日志存在 MySQL 的 sys_audit_log 表，不会自动清理。</li>
+  </ul></div></div>
+</div>
+{{template "foot" .}}

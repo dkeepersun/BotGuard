@@ -30,5 +30,6 @@ fi
 docker compose up -d --build
 echo
 echo "演示页面： http://localhost:8080"
+echo "管理后台： http://localhost:8091   账号 admin，初始密码 $(docker compose exec -T php cat /shared/admin-password 2>/dev/null || echo '见 docker compose logs seed')（首次登录需修改；改过后以新密码为准）"
 echo "gateway：  http://localhost:8090/readyz"
 echo "停止：     docker compose -f $(pwd)/docker-compose.yml down（加 -v 会清空演示数据）"

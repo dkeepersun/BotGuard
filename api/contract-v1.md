@@ -51,10 +51,11 @@ SHA-256 在原生代码/GPU 上比浏览器快 2–3 个数量级，所以难度
 | `invisible` | 只在后台算 PoW | invisible 模式；adaptive 模式且风险低 |
 | `slider` | 拖动拼图对准缺口，同时后台算 PoW | 题型列表中含 slider，且被选中 |
 | `click_text` | 按顺序点击图中的汉字，同时后台算 PoW | 题型列表中含 click_text，且被选中 |
+| `rotate` | 拖动滑块转动中央圆盘，使图案与外圈对齐（`docs/rotate-challenge.md`），同时后台算 PoW | 题型列表中含 rotate，且被选中 |
 | `click_shape` | 按顺序点击描述的图形（要数点数、边数），同时后台算 PoW | 题型列表中含 click_shape，且被选中 |
 | `fallback` | 只算 PoW，难度 × 8（高风险时再 × 4，即 × 32），独立限流 | 用户在滑块面板选择“无法完成拼图？”（invisible 模式下无此路径） |
 
-interactive 模式每次从列表随机选题；adaptive 模式中风险随机选、高风险选列表中最难的（click_shape > click_text > slider）。风险为高时，任何题型的 PoW 难度 × 4，包括 fallback（倍数相乘），所以选 fallback 不会比高风险的点选题更便宜。实际难度不超过 `Challenge.MaxDifficulty`。风险分和原因码只通过 verify 返回给业务服务器，不返回给浏览器。
+interactive 模式每次从列表随机选题；adaptive 模式中风险随机选、高风险选列表中最难的（click_shape > click_text > rotate > slider）。风险为高时，任何题型的 PoW 难度 × 4，包括 fallback（倍数相乘），所以选 fallback 不会比高风险的点选题更便宜。实际难度不超过 `Challenge.MaxDifficulty`。风险分和原因码只通过 verify 返回给业务服务器，不返回给浏览器。
 
 ## GET /sdk/v1/{file}（浏览器组件脚本）
 
@@ -102,7 +103,7 @@ gateway 托管浏览器组件：`load.js`（经典脚本，提供 `initBotGuard`
 {"x": 172.4, "trajectory": [[0, 0, 0], [16.7, 3.2, 0.5], [33.4, 9.8, 1.1]]}
 ```
 
-`x` 是拼块左边缘在原图坐标中的位置；`trajectory` 每项为 `[自按下起的毫秒数, x, y]`，最多 400 个点。位置容差 ±4 像素（`Slider.Tolerance`）；轨迹规则（时长、点数、瞬移、等间隔、匀速、纯直线、终点不一致）见 `docs/challenge-types.md` §6.3。位置错和轨迹不像人都返回同一个 422 `ANSWER_INVALID`，具体原因只记服务端日志。点选题的 `answer` 为 `{"clicks": [[ms, x, y], ...], "moves_between": [n, ...]}`：`clicks` 按点击顺序、坐标为原图坐标、时间自面板显示起；`moves_between[i]` 为第 i 次点击前的指针移动次数。校验数量、位置（目标半径 + 4 像素）、顺序、读题时间、点击间隔和鼠标移动，规则见 `docs/click-challenges.md` §5。`pointer_type` 只认 `mouse`、`touch`、`pen`、`keyboard`，其他值（含大小写不同）一律按 `mouse` 处理，即最严格的规则。用键盘完成的滑块走宽松规则，并在 verify 中带上 `KEYBOARD_INPUT` 原因码；点选题不能用键盘完成，声称 `keyboard` 时按鼠标规则校验。触摸输入免去鼠标专用的检查（纯直线拖动、点击间无移动），verify 中带 `TOUCH_INPUT`（权重 0，仅供业务方参考）。PoW 或滑块失败都会计入该 IP 的失败次数（10 分钟窗口），提高其后续风险分。
+`x` 是拼块左边缘在原图坐标中的位置；`trajectory` 每项为 `[自按下起的毫秒数, x, y]`，最多 400 个点。位置容差 ±4 像素（`Slider.Tolerance`）；轨迹规则（时长、点数、瞬移、等间隔、匀速、纯直线、终点不一致）见 `docs/challenge-types.md` §6.3。位置错和轨迹不像人都返回同一个 422 `ANSWER_INVALID`，具体原因只记服务端日志。旋转题（`rotate`）的 `answer` 与滑块格式相同：`x` 是拖动距离（0 到签发响应中的 `rotate.track`），换算为旋转角 `x / track × 360°`，容差 ±7°（`Rotate.ToleranceDegrees`），轨迹规则与滑块一致。点选题的 `answer` 为 `{"clicks": [[ms, x, y], ...], "moves_between": [n, ...]}`：`clicks` 按点击顺序、坐标为原图坐标、时间自面板显示起；`moves_between[i]` 为第 i 次点击前的指针移动次数。校验数量、位置（目标半径 + 4 像素）、顺序、读题时间、点击间隔和鼠标移动，规则见 `docs/click-challenges.md` §5。`pointer_type` 只认 `mouse`、`touch`、`pen`、`keyboard`，其他值（含大小写不同）一律按 `mouse` 处理，即最严格的规则。用键盘完成的滑块走宽松规则，并在 verify 中带上 `KEYBOARD_INPUT` 原因码；点选题不能用键盘完成，声称 `keyboard` 时按鼠标规则校验。触摸输入免去鼠标专用的检查（纯直线拖动、点击间无移动），verify 中带 `TOUCH_INPUT`（权重 0，仅供业务方参考）。PoW 或滑块失败都会计入该 IP 的失败次数（10 分钟窗口），提高其后续风险分。
 
 服务端按从廉价到昂贵的顺序校验，任一步失败即返回：
 
@@ -205,18 +206,9 @@ HTTP 状态码只描述“这次调用是否被正确处理”，`data.success` 
 
 业务服务顺序：普通字段校验 → 用户身份/业务授权 → verify → 本地业务幂等事务。若本地事务失败，使用原业务幂等键恢复；不能仅凭已经消费的凭证反复执行副作用。
 
-## 管理后台路由方案
+## 管理后台
 
-| 读页面 / 数据 | 写操作 | 权限 |
-|---|---|---|
-| `/app/index`、`/app/list` | `/app/save`、`/app/status` | app.view / app.manage |
-| `/app/secret/list` | `/app/secret/create`、`/app/secret/rotate`、`/app/secret/revoke` | secret.view / secret.manage |
-| `/policy/index`、`/policy/list` | `/policy/publish`、`/policy/rollback` | policy.view / policy.manage |
-| `/event/index`、`/event/list` | 无 | event.view |
-| `/admin/index`、`/role/index` | `/admin/save`、`/role/save` | admin.manage / role.manage |
-| `/audit/index`、`/audit/list` | 无 | audit.view |
-
-所有写操作 POST，Redis session + CSRF + Origin + 权限检查。菜单过滤不能代替路由权限。secret_key 只展示一次、审计脱敏；secret.manage 授权只允许超级管理员。
+管理后台的路由、权限、会话与审计见 `docs/admin.md`。要点：所有写操作 POST，Redis 会话 + CSRF + 同源检查 + 路由权限；菜单过滤不能代替路由权限；secret_key 只在创建 / 轮换后的响应页显示一次；审计与变更同事务写入且脱敏。
 
 ## 必须验证的安全用例
 

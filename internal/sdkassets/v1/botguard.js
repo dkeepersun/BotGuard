@@ -94,6 +94,10 @@ const STYLE = `
 .stage img { position: absolute; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
 .stage .bg { top: 0; left: 0; width: 100%; height: 100%; }
 .stage .piece { left: 0; filter: drop-shadow(0 0 2px rgba(0,0,0,.6)); }
+/* Rotate: the same drag turns a disc instead of moving a piece. */
+.stage[data-kind="rotate"], .track[data-kind="rotate"] { width: min(100%, calc(var(--bg-img-h) * 1.6)); }
+.stage[data-kind="rotate"] { aspect-ratio: 8 / 5; }
+.stage .disc { border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 3px 10px rgba(0,0,0,.35); will-change: transform; }
 .track { position: relative; height: 40px; margin-top: 10px; border-radius: 20px; background: #eaeef2; touch-action: none; }
 .track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 20px; background: var(--bg-accent); opacity: .15; }
 .track .hint { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: grid; place-items: center; color: #656d76; font-size: 13px;
@@ -118,6 +122,7 @@ const STYLE = `
 @supports not (aspect-ratio: 1 / 1) {
   .stage::before, .cstage::before { content: ""; display: block; }
   .stage::before { padding-top: 50%; }
+  .stage[data-kind="rotate"]::before { padding-top: 62.5%; }
   .cstage::before { padding-top: 62.5%; }
 }
 @supports (background: color-mix(in srgb, red 50%, white)) {
@@ -169,7 +174,7 @@ const TEMPLATE = `
       <button type="button" class="retry">重试</button></div>
     <div class="body">
       <div class="slider-ui">
-        <div class="stage"><img class="bg" alt="拼图背景"><img class="piece" alt="拼图块"></div>
+        <div class="stage"><img class="bg" alt="拼图背景"><img class="piece" alt="拼图块"><img class="disc" alt="需要转正的圆盘" hidden></div>
         <div class="track"><div class="fill"></div><div class="hint">向右拖动滑块，将拼图块对准缺口</div>
           <div class="handle" role="slider" tabindex="0" aria-label="拖动滑块完成拼图，也可以用左右方向键移动、回车确认" aria-valuemin="0">➜</div></div>
       </div>
@@ -471,7 +476,8 @@ export class BotGuardWidget extends ElementBase {
 
       // Proof of work always runs; for a puzzle it runs while the user works on it.
       const t1 = performance.now();
-      const slider = ch.kind === 'slider';
+      // Rotate is answered like the slider: a drag distance plus its path.
+      const slider = ch.kind === 'slider' || ch.kind === 'rotate';
       const clicking = ch.kind === 'click_text' || ch.kind === 'click_shape';
       if (!slider && !clicking) this.#view = null;
       const work = this.#solve(round, ch, perPuzzle, slider || clicking);
@@ -479,7 +485,7 @@ export class BotGuardWidget extends ElementBase {
       let answer;
       let drag = {};
       if (slider) {
-        const result = await this.#puzzle(round, ch.slider);
+        const result = await this.#puzzle(round, ch.kind, ch.kind === 'rotate' ? ch.rotate : ch.slider);
         if (!result || !round.live) return;
         ({ answer, drag } = result);
         this.#trace('drag', { points: answer.trajectory.length, ms: Math.round(answer.trajectory.at(-1)[0]), x: answer.x, pointer_type: drag.pointer_type });
@@ -509,7 +515,7 @@ export class BotGuardWidget extends ElementBase {
       this.#view = null;
       this.#dialogOpen = false;
       this.#setToken(sol.token, tokenTTL(sol));
-      const how = slider ? '拼图完成' : clicking ? '点选完成' : ch.kind === 'fallback' ? '无障碍验证完成' : `本机计算 ${attempts.toLocaleString()} 次`;
+      const how = ch.kind === 'rotate' ? '旋转对齐完成' : slider ? '拼图完成' : clicking ? '点选完成' : ch.kind === 'fallback' ? '无障碍验证完成' : `本机计算 ${attempts.toLocaleString()} 次`;
       const took = slider || clicking ? performance.now() - t1 : solveMs;
       this.#show('verified', '验证通过', `${how}，用时 ${(took / 1000).toFixed(2)} 秒`);
       this.#emit('botguard:verified', { token: sol.token, expiresAt: sol.expires_at, expiresIn: sol.expires_in, kind: ch.kind, attempts, solveMs });
@@ -560,34 +566,58 @@ export class BotGuardWidget extends ElementBase {
     return errorWith(`失败次数过多，请 ${s} 秒后重试`, 'TOO_MANY_FAILURES');
   }
 
-  // Shows the puzzle and resolves with the answer when the user lets go
-  // (or presses Enter); resolves null if the round ends first.
-  #puzzle(round, s) {
+  // Shows a drag puzzle (the jigsaw slider, or the rotate disc) and resolves
+  // with the answer when the user lets go (or presses Enter); resolves null
+  // if the round ends first. Both answer with the drag distance x.
+  #puzzle(round, kind, s) {
     const stage = this.#root.querySelector('.stage');
+    const track = this.#root.querySelector('.track');
     const bg = this.#root.querySelector('.bg');
     const piece = this.#root.querySelector('.piece');
+    const disc = this.#root.querySelector('.disc');
     const handle = this.#root.querySelector('.handle');
     const fill = this.#root.querySelector('.fill');
     const msg = this.#root.querySelector('.msg');
+    const turning = kind === 'rotate';
+    stage.dataset.kind = track.dataset.kind = kind;
     bg.src = s.background;
-    piece.src = s.piece;
+    piece.hidden = turning;
+    disc.hidden = !turning;
+    if (turning) disc.src = s.disc;
+    else piece.src = s.piece;
     msg.textContent = '';
+    this.#root.querySelector('.hint').textContent = turning ? '向右拖动滑块，转动圆盘使图案对齐' : '向右拖动滑块，将拼图块对准缺口';
+    handle.setAttribute('aria-label', turning
+      ? '拖动滑块转动圆盘，也可以用左右方向键转动、回车确认'
+      : '拖动滑块完成拼图，也可以用左右方向键移动、回车确认');
     this.#root.querySelector('.slider-ui').hidden = false;
     this.#root.querySelector('.click-ui').hidden = true;
     this.#root.querySelector('.clear').hidden = true;
     this.#view = 'puzzle';
-    this.#show('puzzle', '请完成下方拼图', '拖动滑块，使拼图块与缺口对齐');
+    if (turning) this.#show('puzzle', '请转正中间的圆盘', '拖动滑块，让圆盘里的线条和外圈接上');
+    else this.#show('puzzle', '请完成下方拼图', '拖动滑块，使拼图块与缺口对齐');
 
-    const maxX = s.width - s.piece_size;
+    // The handle is as wide as the piece (slider) or the rest of the image
+    // beyond the track (rotate), so it reaches the end exactly at maxX.
+    const maxX = turning ? s.track : s.width - s.piece_size;
+    const handleW = s.width - maxX;
     let scale = 0;
     // Measured again at every grab and key press: the panel may have been
     // hidden (width 0) or resized (rotation, a popup on a small screen) since.
     const measure = () => {
       scale = stage.clientWidth / s.width;
-      piece.style.width = piece.style.height = handle.style.width = `${s.piece_size * scale}px`;
-      piece.style.top = `${s.piece_y * scale}px`;
+      handle.style.width = `${handleW * scale}px`;
+      if (turning) {
+        disc.style.width = disc.style.height = `${2 * s.radius * scale}px`;
+        disc.style.left = `${(s.cx - s.radius) * scale}px`;
+        disc.style.top = `${(s.cy - s.radius) * scale}px`;
+      } else {
+        piece.style.width = piece.style.height = `${s.piece_size * scale}px`;
+        piece.style.top = `${s.piece_y * scale}px`;
+      }
     };
     handle.setAttribute('aria-valuemax', String(maxX));
+    if (!turning) handle.removeAttribute('aria-valuetext');
 
     return new Promise((resolve) => {
       let points = [];
@@ -598,8 +628,15 @@ export class BotGuardWidget extends ElementBase {
       let untrusted = false;
       const clamp = (v) => Math.max(0, Math.min(maxX, v));
       const place = () => {
-        piece.style.left = handle.style.left = `${x * scale}px`;
-        fill.style.width = `${(x + s.piece_size / 2) * scale}px`;
+        handle.style.left = `${x * scale}px`;
+        if (turning) {
+          const deg = (x / maxX) * 360;
+          disc.style.transform = `rotate(${deg.toFixed(2)}deg)`;
+          handle.setAttribute('aria-valuetext', `${Math.round(deg)} 度`);
+        } else {
+          piece.style.left = `${x * scale}px`;
+        }
+        fill.style.width = `${(x + handleW / 2) * scale}px`;
         handle.setAttribute('aria-valuenow', String(Math.round(x)));
       };
       const startOver = () => {

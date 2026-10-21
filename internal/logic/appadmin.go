@@ -40,19 +40,51 @@ type AppAdmin struct {
 	Now    func() time.Time
 }
 
-func (a *AppAdmin) CreateApp(ctx context.Context, name string) (string, error) {
-	if n := utf8.RuneCountInString(name); n < 1 || n > 128 {
-		return "", invalid("应用名称长度须为 1–128 个字符")
+func validAppText(name, remark string) error {
+	if n := utf8.RuneCountInString(strings.TrimSpace(name)); n < 1 || n > 128 {
+		return invalid("应用名称长度须为 1–128 个字符")
+	}
+	if utf8.RuneCountInString(remark) > 255 {
+		return invalid("备注不能超过 255 个字符")
+	}
+	return nil
+}
+
+func (a *AppAdmin) CreateApp(ctx context.Context, name, remark string) (string, error) {
+	if err := validAppText(name, remark); err != nil {
+		return "", err
 	}
 	key, err := credential.NewAppKey()
 	if err != nil {
 		return "", err
 	}
-	return key, a.Repo.CreateApp(ctx, key, name)
+	name = strings.TrimSpace(name)
+	ctx = repository.Audited(ctx, "app.create", key, map[string]any{"name": name, "remark": remark})
+	return key, a.Repo.CreateApp(ctx, key, name, remark)
+}
+
+func (a *AppAdmin) UpdateApp(ctx context.Context, appKey, name, remark string) error {
+	if err := validAppText(name, remark); err != nil {
+		return err
+	}
+	name = strings.TrimSpace(name)
+	ctx = repository.Audited(ctx, "app.update", appKey, map[string]any{"name": name, "remark": remark})
+	return a.Repo.UpdateApp(ctx, appKey, name, remark)
 }
 
 func (a *AppAdmin) SetAppEnabled(ctx context.Context, appKey string, enabled bool) error {
-	return a.Repo.SetAppEnabled(ctx, appKey, enabled)
+	op := "app.disable"
+	if enabled {
+		op = "app.enable"
+	}
+	return a.Repo.SetAppEnabled(repository.Audited(ctx, op, appKey, nil), appKey, enabled)
+}
+
+func (a *AppAdmin) DeleteAction(ctx context.Context, appKey, action string) error {
+	if !domain.ValidAction(action) {
+		return invalid("action 格式错误")
+	}
+	return a.Repo.DeleteAction(repository.Audited(ctx, "action.delete", appKey, map[string]any{"action": action}), appKey, action)
 }
 
 // NormalizeOriginInput only accepts input that is already a bare origin, so
@@ -70,7 +102,7 @@ func (a *AppAdmin) AddOrigin(ctx context.Context, appKey, raw string) (string, e
 	if err != nil {
 		return "", err
 	}
-	return o, a.Repo.AddOrigin(ctx, appKey, o)
+	return o, a.Repo.AddOrigin(repository.Audited(ctx, "origin.add", appKey, map[string]any{"origin": o}), appKey, o)
 }
 
 func (a *AppAdmin) RemoveOrigin(ctx context.Context, appKey, raw string) (string, error) {
@@ -78,7 +110,7 @@ func (a *AppAdmin) RemoveOrigin(ctx context.Context, appKey, raw string) (string
 	if err != nil {
 		return "", err
 	}
-	return o, a.Repo.RemoveOrigin(ctx, appKey, o)
+	return o, a.Repo.RemoveOrigin(repository.Audited(ctx, "origin.remove", appKey, map[string]any{"origin": o}), appKey, o)
 }
 
 func (a *AppAdmin) SetAction(ctx context.Context, appKey, action string, p domain.ActionPolicy) error {
@@ -113,6 +145,8 @@ func (a *AppAdmin) SetAction(ctx context.Context, appKey, action string, p domai
 	if p.Difficulty < 1 || p.Difficulty > MaxDifficulty {
 		return invalid("difficulty 须在 1–%d 之间", MaxDifficulty)
 	}
+	ctx = repository.Audited(ctx, "action.set", appKey, map[string]any{"action": action, "enabled": p.Enabled, "mode": p.Mode,
+		"kinds": p.Kinds, "puzzles": p.Puzzles, "difficulty": p.Difficulty})
 	return a.Repo.UpsertAction(ctx, appKey, action, p)
 }
 
@@ -176,6 +210,7 @@ func (a *AppAdmin) CreateSecret(ctx context.Context, appKey string, ttl time.Dur
 	if err != nil {
 		return credential.SecretPair{}, nil, err
 	}
+	ctx = repository.Audited(ctx, "secret.create", appKey, map[string]any{"app_key": appKey, "expires_at": rec.ExpiresAt})
 	return p, rec.ExpiresAt, a.Repo.CreateSecret(ctx, appKey, rec)
 }
 
@@ -183,7 +218,7 @@ func (a *AppAdmin) RevokeSecret(ctx context.Context, secretID string) error {
 	if !domain.ValidSecretID(secretID) {
 		return invalid("secret_id 格式错误")
 	}
-	return a.Repo.RevokeSecret(ctx, secretID)
+	return a.Repo.RevokeSecret(repository.Audited(ctx, "secret.revoke", secretID, nil), secretID)
 }
 
 // RotateSecret issues a replacement and lets the old pair keep working for
@@ -199,6 +234,7 @@ func (a *AppAdmin) RotateSecret(ctx context.Context, oldSecretID string, grace, 
 	if err != nil {
 		return credential.SecretPair{}, time.Time{}, err
 	}
+	ctx = repository.Audited(ctx, "secret.rotate", oldSecretID, map[string]any{"new_secret_id": rec.SecretID, "grace": grace.String()})
 	until, err := a.Repo.RotateSecret(ctx, oldSecretID, rec, a.Now().Add(grace).UTC())
 	return p, until, err
 }

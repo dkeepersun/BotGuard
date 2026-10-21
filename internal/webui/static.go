@@ -1,7 +1,9 @@
 package webui
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io/fs"
 	"net/http"
 )
@@ -32,4 +34,15 @@ func Paths() []string {
 		panic(err)
 	}
 	return paths
+}
+
+// Version returns a short content hash of a static file, for cache-busting
+// query strings; "" when the file does not exist.
+func Version(path string) string {
+	b, err := assets.ReadFile("static/" + path)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:4])
 }

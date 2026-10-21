@@ -1,11 +1,22 @@
 <!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BotGuard 管理后台预览</title>
-<link rel="stylesheet" href="/static/component/pear/css/pear.css"><link rel="stylesheet" href="/static/admin/css/admin.css"><link rel="stylesheet" href="/static/admin/css/loader.css"></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>BotGuard 管理后台</title>
+<link rel="icon" href="/static/admin/logo.svg">
+<link rel="stylesheet" href="{{asset "/static/component/pear/css/pear.css"}}"><link rel="stylesheet" href="{{asset "/static/admin/css/admin.css"}}"><link rel="stylesheet" href="{{asset "/static/admin/css/loader.css"}}">
+<link rel="stylesheet" href="{{asset "/static/admin/css/shell.css"}}"></head>
 <body class="layui-layout-body pear-admin"><div class="layui-layout layui-layout-admin">
 <div class="layui-header"><div class="layui-logo"><img class="logo"><span class="title"></span></div>
-<ul class="layui-nav layui-layout-left"><li class="collapse layui-nav-item"><a href="#" class="layui-icon layui-icon-shrink-right"></a></li><li class="refresh layui-nav-item"><a href="#" class="layui-icon layui-icon-refresh-1"></a></li></ul>
-<div id="control" class="layui-layout-control"></div><ul class="layui-nav layui-layout-right"><li class="layui-nav-item">本地结构预览 · 尚未启用防护</li></ul></div>
+<ul class="layui-nav layui-layout-left"><li class="collapse layui-nav-item"><a href="#" class="layui-icon layui-icon-shrink-right" title="折叠菜单"></a></li><li class="refresh layui-nav-item"><a href="#" class="layui-icon layui-icon-refresh-1" title="刷新当前页"></a></li></ul>
+<div id="control" class="layui-layout-control"></div>
+<ul class="layui-nav layui-layout-right">
+  <li class="layui-nav-item layui-hide-xs"><span class="bg-role">{{role .Me.Admin.Role}}</span></li>
+  <li class="layui-nav-item"><a href="javascript:;" class="bg-user"><span class="bg-avatar">{{slice .Me.Admin.Username 0 1}}</span>{{if .Me.Admin.DisplayName}}{{.Me.Admin.DisplayName}}{{else}}{{.Me.Admin.Username}}{{end}}</a>
+    <dl class="layui-nav-child">
+      <dd><a href="javascript:;" class="bg-open" data-id="profile" data-title="个人设置" data-href="/profile">个人设置</a></dd>
+      <dd><a href="javascript:;" class="bg-logout">退出登录</a></dd>
+    </dl></li>
+</ul></div>
 <div class="layui-side layui-bg-black"><div class="layui-logo"><img class="logo"><span class="title"></span></div><div class="layui-side-scroll"><div id="sideMenu"></div></div></div>
 <div class="layui-body"><div id="content"></div></div><div class="pear-cover"></div><div class="loader-main"><div class="loader"></div></div></div>
-<script src="/static/component/layui/layui.js"></script><script src="/static/component/pear/pear.js"></script>
-<script>layui.use(['admin'],function(){var admin=layui.admin;admin.setConfigType('json');admin.setConfigPath('/pear-config');admin.render();});</script></body></html>
+<form id="bg-logout-form" method="post" action="/logout" hidden><input type="hidden" name="_csrf" value="{{.CSRF}}"></form>
+<script src="{{asset "/static/component/layui/layui.js"}}"></script><script src="{{asset "/static/component/pear/pear.js"}}"></script>
+<script src="{{asset "/static/admin/js/shell.js"}}" nonce="{{.Nonce}}"></script></body></html>

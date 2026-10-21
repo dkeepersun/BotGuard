@@ -20,6 +20,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/challenge"
 	"github.com/dkeepersun/BotGuard/internal/service/click"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/rotate"
 	"github.com/dkeepersun/BotGuard/internal/service/signature"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -61,11 +62,17 @@ type Settings struct {
 	FailureWindow            time.Duration
 
 	SliderTolerance int
+	// IPHashKey salts the IP tags in console events; empty disables them.
+	IPHashKey []byte
+	// RotateToleranceDegrees is how far off the rotate answer may be.
+	RotateToleranceDegrees int
 }
 
 type Gateway struct {
-	Apps     repository.AppStore
-	State    *repository.State
+	Apps  repository.AppStore
+	State *repository.State
+	// Stats feeds the admin console; nil disables it.
+	Stats    *repository.Stats
 	Limiter  *repository.RateLimiter
 	Keys     *challenge.Keyring
 	Settings Settings
@@ -73,6 +80,7 @@ type Gateway struct {
 	// Puzzles and Clicks generate challenges; nil uses crypto-seeded generators.
 	Puzzles func() (slider.Puzzle, error)
 	Clicks  func(kind string) (click.Puzzle, error)
+	Rotates func() (rotate.Puzzle, error)
 	// puzzleSlots bounds concurrent image generation; created lazily.
 	puzzleSlots chan struct{}
 	slotsOnce   sync.Once
@@ -232,7 +240,27 @@ func (g *Gateway) authenticate(ctx context.Context, in VerifyInput) (*domain.Sec
 // Verify authenticates the caller and checks the app before reading any
 // idempotency record, so a revoked secret or disabled app is never masked by a
 // cached pass. Token problems are 200 rejections; caller problems are 4xx.
-func (g *Gateway) Verify(ctx context.Context, in VerifyInput) (*VerifyOutput, error) {
+func (g *Gateway) Verify(ctx context.Context, in VerifyInput) (out *VerifyOutput, err error) {
+	var appID int64
+	defer func() {
+		if appID == 0 {
+			return
+		}
+		if err != nil {
+			g.record(ctx, appID, []string{"verify_error", "verify_error:" + errCode(err)}, nil)
+			return
+		}
+		ev := &repository.Event{Type: repository.EventVerify, Action: in.Action, RequestID: in.RequestID, IP: g.ipTag(in.ClientIP)}
+		fields := []string{"verify"}
+		if out.Success {
+			ev.Result, ev.Kind, ev.Level, ev.Reasons = "pass", out.ChallengeKind, out.RiskLevel, out.RiskReasons
+			fields = append(fields, "verify_pass", "verify_pass:"+out.ChallengeKind)
+		} else {
+			ev.Result = out.Reason
+			fields = append(fields, "verify_reject", "verify_reject:"+out.Reason)
+		}
+		g.record(ctx, appID, fields, ev)
+	}()
 	if !domain.ValidAppKey(in.AppKey) || !domain.ValidAction(in.Action) || !domain.ValidRequestID(in.RequestID) {
 		return nil, errx.InvalidRequest("app_key、action 或 request_id 格式错误")
 	}
@@ -268,6 +296,7 @@ func (g *Gateway) Verify(ctx context.Context, in VerifyInput) (*VerifyOutput, er
 	if app.ID != pair.AppID {
 		return nil, errx.ErrAppForbidden
 	}
+	appID = app.ID
 	if err := g.limit(ctx, dimVerify, pair.SecretID, g.Settings.VerifyPerKeyPerMinute); err != nil {
 		return nil, err
 	}

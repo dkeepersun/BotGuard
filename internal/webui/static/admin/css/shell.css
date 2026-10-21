@@ -1,0 +1,12 @@
+/* BotGuard tweaks on top of the PearAdmin shell. */
+.pear-admin .layui-logo .title { font-weight: 600; letter-spacing: .3px; }
+.pear-admin .layui-side { background: #0f1b3d !important; }
+.pear-admin .layui-side .layui-logo { background: #0b1531; border-bottom: 1px solid rgba(255,255,255,.06); }
+.bg-role { display: inline-block; padding: 0 8px; line-height: 22px; border-radius: 11px; background: #eff4ff; color: #2563eb; font-size: 12px; margin-top: 18px; }
+.bg-user { display: inline-flex !important; align-items: center; gap: 8px; }
+.bg-avatar { width: 28px; height: 28px; border-radius: 50%; background: linear-gradient(135deg, #2563eb, #7c3aed); color: #fff; display: inline-grid; place-items: center; font-weight: 600; text-transform: uppercase; font-size: 13px; }
+.pear-admin .layui-side .layui-logo { display: flex !important; align-items: center; justify-content: center; gap: 10px; }
+.pear-admin .layui-side .layui-logo .logo { display: inline-block !important; width: 28px; height: 28px; }
+.pear-admin .layui-side .layui-logo .title { color: #fff !important; top: 0 !important; margin: 0 !important; font-size: 19px; }
+.pear-mini .layui-side .layui-logo .title { display: none !important; }
+.bg-avatar { line-height: 28px; }

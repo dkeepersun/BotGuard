@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>登录 · BotGuard 管理后台</title><link rel="icon" href="/static/admin/logo.svg">
+<link rel="stylesheet" href="{{asset "/static/admin/css/console.css"}}"></head>
+<body class="login">
+{{with .Flash}}<div class="toast {{.Kind}}" role="status"><span class="t-icon">{{if eq .Kind "ok"}}✓{{else}}!{{end}}</span>{{.Text}}</div>{{end}}
+<aside class="brand-side">
+  <div class="logo"><img src="/static/admin/logo.svg" alt="">BotGuard</div>
+  <div>
+    <h1>自建的人机验证服务<br>为你的业务挡住自动化流量</h1>
+    <p>无感验证、滑块、旋转对齐、文字与图形点选，按风险自适应出题；业务服务器签名核验，结果可解释。</p>
+    <ul class="features">
+      <li><span class="fi">◎</span><span><b>按风险分层</b>正常用户无感通过，可疑流量逐级加难。</span></li>
+      <li><span class="fi">⟳</span><span><b>多题型随机</b>五种验证方式混合出题，攻击者无法只针对一种优化。</span></li>
+      <li><span class="fi">⌘</span><span><b>数据与审计</b>实时事件、统计报表，每一次配置变更都有记录。</span></li>
+    </ul>
+  </div>
+  <div class="foot">BotGuard 管理后台 · 仅限授权人员访问</div>
+</aside>
+<main class="form-side">
+  <form class="panel" method="post" action="/login" autocomplete="on">
+    <h2>登录管理后台</h2>
+    <div class="sub">请使用管理员账号登录</div>
+    {{with .Data}}
+    {{if .Error}}<div class="err" role="alert">{{.Error}}</div>{{end}}
+    <input type="hidden" name="next" value="{{.Next}}">
+    <div class="form-row"><label for="u">用户名</label>
+      <input class="input" id="u" name="username" value="{{.Username}}" autocomplete="username" required maxlength="32" {{if not .NeedOTP}}autofocus{{end}}></div>
+    <div class="form-row"><label for="p">密码</label>
+      <input class="input" id="p" type="password" name="password" autocomplete="current-password" required maxlength="128"></div>
+    {{if .NeedOTP}}
+    <div class="form-row"><label for="otp">动态码</label>
+      <input class="input mono" id="otp" name="otp" inputmode="numeric" pattern="[0-9 ]{6,7}" autocomplete="one-time-code" placeholder="身份验证器中的 6 位数字" required autofocus>
+      <div class="help">请重新输入密码和动态码</div></div>
+    {{end}}
+    {{end}}
+    <button class="btn primary" type="submit">登录</button>
+    <div class="note">连续失败 10 次后会锁定 15 分钟。忘记密码请联系超级管理员重置，或在服务器上执行 <code>botguard-ctl admin reset-password</code>。</div>
+  </form>
+</main>
+<script src="{{asset "/static/admin/js/console.js"}}" nonce="{{.Nonce}}"></script>
+</body></html>

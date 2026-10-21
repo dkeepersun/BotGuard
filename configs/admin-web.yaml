@@ -1,9 +1,35 @@
-Name: botguard-admin-preview
+Name: botguard-admin
+# Keep the console on a private network or behind a VPN; see docs/admin.md.
 Host: 127.0.0.1
 Port: 8091
-Mode: dev
-Timeout: 3000
-MaxBytes: 65536
+Mode: pro
+Timeout: 5000
 Middlewares:
   Log: false
   Trace: false
+
+Redis:
+  Host: 127.0.0.1:6379
+  Type: node
+  DisableIdentity: false
+
+MySQL:
+  DataSource: ${BOTGUARD_MYSQL_DSN}
+
+# Same value as the gateway: seals new secret pairs and TOTP secrets.
+SecretKEK: ${BOTGUARD_SECRET_KEK}
+SecretKEKPrevious: ["${BOTGUARD_SECRET_KEK_PREVIOUS}"]
+
+# Gateway URL for browsers and SDKs (shown in integration snippets), and the
+# URL the console uses to check the gateway's /readyz.
+PublicEndpoint: ${BOTGUARD_PUBLIC_ENDPOINT}
+GatewayURL: ${BOTGUARD_GATEWAY_URL}
+
+# Session cookies are HTTPS-only by default. Plain-HTTP use is allowed only
+# on a loopback Host (or with BOTGUARD_ADMIN_INSECURE_COOKIE=1).
+CookieSecure: false
+Session:
+  IdleMinutes: 30
+  AbsoluteHours: 8
+
+TrustedProxies: []

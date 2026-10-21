@@ -1,0 +1,10 @@
+{{define "head"}}<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}} · BotGuard</title><link rel="icon" href="/static/admin/logo.svg">
+<link rel="stylesheet" href="{{asset "/static/admin/css/console.css"}}"></head>
+<body>{{with .Flash}}<div class="toast {{.Kind}}" role="status"><span class="t-icon">{{if eq .Kind "ok"}}✓{{else}}!{{end}}</span>{{.Text}}</div>{{end}}
+{{end}}
+
+{{define "foot"}}<script src="{{asset "/static/admin/js/console.js"}}" nonce="{{.Nonce}}"></script></body></html>{{end}}
+
+{{define "csrf"}}<input type="hidden" name="_csrf" value="{{.}}">{{end}}

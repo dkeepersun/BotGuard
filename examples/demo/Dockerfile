@@ -11,7 +11,8 @@ COPY cmd ./cmd
 COPY internal ./internal
 RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache/go-build \
     go build -trimpath -o /out/gateway ./cmd/gateway && \
-    go build -trimpath -o /out/botguard-ctl ./cmd/botguard-ctl
+    go build -trimpath -o /out/botguard-ctl ./cmd/botguard-ctl && \
+    go build -trimpath -o /out/admin-web ./cmd/admin-web
 
 # The gateway is a static binary; nothing else is needed at runtime.
 FROM scratch AS gateway
@@ -19,6 +20,13 @@ COPY --from=build /out/gateway /gateway
 COPY examples/demo/gateway.yaml /gateway.yaml
 EXPOSE 8090
 ENTRYPOINT ["/gateway", "-f", "/gateway.yaml"]
+
+# The admin console, also a static binary.
+FROM scratch AS admin
+COPY --from=build /out/admin-web /admin-web
+COPY examples/demo/admin.yaml /admin.yaml
+EXPOSE 8091
+ENTRYPOINT ["/admin-web", "-f", "/admin.yaml"]
 
 # The PHP demo site; also runs the one-off seed job with botguard-ctl.
 FROM php:8.3-cli-alpine AS php

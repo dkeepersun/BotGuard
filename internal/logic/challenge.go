@@ -5,6 +5,7 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
+	"math"
 	"math/rand/v2"
 	"net/netip"
 	"runtime"
@@ -20,6 +21,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
 	"github.com/dkeepersun/BotGuard/internal/service/risk"
+	"github.com/dkeepersun/BotGuard/internal/service/rotate"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
 	"github.com/zeromicro/go-zero/core/logx"
 )
@@ -55,6 +57,17 @@ type SliderRender struct {
 	PieceSize  int    `json:"piece_size"`
 }
 
+type RotateRender struct {
+	Width      int    `json:"width"`
+	Height     int    `json:"height"`
+	Background string `json:"background"`
+	Disc       string `json:"disc"`
+	CX         int    `json:"cx"`
+	CY         int    `json:"cy"`
+	Radius     int    `json:"radius"`
+	Track      int    `json:"track"`
+}
+
 type ClickRender struct {
 	Width   int    `json:"width"`
 	Height  int    `json:"height"`
@@ -72,6 +85,7 @@ type IssueOutput struct {
 	ExpiresAt   int64         `json:"expires_at"`
 	Slider      *SliderRender `json:"slider,omitempty"`
 	Click       *ClickRender  `json:"click,omitempty"`
+	Rotate      *RotateRender `json:"rotate,omitempty"`
 }
 
 // chooseKind applies the action policy to the risk level. Interactive mode
@@ -143,6 +157,22 @@ func (g *Gateway) newClickPuzzle(kind string) (click.Puzzle, error) {
 	return clickshape.Generate(r)
 }
 
+func (g *Gateway) newRotate() (rotate.Puzzle, error) {
+	release, ok := g.reserveSlot()
+	if !ok {
+		return rotate.Puzzle{}, errors.New("rotate generation saturated")
+	}
+	defer release()
+	if g.Rotates != nil {
+		return g.Rotates()
+	}
+	r, err := cryptoRand()
+	if err != nil {
+		return rotate.Puzzle{}, err
+	}
+	return rotate.Generate(r)
+}
+
 func (g *Gateway) newPuzzle() (slider.Puzzle, error) {
 	release, ok := g.reserveSlot()
 	if !ok {
@@ -164,6 +194,22 @@ func (g *Gateway) newPuzzle() (slider.Puzzle, error) {
 // origin is known to be allowed for the app, so the handler can attach CORS
 // headers even to later errors.
 func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, allowedOrigin string, err error) {
+	var st struct {
+		appID       int64
+		kind, level string
+		reasons     []string
+	}
+	defer func() {
+		if st.appID == 0 {
+			return
+		}
+		if err != nil {
+			g.record(ctx, st.appID, []string{"issue_fail", "issue_fail:" + errCode(err)}, nil)
+			return
+		}
+		fields := append([]string{"issue", "issue:" + st.kind, "risk:" + st.level}, reasonFields("reason:", st.reasons)...)
+		g.record(ctx, st.appID, fields, nil)
+	}()
 	origin, ok := domain.NormalizeOrigin(in.Origin)
 	if !ok {
 		return nil, "", errx.ErrOriginNotAllowed
@@ -189,6 +235,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	if err != nil {
 		return nil, "", err
 	}
+	st.appID = app.ID
 	if !app.AllowsOrigin(origin) {
 		return nil, "", errx.ErrOriginNotAllowed
 	}
@@ -215,6 +262,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	})
 	level := risk.Level(assessment.Score, g.Settings.RiskMedium, g.Settings.RiskHigh)
 	kind, factor := g.chooseKind(policy, level, in.Fallback, rand.IntN)
+	st.kind, st.level, st.reasons = kind, level, assessment.Reasons
 
 	difficulty := min(policy.Difficulty*factor, g.Settings.MaxDifficulty)
 	params, err := pow.NewParams(policy.Puzzles, difficulty)
@@ -237,6 +285,17 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		state.X = puzzle.X
 		render = &SliderRender{Width: slider.Width, Height: slider.Height, Background: puzzle.Background,
 			Piece: puzzle.Piece, PieceY: puzzle.Y, PieceSize: slider.PieceSize}
+	}
+	var rotateRender *RotateRender
+	if kind == domain.KindRotate {
+		puzzle, err := g.newRotate()
+		if err != nil {
+			logx.WithContext(ctx).Errorf("rotate: %v", err)
+			return nil, origin, errx.ErrUnavailable
+		}
+		state.X = int(math.Round(puzzle.AnswerX()))
+		rotateRender = &RotateRender{Width: rotate.Width, Height: rotate.Height, Background: puzzle.Background,
+			Disc: puzzle.Disc, CX: puzzle.CX, CY: puzzle.CY, Radius: puzzle.Radius, Track: rotate.Track}
 	}
 	var clickRender *ClickRender
 	if kind == domain.KindClickText || kind == domain.KindClickShape {
@@ -272,7 +331,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		return nil, origin, errx.ErrUnavailable
 	}
 	return &IssueOutput{Kind: kind, Challenge: signed, ChallengeID: id, Algorithm: p.Algorithm, Params: params,
-		ExpiresAt: p.ExpiresAt, Slider: render, Click: clickRender}, origin, nil
+		ExpiresAt: p.ExpiresAt, Slider: render, Click: clickRender, Rotate: rotateRender}, origin, nil
 }
 
 // SliderAnswer carries the interactive answer. For the slider: the final
@@ -316,6 +375,26 @@ func (g *Gateway) fail(ctx context.Context, ipBucket string, e *errx.Error) erro
 // is marked used before any proof is checked, so each challenge gets exactly
 // one attempt.
 func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, allowedOrigin string, err error) {
+	var st struct {
+		appID                 int64
+		action, kind, pointer string
+		level                 string
+	}
+	defer func() {
+		if st.appID == 0 {
+			return
+		}
+		ev := &repository.Event{Type: repository.EventSolve, Action: st.action, Kind: st.kind, Level: st.level,
+			Pointer: st.pointer, IP: g.ipTag(in.ClientIP), Result: "pass"}
+		fields := []string{"solve"}
+		if err != nil {
+			ev.Result = errCode(err)
+			fields = append(fields, "solve_fail", "solve_fail:"+ev.Result, "solve_fail_kind:"+st.kind)
+		} else {
+			fields = append(fields, "solve_ok", "solve_ok:"+st.kind)
+		}
+		g.record(ctx, st.appID, fields, ev)
+	}()
 	if !domain.ValidAppKey(in.AppKey) || in.Challenge == "" {
 		return nil, "", errx.InvalidRequest("app_key 或 challenge 格式错误")
 	}
@@ -339,6 +418,8 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if err != nil {
 		return nil, "", err
 	}
+	st.appID, st.action, st.kind = app.ID, p.Action, p.Kind
+	st.level = risk.Level(state.Score, g.Settings.RiskMedium, g.Settings.RiskHigh)
 	origin, ok := domain.NormalizeOrigin(in.Origin)
 	if !ok || !app.AllowsOrigin(origin) {
 		return nil, "", errx.ErrOriginNotAllowed
@@ -374,9 +455,9 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if isClick && (in.Answer == nil || len(in.Answer.Clicks) > click.MaxClicks || len(in.Answer.MovesBetween) > click.MaxClicks) {
 		return nil, origin, errx.InvalidRequest("点选题需要 answer.clicks，且不超过 8 次点击")
 	}
-	if p.Kind == domain.KindSlider {
+	if domain.DragKind(p.Kind) {
 		if in.Answer == nil || len(in.Answer.Trajectory) > slider.MaxPoints {
-			return nil, origin, errx.InvalidRequest("滑块题需要 answer，且轨迹不超过 400 个点")
+			return nil, origin, errx.InvalidRequest("拖动题需要 answer，且轨迹不超过 400 个点")
 		}
 		for _, t := range in.Answer.Trajectory {
 			points = append(points, slider.Point{T: t[0], X: t[1], Y: t[2]})
@@ -403,8 +484,16 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if in.Signals != nil {
 		input = risk.NormalizePointer(in.Signals.PointerType)
 	}
-	if p.Kind == domain.KindSlider {
-		if reason := slider.Check(float64(state.X), in.Answer.X, g.Settings.SliderTolerance, points, input); reason != "" {
+	if domain.DragKind(p.Kind) || isClick {
+		st.pointer = input
+	}
+	if domain.DragKind(p.Kind) {
+		// Rotate reuses the slider drag: the drag distance maps to the angle.
+		tolerance := g.Settings.SliderTolerance
+		if p.Kind == domain.KindRotate {
+			tolerance = rotate.ToleranceX(float64(g.Settings.RotateToleranceDegrees))
+		}
+		if reason := slider.Check(float64(state.X), in.Answer.X, tolerance, points, input); reason != "" {
 			// One public code for every failure; the specific reason stays in our logs.
 			logx.WithContext(ctx).Infof("slider rejected: %s (app %d, %s)", reason, app.ID, input)
 			return nil, origin, g.fail(ctx, ipBucket, errx.ErrAnswerInvalid)
@@ -428,8 +517,8 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if in.Signals != nil && in.Signals.UntrustedEvent {
 		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonUntrustedEvent], Reasons: []string{risk.ReasonUntrustedEvent}})
 	}
-	interactive := p.Kind == domain.KindSlider || isClick
-	if p.Kind == domain.KindSlider && input == risk.PointerKeyboard {
+	interactive := domain.DragKind(p.Kind) || isClick
+	if domain.DragKind(p.Kind) && input == risk.PointerKeyboard {
 		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonKeyboardInput], Reasons: []string{risk.ReasonKeyboardInput}})
 	}
 	if interactive && input == risk.PointerTouch {
@@ -441,6 +530,7 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		return nil, origin, errx.ErrUnavailable
 	}
 	exp := now.Add(g.Settings.TokenTTL).Unix()
+	st.level = risk.Level(final.Score, g.Settings.RiskMedium, g.Settings.RiskHigh)
 	// Keep the record past expiry so verify can say EXPIRED/CONSUMED, not INVALID.
 	keyTTL := g.Settings.TokenTTL + g.Settings.ResultTTL
 	rec := repository.TokenRecord{Action: p.Action, Origin: p.Origin, ExpiresAt: exp, Kind: p.Kind,

@@ -54,3 +54,7 @@ Risk:
 
 Slider:
   Tolerance: 4
+
+# Rotate puzzles: allowed angle error (docs/rotate-challenge.md).
+Rotate:
+  ToleranceDegrees: 7

@@ -13,10 +13,14 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/click"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
 	"github.com/dkeepersun/BotGuard/internal/service/risk"
+	"github.com/dkeepersun/BotGuard/internal/service/rotate"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
 )
 
 const answerX = 150
+
+// rotateAngle turns into a drag of 150 px on the 280 px track (192.857°).
+const rotateAngle = answerX * 360.0 / rotate.Track
 
 func clean() *risk.Signals {
 	return &risk.Signals{MsToClick: 2000, PointerMovesBeforeClick: 30, PointerType: "mouse"}
@@ -40,6 +44,9 @@ var clickTargets = []click.Target{{X: 60, Y: 50, R: 20}, {X: 220, Y: 80, R: 18},
 func withPuzzle(h *harness) {
 	h.g.Puzzles = func() (slider.Puzzle, error) {
 		return slider.Puzzle{Background: "data:image/jpeg;base64,AA==", Piece: "data:image/png;base64,AA==", X: answerX, Y: 40}, nil
+	}
+	h.g.Rotates = func() (rotate.Puzzle, error) {
+		return rotate.Puzzle{Background: "data:image/jpeg;base64,AA==", Disc: "data:image/png;base64,AA==", CX: 160, CY: 100, Radius: 68, Angle: rotateAngle}, nil
 	}
 	h.g.Clicks = func(kind string) (click.Puzzle, error) {
 		return click.Puzzle{Image: "data:image/jpeg;base64,AA==", Prompt: "请依次点击：" + kind, Width: 320, Height: 200, Targets: clickTargets}, nil
@@ -214,7 +221,7 @@ func TestChooseKind(t *testing.T) {
 		kind, _ := g.chooseKind(all, risk.LevelLow, false, func(int) int { return i })
 		seen[kind] = true
 	}
-	if len(seen) != 3 {
+	if len(seen) != len(domain.InteractiveKinds) {
 		t.Fatalf("interactive must be able to pick every kind: %v", seen)
 	}
 	adaptive := all
@@ -277,5 +284,49 @@ func TestClickSolve(t *testing.T) {
 	c = h.issueFor(t, "clicks", touch, false)
 	if _, err := h.solveWith(c, teleport, touch); err != nil {
 		t.Fatalf("touch taps: %v", err)
+	}
+}
+
+func TestRotateSolve(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+	c := h.issueFor(t, "turn", clean(), false)
+	if c.Kind != domain.KindRotate || c.Rotate == nil || c.Rotate.Track != rotate.Track || c.Slider != nil || c.Click != nil {
+		t.Fatalf("issue: %+v", c)
+	}
+	body, _ := base64.RawURLEncoding.DecodeString(strings.Split(c.Challenge, ".")[2])
+	if strings.Contains(string(body), "192") || strings.Contains(string(body), `"x"`) {
+		t.Fatalf("answer visible: %s", body)
+	}
+	// 10° off is outside the 7° tolerance.
+	off := answerX + 10.0/360*rotate.Track
+	if _, err := h.solveWith(c, &SliderAnswer{X: off, Trajectory: humanDrag(off)}, clean()); code(err) != "ANSWER_INVALID" {
+		t.Fatalf("10° off: %v", err)
+	}
+	c = h.issueFor(t, "turn", clean(), false)
+	near := answerX + 4.0/360*rotate.Track
+	out, err := h.solveWith(c, &SliderAnswer{X: near, Trajectory: humanDrag(near)}, clean())
+	if err != nil {
+		t.Fatalf("4° off: %v", err)
+	}
+	v, err := h.verify(out.Token, "turn", "r-rotate")
+	if err != nil || !v.Success || v.ChallengeKind != domain.KindRotate {
+		t.Fatalf("verify: %+v %v", v, err)
+	}
+	// Arrow keys work too, and are flagged like the keyboard slider.
+	c = h.issueFor(t, "turn", clean(), false)
+	var keys [][3]float64
+	for i := 0; i <= 75; i++ {
+		keys = append(keys, [3]float64{float64(i) * 60, float64(min(i*2, answerX)), 0})
+	}
+	s := clean()
+	s.PointerType = "keyboard"
+	out, err = h.solveWith(c, &SliderAnswer{X: answerX, Trajectory: keys}, s)
+	if err != nil {
+		t.Fatalf("keyboard: %v", err)
+	}
+	v, _ = h.verify(out.Token, "turn", "r-rotate-keys")
+	if !slices.Contains(v.RiskReasons, risk.ReasonKeyboardInput) {
+		t.Fatalf("%+v", v)
 	}
 }

@@ -42,7 +42,7 @@
 |---|---|---|
 | low | invisible | action 配置值 |
 | medium | 从 action 的题型列表随机抽一种（第一期只有 slider） | action 配置值 |
-| high | 列表中最难的题型（click_shape > click_text > slider） | action 配置值 × 4（选 fallback 时再 × 8） |
+| high | 列表中最难的题型（click_shape > click_text > rotate > slider） | action 配置值 × 4（选 fallback 时再 × 8） |
 
 **第一期不做“直接拒绝”**（已确认）。误判会把真实用户挡在门外，而高风险用户仍需解出更难的题。等有真实流量数据后再评估是否加入按 action 开启的硬拒绝。
 

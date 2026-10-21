@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -133,5 +134,45 @@ func TestVerifyAuthFailuresAreLimitedPerIP(t *testing.T) {
 	old := signed(keyA, secretA, h.clock.Add(-time.Hour), appA, "t", "login", "r-old")
 	if _, err := h.g.Verify(context.Background(), old); code(err) != "TIMESTAMP_EXPIRED" {
 		t.Fatalf("old timestamp: %v", err)
+	}
+}
+
+// The console counts every stage and lists solve and verify events, with
+// the IP only as a salted tag.
+func TestConsoleStatistics(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+	token := h.token(t)
+	if v, err := h.verify(token, "login", "r-stat"); err != nil || !v.Success {
+		t.Fatal(v, err)
+	}
+	if v, _ := h.verify(token, "login", "r-stat-2"); v.Success {
+		t.Fatal("consumed token passed")
+	}
+	c := h.issueFor(t, "slide", clean(), false)
+	if _, err := h.solveWith(c, &SliderAnswer{X: 10, Trajectory: humanDrag(10)}, clean()); code(err) != "ANSWER_INVALID" {
+		t.Fatal(err)
+	}
+	hours, err := h.g.Stats.Hours(context.Background(), 1, h.clock, h.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := hours[0].Counts
+	for field, want := range map[string]int64{
+		"issue": 2, "issue:invisible": 1, "issue:slider": 1, "risk:low": 1, "risk:medium": 1, "reason:NO_SIGNALS": 1,
+		"solve_ok:invisible": 1, "solve_fail:ANSWER_INVALID": 1, "solve_fail_kind:slider": 1,
+		"verify_pass": 1, "verify_pass:invisible": 1, "verify_reject:TOKEN_CONSUMED": 1,
+	} {
+		if got[field] != want {
+			t.Errorf("%s = %d, want %d (%v)", field, got[field], want, got)
+		}
+	}
+	evs, _ := h.g.Stats.Events(context.Background(), 1, 10)
+	if len(evs) != 4 || evs[0].Type != "solve" || evs[0].Result != "ANSWER_INVALID" || evs[0].Pointer != "mouse" ||
+		evs[1].Result != "TOKEN_CONSUMED" || evs[2].Result != "pass" || evs[2].RequestID != "r-stat" {
+		t.Fatalf("%+v", evs)
+	}
+	if evs[0].IP == "" || len(evs[0].IP) != 12 || strings.Contains(evs[0].IP, "192.0.2") {
+		t.Fatalf("ip tag %q", evs[0].IP)
 	}
 }

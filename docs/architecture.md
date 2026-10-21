@@ -25,7 +25,7 @@
 
 不继承参考项目的业务逻辑、业务 JS、密钥或数据，只保留 PearAdmin 静态资源与布局约定。代码注释英文，界面与错误文案中文。配置不放真实密钥；日志不记录密钥、原始 token、完整请求体。客户端 IP 只信任显式配置的代理。
 
-本次只实现壳层和健康检查。page/data/action 安全包装、Redis 会话和权限菜单是 P1 验收项，不能从“参考 PearAdmin”推断已具备。
+已实现（见 `docs/admin.md`）：page/action 安全包装（会话、同源、CSRF、路由权限）、Redis 会话、按角色过滤的菜单、审计与变更同事务。
 
 ## 3. 部署和模块
 
@@ -42,7 +42,7 @@
 
 - `gateway`：公开 challenge/solve；带服务端密钥的 verify。两类接口分开限流和日志策略。
 - `admin-web`：独立端口，建议内网/VPN 访问；管理员认证、应用、域名、密钥、规则、事件、权限与审计。
-- `botguard-ctl`（已建立）：迁移（带 checksum 与 MySQL `GET_LOCK` 互斥）、应用/来源/action 配置、密钥对（secret_id + secret_key）生成/轮换/吊销。创建首个管理员待管理后台切片加入；不提供公共管理员注册。命令行变更目前不写审计，`sys_audit_log` 建好后补上。
+- `botguard-ctl`（已建立）：迁移（带 checksum 与 MySQL `GET_LOCK` 互斥）、应用/来源/action 配置、密钥对（secret_id + secret_key）生成/轮换/吊销。`admin create` 创建首个管理员、`admin reset-password` 找回密码；不提供公共管理员注册。命令行变更以 `cli:<系统用户名>` 写入审计。
 - `worker`（P2，确有必要才加）：规则缓存失效重试、过期事件清理、按分钟聚合。同一 Go module，可独立进程；MySQL outbox + Redis 足够。
 - `logic` 负责用例与事务，`service` 包含风险决策、PoW、凭证、会话等能力；`repository` 屏蔽 Redis/MySQL；`model` 放生成模型和扩展查询。
 - MVP 单区域 Redis 是验证状态权威源；服务多副本不存进程内消费状态。Redis 故障默认不放行。MySQL 配置缓存必须有最大陈旧时间；撤销密钥/应用要有生效 SLA。
@@ -54,7 +54,7 @@ BotGuard/
 ├── go.mod / go.sum                 # 服务主 module，已建立
 ├── cmd/
 │   ├── gateway/main.go             # 已建立：challenge / solve / verify / 探针
-│   ├── admin-web/main.go           # 已建立，只读本地预览
+│   ├── admin-web/main.go           # 管理后台（docs/admin.md）
 │   ├── botguard-ctl/               # 已建立，运维命令行
 │   └── worker/                     # P2 按需
 ├── configs/                       # 已建立，无真实凭据
@@ -82,13 +82,13 @@ BotGuard/
 
 ## 5. MySQL 数据模型草案
 
-默认 `utf8mb4`；ID 使用 bigint，外部 app_key 使用不可枚举的随机字符串；时间统一 UTC（连接设置 `time_zone='+00:00'`）。`bg_app`、`bg_app_origin`、`bg_app_action`、`bg_app_secret` 由 `internal/migration/sql/0001`、`0002` 建立（0002 把 0001 的 site 表改名为 app，并把 Bearer 密钥表改造为密钥对表），但尚无迁移执行器；其余表随管理后台切片加入。
+默认 `utf8mb4`；ID 使用 bigint，外部 app_key 使用不可枚举的随机字符串；时间统一 UTC（连接设置 `time_zone='+00:00'`）。`bg_app`、`bg_app_origin`、`bg_app_action`、`bg_app_secret` 由 `internal/migration/sql/0001`、`0002` 建立（0002 把 0001 的 site 表改名为 app，并把 Bearer 密钥表改造为密钥对表），迁移执行器见 `internal/migration`；`sys_admin`、`sys_audit_log` 由 0005 建立，其余表（策略版本、名单、事件持久化）尚未建立。
 
 | 表 | 主要字段与约束 |
 |---|---|
 | `bg_app` | id、app_key UNIQUE（对应易盾 captchaId，公开）、name、status、active_policy_version、timestamps |
 | `bg_app_origin` | id、app_id、origin；UNIQUE(app_id, origin)；精确 scheme+host+port，不允许含糊后缀匹配 |
-| `bg_app_action` | app_id、action、enabled、challenge_mode（invisible / interactive / adaptive）、challenge_kinds（slider、click_text、click_shape 的逗号列表；0003、0004 加入）、pow_puzzles、pow_difficulty（每题期望尝试次数）；UNIQUE(app_id, action) |
+| `bg_app_action` | app_id、action、enabled、challenge_mode（invisible / interactive / adaptive）、challenge_kinds（slider、rotate、click_text、click_shape 的逗号列表；0003、0004 加入）、pow_puzzles、pow_difficulty（每题期望尝试次数）；UNIQUE(app_id, action) |
 | `bg_app_secret` | id、app_id、secret_id UNIQUE、secret_ciphertext（AES-256-GCM，附加数据为 secret_id）、kek_id、status、expires_at、rotated_from；secret_key 仅创建时展示一次 |
 | `bg_policy_version` | id、app_id、version、schema_version、rules_json、status、created_by；UNIQUE(app_id, version) |
 | `bg_list_entry` | id、app_id、kind、value_hash 或 CIDR、action、expires_at；固定类型，禁止任意脚本规则 |

@@ -3,6 +3,7 @@ package svc
 
 import (
 	"context"
+	"crypto/sha256"
 	"sync/atomic"
 	"time"
 
@@ -61,6 +62,7 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 		Logic: &logic.Gateway{
 			Apps:    apps,
 			State:   repository.NewState(rds),
+			Stats:   repository.NewStats(rds),
 			Limiter: repository.NewRateLimiter(rds),
 			Keys:    keys,
 			Settings: logic.Settings{
@@ -82,6 +84,8 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 				FallbackDifficultyFactor: uint64(c.Risk.FallbackDifficultyFactor),
 				FailureWindow:            config.Seconds(c.Risk.FailureWindowSeconds),
 				SliderTolerance:          c.Slider.Tolerance,
+				RotateToleranceDegrees:   c.Rotate.ToleranceDegrees,
+				IPHashKey:                ipHashKey(c),
 			},
 			Now: time.Now,
 		},
@@ -90,6 +94,19 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 		db:     db,
 		schema: schema,
 	}, nil
+}
+
+// ipHashKey salts the IP tags in console events. It is derived from the
+// active challenge key, so it is secret, shared by all replicas, and rotates
+// with that key.
+func ipHashKey(c config.GatewayConfig) []byte {
+	for _, k := range c.Challenge.Keys {
+		if k.Active {
+			sum := sha256.Sum256([]byte("botguard ip tag v1\x00" + k.Secret))
+			return sum[:]
+		}
+	}
+	return nil
 }
 
 // Ready reports whether both stores answer and the schema is migrated. The

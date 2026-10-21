@@ -1,0 +1,41 @@
+{{template "head" .}}{{$d := .Data}}
+<div class="wrap">
+  <div class="page-head">
+    <div><h1>统计报表</h1><div class="sub">签发、提交与核验的全链路统计；数据为近似值，不用于计费</div></div>
+    <form class="tools form-inline" method="get" action="/stats">
+      <select class="input sm" name="app"><option value="">全部应用</option>{{range $d.Apps}}<option value="{{.AppKey}}" {{if eq $d.App .AppKey}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+      <select class="input sm" name="range"><option value="24h" {{if eq $d.Range "24h"}}selected{{end}}>近 24 小时</option><option value="7d" {{if eq $d.Range "7d"}}selected{{end}}>近 7 天</option><option value="30d" {{if eq $d.Range "30d"}}selected{{end}}>近 30 天</option></select>
+      <button class="btn sm">查询</button>
+    </form>
+  </div>
+  <div class="grid g-4">
+    <div class="card stat"><div class="label">签发</div><div class="value">{{num ($d.Counts.Get "issue")}}</div><div class="foot">被拒 {{num ($d.Counts.Get "issue_fail")}}</div></div>
+    <div class="card stat"><div class="label">提交通过率</div><div class="value">{{$d.Counts.PassRate}}</div><div class="foot">通过 {{num ($d.Counts.Get "solve_ok")}} / 未通过 {{num ($d.Counts.Get "solve_fail")}}</div></div>
+    <div class="card stat"><div class="label">核验通过率</div><div class="value">{{$d.Counts.Rate "verify_pass" "verify"}}</div><div class="foot">通过 {{num ($d.Counts.Get "verify_pass")}} / 拒绝 {{num ($d.Counts.Get "verify_reject")}}</div></div>
+    <div class="card stat"><div class="label">高风险占比</div><div class="value">{{$d.Counts.Rate "risk:high" "issue"}}</div><div class="foot">中风险 {{$d.Counts.Rate "risk:medium" "issue"}}</div></div>
+  </div>
+  <div class="card mt"><div class="card-head"><h2>趋势</h2><span class="hint">{{if eq $d.Range "24h"}}按小时{{else}}按天{{end}}</span></div><div class="card-body">
+    <div class="chart" data-chart="line" data-src="trend" data-height="280" data-series="issue:签发:#2563eb,solve_ok:提交通过:#16a34a,solve_fail:提交未通过:#dc2626,verify_pass:核验通过:#7c3aed,verify_reject:核验拒绝:#f59e0b"></div></div></div>
+  <div class="grid g-3 mt">
+    <div class="card"><div class="card-head"><h2>签发题型</h2></div><div class="card-body"><div class="donut" data-chart="donut" data-src="kinds" data-unit="次签发"></div></div></div>
+    <div class="card"><div class="card-head"><h2>风险等级</h2></div><div class="card-body"><div class="donut" data-chart="donut" data-src="risk" data-unit="次评估"></div></div></div>
+    <div class="card"><div class="card-head"><h2>各题型通过 / 未通过</h2></div><div class="card-body">
+      <table class="table"><thead><tr><th>题型</th><th class="num">通过</th><th class="num">未通过</th></tr></thead><tbody>
+      {{range $d.Passed}}<tr><td>{{.Label}}</td><td class="num">{{num .Count}}</td><td class="num">{{num ($d.Counts.Get (printf "solve_fail_kind:%s" .Code))}}</td></tr>{{else}}<tr><td colspan="3" class="muted">暂无数据</td></tr>{{end}}
+      </tbody></table></div></div>
+  </div>
+  <div class="grid g-3 mt">
+    <div class="card"><div class="card-head"><h2>风险原因</h2></div><div class="card-body">{{if $d.Reasons}}<ul class="bars amber">{{range $d.Reasons}}<li><span class="name">{{.Label}} <span class="mono cell-sub">{{.Code}}</span></span><span class="val">{{num .Count}}</span><span class="track"><i style="width:{{printf "%.1f" .Bar}}%"></i></span></li>{{end}}</ul>{{else}}<div class="empty">暂无</div>{{end}}</div></div>
+    <div class="card"><div class="card-head"><h2>提交未通过原因</h2></div><div class="card-body">{{if $d.Failures}}<ul class="bars red">{{range $d.Failures}}<li><span class="name">{{.Label}}</span><span class="val">{{num .Count}}</span><span class="track"><i style="width:{{printf "%.1f" .Bar}}%"></i></span></li>{{end}}</ul>{{else}}<div class="empty">暂无</div>{{end}}</div></div>
+    <div class="card"><div class="card-head"><h2>核验拒绝原因</h2></div><div class="card-body">{{if $d.Rejects}}<ul class="bars red">{{range $d.Rejects}}<li><span class="name">{{.Label}}</span><span class="val">{{num .Count}}</span><span class="track"><i style="width:{{printf "%.1f" .Bar}}%"></i></span></li>{{end}}</ul>{{else}}<div class="empty">暂无</div>{{end}}</div></div>
+  </div>
+  {{if not $d.App}}<div class="card mt"><div class="card-head"><h2>按应用</h2></div><div class="card-body flush table-wrap"><table class="table">
+    <thead><tr><th>应用</th><th class="num">签发</th><th class="num">提交通过率</th><th class="num">拦截</th><th class="num">核验通过</th><th class="num">核验拒绝</th><th class="num">高风险</th></tr></thead><tbody>
+    {{range $d.Ranking}}<tr><td><a href="/stats?app={{.App.AppKey}}&range={{$d.Range}}">{{.App.Name}}</a></td><td class="num">{{num (.Counts.Get "issue")}}</td><td class="num">{{.Counts.PassRate}}</td>
+      <td class="num">{{num .Counts.Blocked}}</td><td class="num">{{num (.Counts.Get "verify_pass")}}</td><td class="num">{{num (.Counts.Get "verify_reject")}}</td><td class="num">{{num (.Counts.Get "risk:high")}}</td></tr>
+    {{else}}<tr><td colspan="7"><div class="empty">暂无应用</div></td></tr>{{end}}</tbody></table></div></div>{{end}}
+</div>
+<script type="application/json" id="trend">{{json $d.Trend}}</script>
+<script type="application/json" id="kinds">{{json $d.Kinds}}</script>
+<script type="application/json" id="risk">{{json $d.Risk}}</script>
+{{template "foot" .}}

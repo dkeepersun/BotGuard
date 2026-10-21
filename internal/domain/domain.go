@@ -38,6 +38,7 @@ const (
 
 	KindInvisible  = "invisible"
 	KindSlider     = "slider"
+	KindRotate     = "rotate"
 	KindClickText  = "click_text"
 	KindClickShape = "click_shape"
 	KindFallback   = "fallback"
@@ -47,7 +48,10 @@ func ValidMode(m string) bool { return m == ModeInvisible || m == ModeInteractiv
 
 // InteractiveKinds lists the kinds an action may offer, easiest first: the
 // order is the hardness ranking adaptive mode uses at high risk.
-var InteractiveKinds = []string{KindSlider, KindClickText, KindClickShape}
+var InteractiveKinds = []string{KindSlider, KindRotate, KindClickText, KindClickShape}
+
+// DragKinds are answered with a drag (end position plus trajectory).
+func DragKind(k string) bool { return k == KindSlider || k == KindRotate }
 
 func ValidInteractiveKind(k string) bool {
 	for _, v := range InteractiveKinds {

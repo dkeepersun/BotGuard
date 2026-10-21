@@ -1,0 +1,66 @@
+{{template "head" .}}{{$d := .Data}}
+<div class="wrap">
+  <div class="page-head">
+    <div><h1>控制台</h1><div class="sub">近 24 小时的验证概况 · 共 {{$d.Apps}} 个应用，{{$d.Enabled}} 个启用</div></div>
+    <div class="tools">
+      {{if can .Me "apps.manage"}}<a class="btn primary" href="/apps" data-tab-open="apps" data-title="应用管理">＋ 接入新应用</a>{{end}}
+      <a class="btn" href="/stats" data-tab-open="stats" data-title="统计报表">查看报表</a>
+    </div>
+  </div>
+
+  <div class="grid g-4">
+    <div class="card stat"><span class="icon i-blue">◎</span><div class="label">验证签发</div><div class="value">{{num ($d.Day.Get "issue")}}</div>
+      <div class="foot">今日 <b>{{num ($d.Today.Get "issue")}}</b> · 交互题 {{pct (sub64 ($d.Day.Get "issue") ($d.Day.Get "issue:invisible")) ($d.Day.Get "issue")}}</div></div>
+    <div class="card stat"><span class="icon i-green">✓</span><div class="label">验证通过率</div><div class="value">{{$d.Day.PassRate}}</div>
+      <div class="foot">通过 <b>{{num ($d.Day.Get "solve_ok")}}</b> / 提交 {{num ($d.Day.Get "solve")}}</div></div>
+    <div class="card stat"><span class="icon i-red">⛨</span><div class="label">拦截次数</div><div class="value">{{num $d.Day.Blocked}}</div>
+      <div class="foot">答案/证明未通过 <b>{{num ($d.Day.Get "solve_fail")}}</b> · 签发被拒 {{num ($d.Day.Get "issue_fail")}}</div></div>
+    <div class="card stat"><span class="icon i-amber">⌘</span><div class="label">服务端核验</div><div class="value">{{num ($d.Day.Get "verify")}}</div>
+      <div class="foot">通过 <b>{{num ($d.Day.Get "verify_pass")}}</b> · 拒绝 {{num ($d.Day.Get "verify_reject")}} · 调用错误 {{num ($d.Day.Get "verify_error")}}</div></div>
+  </div>
+
+  <div class="grid g-main mt">
+    <div class="card"><div class="card-head"><h2>验证趋势<span class="hint">按小时，点击图例可隐藏曲线</span></h2></div>
+      <div class="card-body"><div class="chart" data-chart="line" data-src="trend" data-height="260"
+        data-series="issue:签发:#2563eb,solve_ok:通过:#16a34a,solve_fail:拦截:#dc2626,verify_pass:核验通过:#7c3aed"></div></div></div>
+    <div class="card"><div class="card-head"><h2>题型分布</h2></div>
+      <div class="card-body"><div class="donut" data-chart="donut" data-src="kinds" data-unit="次签发"></div></div></div>
+  </div>
+
+  <div class="grid g-3 mt">
+    <div class="card"><div class="card-head"><h2>风险等级</h2></div><div class="card-body"><div class="donut" data-chart="donut" data-src="risk" data-unit="次评估"></div></div></div>
+    <div class="card"><div class="card-head"><h2>主要风险原因</h2><span class="hint">命中次数</span></div><div class="card-body">
+      {{if $d.Reasons}}<ul class="bars amber">{{range $d.Reasons}}<li><span class="name">{{.Label}}</span><span class="val">{{num .Count}}</span><span class="track"><i style="width:{{printf "%.1f" .Bar}}%"></i></span></li>{{end}}</ul>
+      {{else}}<div class="empty">暂无风险命中</div>{{end}}</div></div>
+    <div class="card"><div class="card-head"><h2>拦截原因</h2></div><div class="card-body">
+      {{if or $d.Failures $d.Rejects}}<ul class="bars red">{{range $d.Failures}}<li><span class="name">提交 · {{.Label}}</span><span class="val">{{num .Count}}</span><span class="track"><i style="width:{{printf "%.1f" .Bar}}%"></i></span></li>{{end}}
+      {{range $d.Rejects}}<li><span class="name">核验 · {{.Label}}</span><span class="val">{{num .Count}}</span><span class="track"><i style="width:{{printf "%.1f" .Bar}}%"></i></span></li>{{end}}</ul>
+      {{else}}<div class="empty">暂无拦截</div>{{end}}</div></div>
+  </div>
+
+  <div class="grid g-main mt">
+    <div class="card"><div class="card-head"><h2>应用排行</h2><a href="/apps" data-tab-open="apps" data-title="应用管理">全部应用 →</a></div>
+      <div class="card-body flush table-wrap"><table class="table"><thead><tr><th>应用</th><th class="num">签发</th><th class="num">通过率</th><th class="num">拦截</th><th class="num">核验通过</th><th>状态</th></tr></thead><tbody>
+      {{range $d.Ranking}}<tr><td><a class="cell-title" href="/apps/{{.App.AppKey}}" data-tab-open="app-{{.App.AppKey}}" data-title="{{.App.Name}}">{{.App.Name}}</a><div class="cell-sub mono">{{.App.AppKey}}</div></td>
+        <td class="num">{{num (.Counts.Get "issue")}}</td><td class="num">{{.Counts.PassRate}}</td><td class="num">{{num .Counts.Blocked}}</td><td class="num">{{num (.Counts.Get "verify_pass")}}</td>
+        <td>{{if .App.Enabled}}<span class="badge ok">启用</span>{{else}}<span class="badge">停用</span>{{end}}</td></tr>
+      {{else}}<tr><td colspan="6"><div class="empty"><div class="big">▦</div>还没有应用。{{if can $.Me "apps.manage"}}<a href="/apps" data-tab-open="apps" data-title="应用管理">创建第一个应用</a>{{end}}</div></td></tr>{{end}}
+      </tbody></table></div></div>
+    <div class="card"><div class="card-head"><h2>系统状态</h2><a href="/system" data-tab-open="sysinfo" data-title="系统状态">详情 →</a></div><div class="card-body">
+      <ul class="bars">{{range $d.Checks}}<li><span class="name"><span class="dot {{if .OK}}ok{{else}}bad{{end}}"></span>{{.Name}}</span><span class="val {{if .OK}}ok-text{{else}}bad-text{{end}}">{{if .OK}}正常{{else}}异常{{end}}</span></li>{{end}}</ul>
+    </div></div>
+  </div>
+
+  <div class="card mt"><div class="card-head"><h2>最近事件</h2><a href="/events" data-tab-open="events" data-title="实时事件">实时事件 →</a></div>
+    <div class="card-body flush table-wrap"><table class="table"><thead><tr><th>时间</th><th>应用</th><th>阶段</th><th>action</th><th>题型</th><th>结果</th><th>风险</th></tr></thead><tbody>
+    {{range $d.Recent}}<tr><td class="mono nowrap">{{ms .At}}</td><td>{{.AppName}}</td><td>{{if eq .Type "verify"}}<span class="badge plain violet">服务端核验</span>{{else}}<span class="badge plain blue">浏览器提交</span>{{end}}</td>
+      <td class="mono">{{.Action}}</td><td>{{if .Kind}}{{kind .Kind}}{{else}}—{{end}}</td>
+      <td>{{if eq .Result "pass"}}<span class="badge ok">通过</span>{{else}}<span class="badge bad">{{reason .Result}}</span>{{end}}</td>
+      <td>{{if .Level}}{{level .Level}}{{else}}—{{end}}</td></tr>
+    {{else}}<tr><td colspan="7"><div class="empty">暂无事件</div></td></tr>{{end}}
+    </tbody></table></div></div>
+</div>
+<script type="application/json" id="trend">{{json $d.Trend}}</script>
+<script type="application/json" id="kinds">{{json $d.Kinds}}</script>
+<script type="application/json" id="risk">{{json $d.Risk}}</script>
+{{template "foot" .}}

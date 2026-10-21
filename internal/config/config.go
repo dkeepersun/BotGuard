@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"time"
 
@@ -14,15 +15,69 @@ import (
 	"github.com/zeromicro/go-zero/rest"
 )
 
-// AdminConfig is the read-only admin preview. It stays loopback-only until
-// admin authentication exists.
-type AdminConfig struct{ rest.RestConf }
+// AdminConfig configures the admin console (docs/admin.md). Secrets and the
+// DSN come from the environment, never the YAML file.
+type AdminConfig struct {
+	rest.RestConf
+	Redis redis.RedisConf
+	MySQL struct {
+		DataSource string
+	}
+	// SecretKEK seals new secret pairs and TOTP secrets; same value as the
+	// gateway's.
+	SecretKEK         string   `json:",optional"`
+	SecretKEKPrevious []string `json:",optional"`
+	// PublicEndpoint is the gateway URL browsers and SDKs use; it appears in
+	// the integration snippets.
+	PublicEndpoint string `json:",optional"`
+	// GatewayURL is where the console checks the gateway's /readyz.
+	GatewayURL string `json:",optional"`
+	// CookieSecure marks the session cookie HTTPS-only. Turn it off only for
+	// plain-HTTP local use.
+	CookieSecure bool `json:",default=true"`
+	Session      struct {
+		IdleMinutes   int `json:",default=30"`
+		AbsoluteHours int `json:",default=8"`
+	}
+	// TrustedProxies are CIDRs whose X-Forwarded-For is believed.
+	TrustedProxies []string `json:",optional"`
+}
 
-// ValidateBootstrap prevents the unauthenticated preview from being exposed.
-func (c AdminConfig) ValidateBootstrap() error {
-	ip := net.ParseIP(c.Host)
-	if ip == nil || !ip.IsLoopback() {
-		return fmt.Errorf("bootstrap requires a loopback Host")
+func (c AdminConfig) Sealer() (*sealer.Sealer, error) {
+	if strings.TrimSpace(c.SecretKEK) == "" {
+		return nil, nil
+	}
+	var previous []string
+	for _, k := range c.SecretKEKPrevious {
+		if k = strings.TrimSpace(k); k != "" {
+			previous = append(previous, k)
+		}
+	}
+	return sealer.New(c.SecretKEK, previous...)
+}
+
+func (c AdminConfig) Validate() error {
+	if _, err := NormalizeMySQLDSN(c.MySQL.DataSource); err != nil {
+		return fmt.Errorf("MySQL.DataSource: %w", err)
+	}
+	if c.Redis.Host == "" {
+		return errors.New("Redis.Host is required")
+	}
+	if _, err := c.Sealer(); err != nil {
+		return fmt.Errorf("SecretKEK: %w", err)
+	}
+	if ip := net.ParseIP(c.Host); !c.CookieSecure && (ip == nil || !ip.IsLoopback()) {
+		// A non-loopback listener without HTTPS cookies would send sessions
+		// in clear text; refuse unless the operator opts in explicitly.
+		if os.Getenv("BOTGUARD_ADMIN_INSECURE_COOKIE") != "1" {
+			return errors.New("CookieSecure=false needs a loopback Host (or BOTGUARD_ADMIN_INSECURE_COOKIE=1 behind a TLS-less private network)")
+		}
+	}
+	if c.Session.IdleMinutes < 5 || c.Session.IdleMinutes > 720 {
+		return errors.New("Session.IdleMinutes must be within [5, 720]")
+	}
+	if c.Session.AbsoluteHours < 1 || c.Session.AbsoluteHours > 72 {
+		return errors.New("Session.AbsoluteHours must be within [1, 72]")
 	}
 	return nil
 }
@@ -76,6 +131,9 @@ type GatewayConfig struct {
 	}
 	Slider struct {
 		Tolerance int `json:",default=4"`
+	}
+	Rotate struct {
+		ToleranceDegrees int `json:",default=7"`
 	}
 }
 
@@ -147,6 +205,7 @@ func (c GatewayConfig) Validate() error {
 		inRange("Risk.FallbackDifficultyFactor", c.Risk.FallbackDifficultyFactor, 1, 256),
 		inRange("Risk.FailureWindowSeconds", c.Risk.FailureWindowSeconds, 60, 86400),
 		inRange("Slider.Tolerance", c.Slider.Tolerance, 1, 20),
+		inRange("Rotate.ToleranceDegrees", c.Rotate.ToleranceDegrees, 2, 20),
 	)
 }
 

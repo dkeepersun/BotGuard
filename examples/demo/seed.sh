@@ -10,14 +10,25 @@ botguard-ctl migrate up
 field() { sed -n "s/^$1: //p"; }
 
 # One action per challenge style: login adapts to risk across every kind;
-# register, post and pay always show the slider, text clicks and shape clicks.
+# register, post, pay and comment always show the slider, text clicks, shape
+# clicks and the rotate disc.
 # Re-applied on every start so an existing demo database picks up changes.
 set_modes() {
-  botguard-ctl action set -app "$1" -action login -mode adaptive -kinds slider,click_text,click_shape -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action login -mode adaptive -kinds slider,rotate,click_text,click_shape -puzzles 8 -difficulty 3000 >/dev/null
   botguard-ctl action set -app "$1" -action register -mode interactive -kinds slider -puzzles 8 -difficulty 3000 >/dev/null
   botguard-ctl action set -app "$1" -action post -mode interactive -kinds click_text -puzzles 8 -difficulty 3000 >/dev/null
   botguard-ctl action set -app "$1" -action pay -mode interactive -kinds click_shape -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action comment -mode interactive -kinds rotate -puzzles 8 -difficulty 3000 >/dev/null
 }
+
+# The console's first owner. Its generated password is kept in the shared
+# volume for start.sh to print; the console asks to change it at first login.
+if ! botguard-ctl admin list 2>/dev/null | grep -q '^admin '; then
+  umask 077
+  botguard-ctl admin create -username admin -name 演示管理员 -role owner | sed -n 's/^password: //p' > /shared/admin-password
+  chmod 644 /shared/admin-password
+  echo "已创建管理后台账号 admin"
+fi
 
 if [ -f "$out" ]; then
   . "$out"

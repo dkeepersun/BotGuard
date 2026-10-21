@@ -55,6 +55,7 @@ export const gateway = {
       kind: gateway.kind, challenge_id: 'c1', challenge: 'sig', algorithm: 'sha256-target-v1',
       params: { puzzles: 2, target: 'f'.repeat(64) }, expires_at: Math.floor(Date.now() / 1000) + 120,
       slider: { width: 320, height: 160, background: 'data:,', piece: 'data:,', piece_y: 10, piece_size: 60 },
+      rotate: { width: 320, height: 200, background: 'data:,', disc: 'data:,', cx: 160, cy: 100, radius: 68, track: 280 },
     };
   },
   solution() {

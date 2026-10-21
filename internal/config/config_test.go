@@ -6,19 +6,34 @@ import (
 	"testing"
 
 	"github.com/zeromicro/go-zero/core/conf"
-	"github.com/zeromicro/go-zero/rest"
 )
 
-func TestBootstrapRejectsPublicBind(t *testing.T) {
-	for _, host := range []string{"0.0.0.0", "::", "192.168.1.2", "localhost", ""} {
-		if (AdminConfig{rest.RestConf{Host: host}}).ValidateBootstrap() == nil {
-			t.Fatalf("accepted %q", host)
-		}
+func TestAdminConfigValidation(t *testing.T) {
+	base := func(host string, secure bool) AdminConfig {
+		var c AdminConfig
+		c.Host, c.CookieSecure = host, secure
+		c.Redis.Host = "127.0.0.1:6379"
+		c.MySQL.DataSource = "u:p@tcp(127.0.0.1:3306)/botguard"
+		c.Session.IdleMinutes, c.Session.AbsoluteHours = 30, 8
+		return c
 	}
-	for _, host := range []string{"127.0.0.1", "::1"} {
-		if err := (AdminConfig{rest.RestConf{Host: host}}).ValidateBootstrap(); err != nil {
-			t.Fatal(err)
-		}
+	if err := base("0.0.0.0", true).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if err := base("127.0.0.1", false).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if base("0.0.0.0", false).Validate() == nil {
+		t.Fatal("insecure cookies on a public listener accepted")
+	}
+	t.Setenv("BOTGUARD_ADMIN_INSECURE_COOKIE", "1")
+	if err := base("0.0.0.0", false).Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c := base("127.0.0.1", true)
+	c.SecretKEK = "k1:not-base64"
+	if c.Validate() == nil {
+		t.Fatal("bad KEK accepted")
 	}
 }
 

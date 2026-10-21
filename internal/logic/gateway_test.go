@@ -67,6 +67,7 @@ func newHarness(t *testing.T) *harness {
 		"adaptive": {Enabled: true, Mode: domain.ModeAdaptive, Kinds: []string{domain.KindSlider}, Puzzles: 2, Difficulty: 16},
 		"slide":    {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindSlider}, Puzzles: 2, Difficulty: 16},
 		"clicks":   {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindClickShape}, Puzzles: 2, Difficulty: 16},
+		"turn":     {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindRotate}, Puzzles: 2, Difficulty: 16},
 		"mixed":    {Enabled: true, Mode: domain.ModeAdaptive, Kinds: domain.InteractiveKinds, Puzzles: 2, Difficulty: 16},
 	}
 	apps := &fakeApps{
@@ -81,12 +82,12 @@ func newHarness(t *testing.T) *harness {
 	}
 	h := &harness{redis: mr, apps: apps, clock: time.Unix(1_790_000_000, 0), ip: netip.MustParseAddr("192.0.2.10")}
 	h.g = &Gateway{
-		Apps: apps, State: repository.NewState(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
+		Apps: apps, State: repository.NewState(rds), Stats: repository.NewStats(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
 		Settings: Settings{ChallengeTTL: 120 * time.Second, TokenTTL: 60 * time.Second, ResultTTL: 600 * time.Second,
 			ClockSkew: 5 * time.Second, MaxDifficulty: 1 << 20, SignatureWindow: 300 * time.Second,
 			ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000, FallbackPerIPPerMinute: 5, AuthFailuresPerIPPerMinute: 60,
 			RiskMedium: 30, RiskHigh: 70, HighDifficultyFactor: 4, FallbackDifficultyFactor: 8, FailureWindow: 10 * time.Minute,
-			SliderTolerance: 4},
+			SliderTolerance: 4, RotateToleranceDegrees: 7, IPHashKey: []byte("ip-salt")},
 		Now: func() time.Time { return h.clock },
 	}
 	return h

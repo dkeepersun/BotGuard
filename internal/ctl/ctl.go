@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os/user"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -35,14 +36,14 @@ const usage = `用法：botguard-ctl <命令> [参数]
 
   migrate up                                        执行未执行的迁移
   migrate status                                    查看迁移状态
-  app create  -name 名称                            创建应用，输出 app_key
+  app create  -name 名称 [-remark 备注]             创建应用，输出 app_key
   app list                                          列出应用
   app show    -app app_key                          查看应用的来源、action 和密钥对
   app enable  -app app_key                          启用应用
   app disable -app app_key                          停用应用
   origin add    -app app_key -origin URL            添加允许来源，如 https://example.com
   origin remove -app app_key -origin URL            移除允许来源
-  action set -app app_key -action 名称 [-mode adaptive] [-kinds slider,click_text,click_shape]
+  action set -app app_key -action 名称 [-mode adaptive] [-kinds slider,rotate,click_text,click_shape]
              [-enabled=true] [-puzzles 8] [-difficulty 2000]
                                                     新增或修改 action；只修改显式给出的参数。
                                                     mode：invisible（无感）、interactive（每次从 kinds 随机出题）、
@@ -52,6 +53,14 @@ const usage = `用法：botguard-ctl <命令> [参数]
   secret revoke -secret secret_id                   吊销密钥对
   secret rotate -secret secret_id [-grace 24h] [-ttl 0]
                                                     生成替换密钥对，旧密钥对在宽限期后失效
+
+  admin create -username 用户名 [-role owner] [-name 显示名]
+                                                    创建管理后台账号（owner 超级管理员 / operator 运维 / viewer 只读），
+                                                    输出随机初始密码，只显示一次，首次登录必须修改
+  admin list                                        列出管理后台账号
+  admin reset-password -username 用户名             重新生成密码，并让该账号所有已登录会话失效
+  admin enable  -username 用户名                    启用账号
+  admin disable -username 用户名                    停用账号（不能停用最后一个启用的超级管理员）
 
 应用、来源、action、密钥对的变更会在 gateway 的应用缓存过期后生效（默认 10 秒内）。
 `
@@ -140,6 +149,17 @@ func (a *App) run(ctx context.Context, args []string) error {
 		return usageError("缺少命令")
 	}
 	cmd, rest := args[0]+" "+args[1], args[2:]
+	// Every change made here is audited as the operating system user.
+	who := a.Env("USER")
+	if who == "" {
+		if u, err := user.Current(); err == nil {
+			who = u.Username
+		}
+	}
+	if who == "" {
+		who = "unknown"
+	}
+	ctx = repository.WithActor(ctx, "cli:"+who, "")
 	switch cmd {
 	case "migrate up", "migrate status":
 		return a.migrate(ctx, args[1], rest)
@@ -159,6 +179,14 @@ func (a *App) run(ctx context.Context, args []string) error {
 		return a.secretCreate(ctx, rest)
 	case "secret revoke":
 		return a.secretRevoke(ctx, rest)
+	case "admin create":
+		return a.adminCreate(ctx, rest)
+	case "admin list":
+		return a.adminList(ctx, rest)
+	case "admin reset-password":
+		return a.adminReset(ctx, rest)
+	case "admin enable", "admin disable":
+		return a.adminStatus(ctx, args[1] == "enable", rest)
 	case "secret rotate":
 		return a.secretRotate(ctx, rest)
 	default:
@@ -231,6 +259,7 @@ func (a *App) migrate(ctx context.Context, sub string, args []string) error {
 func (a *App) appCreate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("app create", flag.ContinueOnError)
 	name := fs.String("name", "", "")
+	remark := fs.String("remark", "", "")
 	if err := parse(fs, args, "name"); err != nil {
 		return err
 	}
@@ -238,7 +267,7 @@ func (a *App) appCreate(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	key, err := adm.CreateApp(ctx, *name)
+	key, err := adm.CreateApp(ctx, *name, *remark)
 	if err != nil {
 		return err
 	}
@@ -529,5 +558,134 @@ func (a *App) secretRotate(ctx context.Context, args []string) error {
 	}
 	fmt.Fprintf(a.Out, "已生成替换密钥对；旧密钥对 %s 最晚在 %s 失效\n", *id, oldUntil.Format(time.RFC3339))
 	printSecret(a.Out, p)
+	return nil
+}
+
+func (a *App) console() (*logic.Console, error) {
+	c, err := a.conn()
+	if err != nil {
+		return nil, err
+	}
+	return &logic.Console{Admins: repository.NewAdmins(c), Audit: repository.NewAppAdmin(c), Now: a.Now}, nil
+}
+
+func printPassword(out io.Writer, username, pw string) {
+	fmt.Fprintf(out, "username: %s\npassword: %s\n\n", username, pw)
+	fmt.Fprintln(out, "这是密码唯一一次显示。首次登录后台时必须修改密码。")
+}
+
+func (a *App) adminCreate(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("admin create", flag.ContinueOnError)
+	username := fs.String("username", "", "")
+	role := fs.String("role", logic.RoleOwner, "")
+	name := fs.String("name", "", "")
+	if err := parse(fs, args, "username"); err != nil {
+		return err
+	}
+	c, err := a.console()
+	if err != nil {
+		return err
+	}
+	pw, err := c.CreateAdmin(ctx, nil, "", *username, *name, *role)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.Out, "已创建管理员（%s）\n", logic.RoleNames[*role])
+	printPassword(a.Out, strings.ToLower(strings.TrimSpace(*username)), pw)
+	return nil
+}
+
+func (a *App) adminList(ctx context.Context, args []string) error {
+	if err := parse(flag.NewFlagSet("admin list", flag.ContinueOnError), args); err != nil {
+		return err
+	}
+	c, err := a.console()
+	if err != nil {
+		return err
+	}
+	list, err := c.Admins.List(ctx)
+	if err != nil {
+		return err
+	}
+	w := tabwriter.NewWriter(a.Out, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "用户名\t显示名\t角色\t状态\t动态码\t最近登录")
+	for _, ad := range list {
+		last := "从未"
+		if ad.LastLoginAt.Valid {
+			last = ad.LastLoginAt.Time.UTC().Format(time.RFC3339)
+		}
+		totpText := "未开启"
+		if ad.TOTPEnabled() {
+			totpText = "已开启"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", ad.Username, ad.DisplayName, logic.RoleNames[ad.Role], enabledText(ad.Enabled()), totpText, last)
+	}
+	return w.Flush()
+}
+
+func (a *App) adminByName(ctx context.Context, c *logic.Console, username string) (*repository.Admin, error) {
+	ad, err := c.Admins.ByUsername(ctx, strings.ToLower(strings.TrimSpace(username)))
+	if errors.Is(err, domain.ErrNotFound) {
+		return nil, fmt.Errorf("管理员 %s 不存在", username)
+	}
+	return ad, err
+}
+
+func (a *App) adminReset(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("admin reset-password", flag.ContinueOnError)
+	username := fs.String("username", "", "")
+	if err := parse(fs, args, "username"); err != nil {
+		return err
+	}
+	c, err := a.console()
+	if err != nil {
+		return err
+	}
+	ad, err := a.adminByName(ctx, c, *username)
+	if err != nil {
+		return err
+	}
+	pw, err := c.ResetPassword(ctx, nil, "", ad.ID)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(a.Out, "已重置密码，该账号所有已登录的会话已失效")
+	printPassword(a.Out, ad.Username, pw)
+	return nil
+}
+
+func (a *App) adminStatus(ctx context.Context, enable bool, args []string) error {
+	fs := flag.NewFlagSet("admin status", flag.ContinueOnError)
+	username := fs.String("username", "", "")
+	if err := parse(fs, args, "username"); err != nil {
+		return err
+	}
+	c, err := a.console()
+	if err != nil {
+		return err
+	}
+	ad, err := a.adminByName(ctx, c, *username)
+	if err != nil {
+		return err
+	}
+	// The CLI is the recovery path, so it acts without a console principal;
+	// the last-owner guard still applies.
+	if !enable && ad.Role == logic.RoleOwner && ad.Enabled() {
+		n, err := c.Admins.CountEnabledOwners(ctx)
+		if err != nil {
+			return err
+		}
+		if n <= 1 {
+			return errors.New("这是唯一启用的超级管理员，不能停用")
+		}
+	}
+	op := "admin.disable"
+	if enable {
+		op = "admin.enable"
+	}
+	if err := c.Admins.SetStatus(repository.Audited(ctx, op, "", nil), ad.ID, enable); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.Out, "管理员 %s 已%s\n", ad.Username, enabledText(enable))
 	return nil
 }

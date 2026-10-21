@@ -1,0 +1,25 @@
+{{template "head" .}}{{$d := .Data}}
+<div class="wrap">
+  <div class="page-head">
+    <div><h1>实时事件 <span class="live">实时</span></h1><div class="sub">浏览器提交答案与服务端核验的最近记录（每个应用保留最近 2000 条）。IP 只显示加盐哈希，不保存原始地址和 token。</div></div>
+    <form class="tools form-inline" method="get" action="/events">
+      <select class="input sm" name="app"><option value="">全部应用</option>{{range $d.Apps}}<option value="{{.AppKey}}" {{if eq $d.App .AppKey}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+      <select class="input sm" name="type"><option value="">全部阶段</option><option value="solve" {{if eq $d.Type "solve"}}selected{{end}}>浏览器提交</option><option value="verify" {{if eq $d.Type "verify"}}selected{{end}}>服务端核验</option></select>
+      <select class="input sm" name="result"><option value="">全部结果</option><option value="pass" {{if eq $d.Result "pass"}}selected{{end}}>通过</option><option value="fail" {{if eq $d.Result "fail"}}selected{{end}}>未通过</option></select>
+      <button class="btn sm">筛选</button>
+      <label class="switch"><input type="checkbox" id="live-toggle" checked>自动刷新</label>
+    </form>
+  </div>
+  <div class="card" data-live-events><div class="card-body flush table-wrap"><table class="table">
+    <thead><tr><th>时间</th><th>应用</th><th>阶段</th><th>action</th><th>题型</th><th>结果</th><th>风险</th><th>原因</th><th>客户端 / 请求</th></tr></thead><tbody>
+    {{range $d.Events}}<tr><td class="nowrap mono">{{ms .At}}</td><td class="nowrap">{{.AppName}}</td>
+      <td class="nowrap">{{if eq .Type "verify"}}<span class="badge plain violet">服务端核验</span>{{else}}<span class="badge plain blue">浏览器提交</span>{{end}}</td>
+      <td class="mono">{{.Action}}</td><td class="nowrap">{{if .Kind}}{{kind .Kind}}{{else}}—{{end}}</td>
+      <td>{{if eq .Result "pass"}}<span class="badge ok">通过</span>{{else}}<span class="badge bad">{{reason .Result}}</span>{{end}}</td>
+      <td>{{with .Level}}<span class="badge plain {{if eq . "high"}}bad{{else if eq . "medium"}}warn{{else}}ok{{end}}">{{level .}}</span>{{else}}—{{end}}</td>
+      <td class="cell-sub">{{range .Reasons}}<span class="tag">{{reason .}}</span>{{else}}—{{end}}</td>
+      <td class="mono cell-sub">{{if .IP}}{{.IP}}{{else if .RequestID}}{{.RequestID}}{{else}}—{{end}}</td></tr>
+    {{else}}<tr><td colspan="9"><div class="empty"><div class="big">◎</div>暂无事件。完成一次验证后，这里会实时出现记录。</div></td></tr>{{end}}
+    </tbody></table></div></div>
+</div>
+{{template "foot" .}}

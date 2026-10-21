@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dkeepersun/BotGuard/internal/service/password"
 	"github.com/dkeepersun/BotGuard/internal/testdb"
 )
 
@@ -92,7 +93,7 @@ func TestOperatorWorkflow(t *testing.T) {
 		t.Fatalf("unspecified mode must be kept: %s", out)
 	}
 	r.run(1, "action", "set", "-app", app, "-action", "login", "-mode", "puzzle")
-	r.run(1, "action", "set", "-app", app, "-action", "login", "-kinds", "rotate")
+	r.run(1, "action", "set", "-app", app, "-action", "login", "-kinds", "jigsaw")
 	r.run(1, "action", "set", "-app", app, "-action", "login", "-kinds", "")
 	if out := r.run(0, "action", "set", "-app", app, "-action", "post", "-mode", "interactive", "-kinds", "click_text, click_shape"); !strings.Contains(out, "题型 click_text,click_shape") {
 		t.Fatalf("kinds: %s", out)
@@ -169,5 +170,38 @@ func TestErrorsGoToStderr(t *testing.T) {
 	}
 	if out.Len() != 0 || !strings.Contains(errOut.String(), "BOTGUARD_MYSQL_DSN") {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errOut.String())
+	}
+}
+
+func TestAdminCommands(t *testing.T) {
+	old := password.Iterations
+	password.Iterations = 1000
+	defer func() { password.Iterations = old }()
+	dsn, _ := testdb.Open(t)
+	r := newRunner(t, dsn)
+	out := r.run(0, "admin", "create", "-username", "Root", "-name", "运维负责人")
+	pw := field(t, out, "password")
+	if field(t, out, "username") != "root" || len(pw) != 20 {
+		t.Fatal(out)
+	}
+	r.run(1, "admin", "create", "-username", "root")
+	r.run(1, "admin", "create", "-username", "x")
+	r.run(1, "admin", "create", "-username", "ops", "-role", "god")
+	r.run(0, "admin", "create", "-username", "ops", "-role", "viewer")
+	// The only enabled owner cannot be disabled, even from the CLI.
+	r.run(1, "admin", "disable", "-username", "root")
+	r.run(0, "admin", "disable", "-username", "ops")
+	reset := r.run(0, "admin", "reset-password", "-username", "root")
+	if field(t, reset, "password") == pw {
+		t.Fatal("reset kept the password")
+	}
+	list := strings.Join(strings.Fields(r.run(0, "admin", "list")), " ")
+	for _, want := range []string{"root 运维负责人 超级管理员 启用 未开启 从未", "ops 只读 停用"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("admin list missing %q: %s", want, list)
+		}
+	}
+	if strings.Contains(list, pw) {
+		t.Fatal("password listed")
 	}
 }

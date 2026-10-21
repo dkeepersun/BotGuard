@@ -30,7 +30,7 @@ func TestEndToEndWithMySQL(t *testing.T) {
 
 	seal := testSealer(t)
 	admin := &AppAdmin{Repo: repository.NewAppAdmin(conn), Sealer: seal, Now: now}
-	app, err := admin.CreateApp(ctx, "e2e")
+	app, err := admin.CreateApp(ctx, "e2e", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,6 +40,19 @@ func TestEndToEndWithMySQL(t *testing.T) {
 	}
 	if err := admin.SetAction(ctx, app, "login", domain.ActionPolicy{Enabled: true, Mode: domain.ModeInvisible, Kinds: domain.InteractiveKinds, Puzzles: 3, Difficulty: 20}); err != nil {
 		t.Fatal(err)
+	}
+	// Re-saving an identical policy changes nothing: no new policy version
+	// (issued challenges stay valid) and no audit noise.
+	before, _ := admin.AppDetail(ctx, app)
+	if err := admin.SetAction(repository.WithActor(ctx, "cli:test", ""), app, "login", domain.ActionPolicy{Enabled: true, Mode: domain.ModeInvisible, Kinds: domain.InteractiveKinds, Puzzles: 3, Difficulty: 20}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := admin.AppDetail(ctx, app)
+	if before.PolicyVersion != after.PolicyVersion {
+		t.Fatalf("unchanged policy bumped the version: %d -> %d", before.PolicyVersion, after.PolicyVersion)
+	}
+	if _, n, _ := admin.Repo.Audit(ctx, repository.AuditQuery{Operation: "action."}); n != 0 {
+		t.Fatalf("unchanged policy audited %d times", n)
 	}
 	oldKey, _, err := admin.CreateSecret(ctx, app, 0)
 	if err != nil {
@@ -133,7 +146,7 @@ func TestCachedRevocationTakesEffectWithinTTL(t *testing.T) {
 	ctx := context.Background()
 	seal := testSealer(t)
 	admin := &AppAdmin{Repo: repository.NewAppAdmin(conn), Sealer: seal, Now: time.Now}
-	app, _ := admin.CreateApp(ctx, "cache")
+	app, _ := admin.CreateApp(ctx, "cache", "")
 	key, _, err := admin.CreateSecret(ctx, app, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -169,7 +182,7 @@ func TestWrongKEKFailsClosed(t *testing.T) {
 	_, conn := testdb.Open(t)
 	ctx := context.Background()
 	admin := &AppAdmin{Repo: repository.NewAppAdmin(conn), Sealer: testSealer(t), Now: time.Now}
-	app, _ := admin.CreateApp(ctx, "kek")
+	app, _ := admin.CreateApp(ctx, "kek", "")
 	key, _, err := admin.CreateSecret(ctx, app, 0)
 	if err != nil {
 		t.Fatal(err)

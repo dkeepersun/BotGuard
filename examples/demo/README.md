@@ -1,6 +1,6 @@
 # BotGuard 本地演示
 
-一条命令在本机拉起完整环境：MySQL、Redis、gateway、PHP 演示站。在浏览器里能直接看到验证组件怎么工作、PHP SDK 怎么签名调用 `/v1/verify`，以及各种攻击和误用被拒的原因。
+一条命令在本机拉起完整环境：MySQL、Redis、gateway、管理后台、PHP 演示站。在浏览器里能直接看到验证组件怎么工作、PHP SDK 怎么签名调用 `/v1/verify`，以及各种攻击和误用被拒的原因。
 
 ## 启动
 
@@ -10,11 +10,11 @@
 examples/demo/start.sh
 ```
 
-然后打开 <http://localhost:8080>。
+然后打开 <http://localhost:8080>（演示站）和 <http://localhost:8091>（管理后台）。管理后台账号是 `admin`，初始密码在启动结束时打印出来，首次登录必须修改。
 
 - 第一次运行会生成 `examples/demo/.env`，里面是 MySQL 密码、challenge 签名密钥和 secret 加密主密钥（KEK）。这些都是本地演示用的随机值，已被 git 忽略。
 - 第一次启动要拉取 `php:8.3-cli-alpine` 镜像，并在容器里编译 gateway 和 botguard-ctl，需要几分钟。如果访问 proxy.golang.org 慢，先 `export GOPROXY=https://goproxy.cn,direct` 再运行。
-- 服务只监听 127.0.0.1：页面在 8080，gateway 在 8090。
+- 服务只监听 127.0.0.1：页面在 8080，gateway 在 8090，管理后台在 8091。
 
 停止：
 
@@ -29,14 +29,16 @@ docker compose -f examples/demo/docker-compose.yml down -v   # 连数据一起�
 
 1. 执行数据库迁移；
 2. 创建两个应用「演示商城」和「演示论坛」，用来演示多应用隔离；
-3. 每个应用允许来源 `http://localhost:8080` 和 `http://127.0.0.1:8080`，配置四个 action（PoW 均为 8 道子题、每题约 3000 次哈希）：`login` 为 adaptive（全部题型），`register`、`post`、`pay` 为 interactive，分别固定出滑块、文字点选、图形点选。已有演示数据在每次启动时也会同步这些配置；
-4. 每个应用生成一组密钥对，写入容器内的 `/shared/demo.env`，只供 PHP 服务端读取，不会打印到日志。
+3. 每个应用允许来源 `http://localhost:8080` 和 `http://127.0.0.1:8080`，配置五个 action（PoW 均为 8 道子题、每题约 3000 次哈希）：`login` 为 adaptive（全部题型），`register`、`post`、`pay`、`comment` 为 interactive，分别固定出滑块、文字点选、图形点选、旋转对齐。已有演示数据在每次启动时也会同步这些配置（配置没变时不会产生新的策略版本和审计记录）；
+4. 每个应用生成一组密钥对，写入容器内的 `/shared/demo.env`，只供 PHP 服务端读取，不会打印到日志；
+5. 创建管理后台的超级管理员 `admin`（随机初始密码）。
 
 ## 页面上能看到什么
 
-**① 模拟登录 / 注册 / 发帖 / 支付**：四个标签页对应四种出题方式。
+**① 模拟登录 / 注册 / 发帖 / 支付 / 评论**：五个标签页对应五种出题方式。
 
 - **登录（adaptive）**：正常浏览器通常无感通过；风险中等时随机出滑块、文字点选或图形点选，风险高时出图形点选。
+- **评论（旋转对齐）**：拖动滑块转动中间的圆盘，让圆盘里的线条和外圈接上；同样支持方向键。
 - **注册（滑块）**：拖动滑块对准缺口；也可以用 Tab 把焦点移到滑块，用方向键移动、回车确认。
 - **发帖（文字点选）**：按提示顺序点击图中的汉字，点错可以「重置」。
 - **支付（图形点选）**：要数清骰子的点数、多边形的边数，再按顺序点击。研究显示这类题对多模态大模型最难。
@@ -107,3 +109,13 @@ docker compose -f examples/demo/docker-compose.yml down -v   # 连数据一起�
 | `NECaptchaVerifier->verify($validate, $user)` | `Client->verify(new VerifyRequest($appKey, $token, $action, $requestId))` |
 | MD5(排序参数 + secretKey) 签名 | HMAC-SHA256 签整个请求体，带时间戳和 nonce 防重放 |
 | 返回 `result: true/false` | 通过 / 拒绝 / 调用方错误 / 结果未知四类，配置错误不会被当成“用户没通过” |
+
+## 管理后台
+
+<http://localhost:8091>，用 `admin` 登录。在演示站上做几次验证、跑几个攻击场景，再到后台看：
+
+- **控制台**：签发量、通过率、拦截次数、核验结果、题型与风险分布、风险原因排行；
+- **应用管理**：两个演示应用的来源、验证策略（可以把 login 改成只出旋转题，约 10 秒后在演示站生效）、密钥对、填好 app_key 的接入代码；
+- **实时事件**：每次浏览器提交和服务端核验的结果，3 秒自动刷新；
+- **题型预览**：现场生成各题型样例，打开「显示答案」可以看到正确位置；
+- **审计日志**：后台和 seed 脚本做过的每一项变更、每一次登录。

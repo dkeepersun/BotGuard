@@ -1,0 +1,11 @@
+{{template "head" .}}
+<div class="wrap">
+  <div class="page-head">
+    <div><h1>题型预览</h1><div class="sub">用 gateway 的同一套生成器现场出题，帮助你比较各题型、决定 action 的题型组合。每张图都是程序生成的，不会重复。</div></div>
+    <div class="tools"><label class="switch"><input type="checkbox" id="pv-answer">显示答案</label></div>
+  </div>
+  <div class="pv-grid" data-preview></div>
+  <div class="card mt"><div class="card-body"><b>如何选择：</b>
+    <span class="muted">滑块最容易，适合对体验要求最高的场景；旋转对齐需要观察线条连续性，难度适中；文字点选用户熟悉，但有专门的识别工具；图形点选要数点数和边数，目前对通用大模型最难。推荐 action 使用「自适应」并勾选全部题型：多数正常用户无感通过，可疑流量随机出题。</span></div></div>
+</div>
+{{template "foot" .}}

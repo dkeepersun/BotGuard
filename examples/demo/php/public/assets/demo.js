@@ -135,10 +135,11 @@ document.getElementById('clear').addEventListener('click', () => timeline.replac
 // Login (adaptive) and register (slider) are separate server handlers with
 // their own fixed actions; the widget follows the selected tab.
 const HINTS = {
-  login: '登录用 adaptive 模式：正常浏览器通常无感通过；风险中等时随机出滑块、文字点选或图形点选，风险高时出最难的图形点选。演示站不校验密码。',
+  login: '登录用 adaptive 模式：正常浏览器通常无感通过；风险中等时随机出滑块、旋转、文字点选或图形点选，风险高时出最难的图形点选。演示站不校验密码。',
   register: '注册固定出滑块拼图，也可以 Tab 到滑块用方向键操作。面板下方的「无法完成验证？」是无障碍备用路径。',
   post: '发帖固定出文字点选：按提示的顺序点击图中的汉字，点错了可以「重置」。',
   pay: '支付固定出图形点选：要数清骰子的点数、多边形的边数，再按顺序点击。这类题对多模态大模型最难。',
+  comment: '评论固定出旋转对齐：拖动滑块转动中间的圆盘，让圆盘里的线条和外圈接上再松手。',
 };
 for (const tab of document.querySelectorAll('.tab')) {
   tab.addEventListener('click', () => {

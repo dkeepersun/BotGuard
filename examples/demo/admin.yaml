@@ -1,0 +1,26 @@
+# Admin console for the local demo only. Secrets come from .env.
+Name: botguard-admin-demo
+Host: 0.0.0.0
+Port: 8091
+Mode: dev
+Timeout: 5000
+Middlewares:
+  Log: false
+  Trace: false
+Log:
+  Encoding: plain
+
+Redis:
+  Host: redis:6379
+  Type: node
+
+MySQL:
+  DataSource: ${BOTGUARD_MYSQL_DSN}
+
+SecretKEK: ${BOTGUARD_SECRET_KEK}
+PublicEndpoint: ${BOTGUARD_PUBLIC_ENDPOINT}
+GatewayURL: ${BOTGUARD_GATEWAY_URL}
+CookieSecure: false
+Session:
+  IdleMinutes: 60
+  AbsoluteHours: 12
