@@ -2,7 +2,7 @@
     "name": "botguard/php-sdk",
     "description": "BotGuard 服务端核验 SDK：签名调用 /v1/verify，按 Passed / Rejected / CallerError / Unknown 返回结果",
     "type": "library",
-    "license": "proprietary",
+    "license": "MIT",
     "require": {
         "php": ">=8.1",
         "ext-curl": "*",

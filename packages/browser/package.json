@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "BotGuard 浏览器验证组件：<botguard-widget> 与 BotGuard.init()，无感 PoW、滑块、文字点选、图形点选，换取一次性 token",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "keywords": [
     "captcha",
     "bot",
@@ -34,7 +34,8 @@
   "files": [
     "src/",
     "dist/",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "sideEffects": [
     "./src/botguard.js",
