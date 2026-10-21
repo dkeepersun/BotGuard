@@ -109,6 +109,11 @@ for target in $TARGETS; do
   rm -rf "$stage"
 done
 
-(cd "$DIST_DIR" && sha256 ./*.tar.gz ./*.deb ./*.rpm 2>/dev/null | sed 's| \./| |' > checksums.txt)
+# 没有 nfpm 时没有 deb/rpm，只对实际生成的文件算校验和（不匹配的通配符会让 sha256sum 失败）。
+files=()
+for f in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/*.deb "$DIST_DIR"/*.rpm; do
+  if [[ -e "$f" ]]; then files+=("./${f##*/}"); fi
+done
+(cd "$DIST_DIR" && sha256 "${files[@]}" | sed 's| \./| |' > checksums.txt)
 echo
 cat "$DIST_DIR/checksums.txt"
