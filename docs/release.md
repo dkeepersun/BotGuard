@@ -87,7 +87,7 @@ Packagist 只认仓库根目录的 `composer.json`，所以两个 PHP 包要先�
 **release**：
 
 1. `make check`；
-2. `scripts/release.sh vX.Y.Z`：用 `CGO_ENABLED=0` 交叉编译 linux/amd64 和 linux/arm64 的静态二进制，版本号写进程序（`gateway -version`、`botguard-ctl version`、管理后台「系统信息」），每个平台打一个 tar.gz，再用 [nfpm](https://nfpm.goreleaser.com/) 打 deb 和 rpm（配置在 `deploy/nfpm/`）；配置了签名密钥时 rpm 带 GPG 签名；
+2. `scripts/release.sh vX.Y.Z`：用 `CGO_ENABLED=0` 交叉编译 linux/amd64、linux/arm64、darwin/arm64、darwin/amd64 的静态二进制（darwin/arm64 由 Go 链接器自动做 ad-hoc 签名，Apple 芯片才能运行），版本号写进程序（`gateway -version`、`botguard-ctl version`、管理后台「系统信息」），每个平台打一个 tar.gz，Linux 平台再用 [nfpm](https://nfpm.goreleaser.com/) 打 deb 和 rpm（配置在 `deploy/nfpm/`）；配置了签名密钥时 rpm 带 GPG 签名；
 3. 为每个文件生成构建来源证明（`actions/attest-build-provenance`），用户可以用 `gh attestation verify <文件> -R dkeepersun/BotGuard` 核对；
 4. 创建 GitHub Release，附上 tar.gz、deb、rpm 和 `checksums.txt`，说明由 GitHub 自动生成（列出上一个 Release 以来合并的 PR；直接提交到 main 的改动不会逐条列出，需要手动补充）。带 `-` 的版本（如 `v0.3.0-rc.1`）标为预发布，`upgrade` 和安装脚本默认取的“最新版”不包括预发布。
 
@@ -101,7 +101,7 @@ release 成功后，`repo` 工作流（`.github/workflows/repo.yml`）用最新�
 botguard_0.3.0_linux_amd64/
   bin/gateway  bin/admin-web  bin/botguard-ctl
   configs/gateway.yaml  configs/admin-web.yaml     # 配置样例，botguard init 据此生成 /etc/botguard
-  deploy/systemd/botguard.service.tmpl  deploy/botguard.env.example
+  deploy/systemd/botguard.service.tmpl  deploy/launchd/botguard.plist.tmpl  deploy/botguard.env.example
   scripts/botguard.sh  docs/deploy.md  LICENSE  README.md  VERSION
 ```
 

@@ -60,14 +60,19 @@ jobs:
       - run: find packages/php packages/laravel -name '*.php' -print0 | xargs -0 -n1 php -l
 
   # The installation methods end to end on a fresh runner (systemd, sudo, no
-  # Redis): packages and the image are built from this commit and served over
-  # local HTTP in place of GitHub Releases and raw.githubusercontent.com.
+  # Redis; on macOS: launchd, Homebrew): packages and the image are built from
+  # this commit and served over local HTTP in place of GitHub Releases and
+  # raw.githubusercontent.com.
   install:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        method: [binary, deb, docker]
+        include:
+          - { method: binary, os: ubuntu-latest }
+          - { method: deb, os: ubuntu-latest }
+          - { method: docker, os: ubuntu-latest }
+          - { method: macos, os: macos-latest }
     env:
       VERSION: v0.0.0-ci
       BOTGUARD_RELEASE_BASE: http://127.0.0.1:18080
@@ -79,10 +84,13 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build packages
-        if: matrix.method != 'docker'
+        if: matrix.method == 'binary' || matrix.method == 'deb'
         run: |
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0
           BOTGUARD_REQUIRE_PACKAGES=1 scripts/release.sh "$VERSION" linux/amd64
+      - name: Build packages (macOS)
+        if: matrix.method == 'macos'
+        run: scripts/release.sh "$VERSION" darwin/arm64
       - name: Build the image
         if: matrix.method == 'docker'
         run: docker build -t "ghcr.io/dkeepersun/botguard:${VERSION#v}" --build-arg VERSION="$VERSION" .
@@ -106,6 +114,9 @@ jobs:
       - name: Install (docker)
         if: matrix.method == 'docker'
         run: sh scripts/install.sh --method docker --version "$VERSION" --dir /tmp/botguard -y
+      - name: Install (macOS)
+        if: matrix.method == 'macos'
+        run: sh scripts/install.sh --version "$VERSION" -y
 
       - name: Check the services
         run: |
@@ -117,8 +128,19 @@ jobs:
             curl -fsS "http://127.0.0.1:$port/readyz"; echo
           done
           curl -fsS -o /dev/null http://127.0.0.1:8090/sdk/v1/load.js
+      - name: Check the macOS install
+        if: matrix.method == 'macos'
+        run: |
+          botguard status
+          botguard ctl admin list | grep -q admin
+          launchctl print "gui/$(id -u)/com.botguard.gateway" | grep -q "state = running"
+          botguard restart
+          sh scripts/install.sh --version "$VERSION" -y | tee /tmp/again.log
+          grep -q 已升级 /tmp/again.log
+          botguard uninstall-launchd
+          if curl -fsS -m 2 http://127.0.0.1:8090/healthz; then exit 1; fi
       - name: Check the native install
-        if: matrix.method != 'docker'
+        if: matrix.method == 'binary' || matrix.method == 'deb'
         run: |
           botguard status
           sudo botguard ctl admin list | grep -q admin

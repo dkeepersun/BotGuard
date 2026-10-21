@@ -7,7 +7,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$ROOT_DIR/dist"
-DEFAULT_TARGETS="linux/amd64 linux/arm64"
+DEFAULT_TARGETS="linux/amd64 linux/arm64 darwin/arm64 darwin/amd64"
 PROGRAMS="gateway admin-web botguard-ctl"
 
 usage() {
@@ -79,7 +79,7 @@ for target in $TARGETS; do
   stage="$DIST_DIR/$name"
   echo "==> $name"
 
-  mkdir -p "$stage/bin" "$stage/configs" "$stage/deploy/systemd" "$stage/scripts" "$stage/docs"
+  mkdir -p "$stage/bin" "$stage/configs" "$stage/deploy/systemd" "$stage/deploy/launchd" "$stage/scripts" "$stage/docs"
   for prog in $PROGRAMS; do
     CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build -trimpath \
       -ldflags "-s -w -X github.com/dkeepersun/BotGuard/internal/version.Version=$VERSION" \
@@ -88,6 +88,7 @@ for target in $TARGETS; do
   # 清单写死，deploy/ 下其他文件（例如某台服务器专用的脚本）不会被带进包里。
   cp configs/gateway.yaml configs/admin-web.yaml "$stage/configs/"
   cp deploy/systemd/botguard.service.tmpl "$stage/deploy/systemd/"
+  cp deploy/launchd/botguard.plist.tmpl "$stage/deploy/launchd/"
   cp deploy/botguard.env.example "$stage/deploy/"
   cp scripts/botguard.sh "$stage/scripts/"
   cp docs/deploy.md "$stage/docs/"
@@ -108,6 +109,11 @@ for target in $TARGETS; do
   rm -rf "$stage"
 done
 
-(cd "$DIST_DIR" && sha256 ./*.tar.gz ./*.deb ./*.rpm 2>/dev/null | sed 's| \./| |' > checksums.txt)
+# 没有 nfpm 时没有 deb/rpm，只对实际生成的文件算校验和（不匹配的通配符会让 sha256sum 失败）。
+files=()
+for f in "$DIST_DIR"/*.tar.gz "$DIST_DIR"/*.deb "$DIST_DIR"/*.rpm; do
+  if [[ -e "$f" ]]; then files+=("./${f##*/}"); fi
+done
+(cd "$DIST_DIR" && sha256 "${files[@]}" | sed 's| \./| |' > checksums.txt)
 echo
 cat "$DIST_DIR/checksums.txt"
