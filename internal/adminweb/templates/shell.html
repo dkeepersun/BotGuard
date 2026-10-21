@@ -16,7 +16,8 @@
     </dl></li>
 </ul></div>
 <div class="layui-side layui-bg-black"><div class="layui-logo"><img class="logo"><span class="title"></span></div><div class="layui-side-scroll"><div id="sideMenu"></div></div></div>
-<div class="layui-body"><div id="content"></div></div><div class="pear-cover"></div><div class="loader-main"><div class="loader"></div></div></div>
+<div class="layui-body"><div id="content"></div></div><div class="pear-cover"></div>
+<div class="pear-collapsed-pe collapse" title="菜单"><a href="#" class="layui-icon layui-icon-shrink-right" aria-label="打开或收起菜单"></a></div><div class="loader-main"><div class="loader"></div></div></div>
 <form id="bg-logout-form" method="post" action="/logout" hidden><input type="hidden" name="_csrf" value="{{.CSRF}}"></form>
 <script src="{{asset "/static/component/layui/layui.js"}}"></script><script src="{{asset "/static/component/pear/pear.js"}}"></script>
 <script src="{{asset "/static/admin/js/shell.js"}}" nonce="{{.Nonce}}"></script></body></html>

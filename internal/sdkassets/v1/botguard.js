@@ -101,7 +101,7 @@ const STYLE = `
 .track { position: relative; height: 40px; margin-top: 10px; border-radius: 20px; background: #eaeef2; touch-action: none; }
 .track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 20px; background: var(--bg-accent); opacity: .15; }
 .track .hint { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: grid; place-items: center; color: #656d76; font-size: 13px;
-  pointer-events: none; white-space: nowrap; overflow: hidden; }
+  pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 36px; }
 .track .handle { position: absolute; top: 0; left: 0; height: 100%; min-width: 36px; border-radius: 20px; background: var(--bg-accent); color: #fff;
   display: grid; place-items: center; cursor: grab; touch-action: none; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
 .track .handle:focus-visible { outline: 3px solid var(--bg-accent); outline-offset: 2px; }
@@ -175,7 +175,7 @@ const TEMPLATE = `
     <div class="body">
       <div class="slider-ui">
         <div class="stage"><img class="bg" alt="拼图背景"><img class="piece" alt="拼图块"><img class="disc" alt="需要转正的圆盘" hidden></div>
-        <div class="track"><div class="fill"></div><div class="hint">向右拖动滑块，将拼图块对准缺口</div>
+        <div class="track"><div class="fill"></div><div class="hint">向右拖动，补全拼图</div>
           <div class="handle" role="slider" tabindex="0" aria-label="拖动滑块完成拼图，也可以用左右方向键移动、回车确认" aria-valuemin="0">➜</div></div>
       </div>
       <div class="click-ui" hidden>
@@ -586,7 +586,8 @@ export class BotGuardWidget extends ElementBase {
     if (turning) disc.src = s.disc;
     else piece.src = s.piece;
     msg.textContent = '';
-    this.#root.querySelector('.hint').textContent = turning ? '向右拖动滑块，转动圆盘使图案对齐' : '向右拖动滑块，将拼图块对准缺口';
+    // Short enough for a 190 px track in compact mode on a phone.
+    this.#root.querySelector('.hint').textContent = turning ? '向右拖动，转正圆盘' : '向右拖动，补全拼图';
     handle.setAttribute('aria-label', turning
       ? '拖动滑块转动圆盘，也可以用左右方向键转动、回车确认'
       : '拖动滑块完成拼图，也可以用左右方向键移动、回车确认');

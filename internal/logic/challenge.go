@@ -495,7 +495,7 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		}
 		if reason := slider.Check(float64(state.X), in.Answer.X, tolerance, points, input); reason != "" {
 			// One public code for every failure; the specific reason stays in our logs.
-			logx.WithContext(ctx).Infof("slider rejected: %s (app %d, %s)", reason, app.ID, input)
+			logx.WithContext(ctx).Infof("%s rejected: %s (app %d, %s)", p.Kind, reason, app.ID, input)
 			return nil, origin, g.fail(ctx, ipBucket, errx.ErrAnswerInvalid)
 		}
 	}

@@ -2,9 +2,14 @@ package logic
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -94,6 +99,46 @@ type Console struct {
 
 type LoginInput struct {
 	Username, Password, OTP, IP string
+	// Pending is the ticket from an OTPChallenge: the second step sends it
+	// with the code instead of the password again.
+	Pending string
+}
+
+// OTPChallenge is returned after a correct password when the account has
+// TOTP: the ticket lets the second step submit only the code. It matches
+// errors.Is(err, ErrOTPRequired).
+type OTPChallenge struct {
+	Token    string
+	Username string
+	// retry is set when a code was wrong: the ticket stays usable.
+	retry error
+}
+
+func (e *OTPChallenge) Error() string {
+	if e.retry != nil {
+		return ErrOTPInvalid.Error()
+	}
+	return ErrOTPRequired.Error()
+}
+
+func (e *OTPChallenge) Unwrap() []error {
+	if e.retry != nil {
+		return []error{ErrOTPRequired, ErrOTPInvalid}
+	}
+	return []error{ErrOTPRequired}
+}
+
+const (
+	pendingTTL      = 5 * time.Minute
+	pendingAttempts = 5
+)
+
+// ErrOTPExpired means the password step has to be repeated.
+var ErrOTPExpired = errors.New("动态码验证已超时或尝试次数过多，请重新输入密码")
+
+func pendingKey(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return "bg:admin:mfa:" + hex.EncodeToString(sum[:])
 }
 
 func (c *Console) auditLogin(ctx context.Context, username, op, ip string, detail map[string]any) {
@@ -121,6 +166,9 @@ func (c *Console) Login(ctx context.Context, in LoginInput) (*Principal, error) 
 			return nil, ErrLoginLocked
 		}
 	}
+	if in.Pending != "" {
+		return c.completeOTP(ctx, in)
+	}
 	fail := func(err error, reason string) (*Principal, error) {
 		for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, username}} {
 			_, _, _ = c.Limiter.Take(ctx, dim.name, dim.subject, loginWindow)
@@ -144,29 +192,129 @@ func (c *Console) Login(ctx context.Context, in LoginInput) (*Principal, error) 
 	}
 	if admin.TOTPEnabled() {
 		if strings.TrimSpace(in.OTP) == "" {
-			return nil, ErrOTPRequired
-		}
-		secret, err := c.openTOTP(admin)
-		if err != nil {
-			return nil, err
-		}
-		step, ok := totp.Verify(secret, in.OTP, c.Now(), admin.TOTPLastStep.Int64)
-		if !ok {
-			return fail(ErrOTPInvalid, "bad_otp")
-		}
-		if fresh, err := c.Admins.UseTOTPStep(ctx, admin.ID, step); err != nil || !fresh {
+			token, err := newPendingToken()
 			if err != nil {
 				return nil, err
 			}
-			return fail(ErrOTPInvalid, "otp_reused")
+			if err := c.Redis.HmsetCtx(ctx, pendingKey(token), map[string]string{"admin": strconv.FormatInt(admin.ID, 10), "tries": "0"}); err != nil {
+				return nil, err
+			}
+			if err := c.Redis.ExpireCtx(ctx, pendingKey(token), int(pendingTTL/time.Second)); err != nil {
+				return nil, err
+			}
+			return nil, &OTPChallenge{Token: token, Username: admin.Username}
+		}
+		if err := c.checkOTP(ctx, admin, in.OTP); err != nil {
+			if errors.Is(err, ErrOTPInvalid) {
+				return fail(err, otpReason(err))
+			}
+			return nil, err
 		}
 	}
+	return c.startSession(ctx, admin, in.IP)
+}
+
+func newPendingToken() (string, error) {
+	b := make([]byte, 24)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+var errOTPReused = fmt.Errorf("%w (reused)", ErrOTPInvalid)
+
+func otpReason(err error) string {
+	if errors.Is(err, errOTPReused) {
+		return "otp_reused"
+	}
+	return "bad_otp"
+}
+
+// checkOTP verifies a code and records its step so it is never accepted
+// again; ErrOTPInvalid for a wrong or reused code.
+func (c *Console) checkOTP(ctx context.Context, admin *repository.Admin, code string) error {
+	secret, err := c.openTOTP(admin)
+	if err != nil {
+		return err
+	}
+	step, ok := totp.Verify(secret, code, c.Now(), admin.TOTPLastStep.Int64)
+	if !ok {
+		return ErrOTPInvalid
+	}
+	fresh, err := c.Admins.UseTOTPStep(ctx, admin.ID, step)
+	if err != nil {
+		return err
+	}
+	if !fresh {
+		return errOTPReused
+	}
+	return nil
+}
+
+// completeOTP is the second login step: the pending ticket stands for the
+// verified password. Each ticket allows a few attempts and five minutes;
+// failures also count towards the username and IP lockout.
+func (c *Console) completeOTP(ctx context.Context, in LoginInput) (*Principal, error) {
+	key := pendingKey(in.Pending)
+	m, err := c.Redis.HgetallCtx(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	adminID, _ := strconv.ParseInt(m["admin"], 10, 64)
+	if adminID == 0 {
+		return nil, ErrOTPExpired
+	}
+	tries, err := c.Redis.HincrbyCtx(ctx, key, "tries", 1)
+	if err != nil {
+		return nil, err
+	}
+	if tries > pendingAttempts {
+		_, _ = c.Redis.DelCtx(ctx, key)
+		return nil, ErrOTPExpired
+	}
+	admin, err := c.Admins.ByID(ctx, adminID)
+	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			return nil, ErrOTPExpired
+		}
+		return nil, err
+	}
+	for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, admin.Username}} {
+		n, _, err := c.Limiter.Count(ctx, dim.name, dim.subject, loginWindow)
+		if err != nil {
+			return nil, err
+		}
+		if n >= loginMaxFails {
+			_, _ = c.Redis.DelCtx(ctx, key)
+			return nil, ErrLoginLocked
+		}
+	}
+	if !admin.Enabled() || !admin.TOTPEnabled() {
+		_, _ = c.Redis.DelCtx(ctx, key)
+		return nil, ErrOTPExpired
+	}
+	if err := c.checkOTP(ctx, admin, in.OTP); err != nil {
+		if !errors.Is(err, ErrOTPInvalid) {
+			return nil, err
+		}
+		for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, admin.Username}} {
+			_, _, _ = c.Limiter.Take(ctx, dim.name, dim.subject, loginWindow)
+		}
+		c.auditLogin(ctx, admin.Username, "auth.login_failed", in.IP, map[string]any{"reason": otpReason(err)})
+		return nil, &OTPChallenge{Token: in.Pending, Username: admin.Username, retry: err}
+	}
+	_, _ = c.Redis.DelCtx(ctx, key)
+	return c.startSession(ctx, admin, in.IP)
+}
+
+func (c *Console) startSession(ctx context.Context, admin *repository.Admin, ip string) (*Principal, error) {
 	sess, err := c.Sessions.Create(ctx, admin.ID, admin.SessionVersion, c.Now())
 	if err != nil {
 		return nil, err
 	}
-	_ = c.Admins.RecordLogin(ctx, admin.ID, in.IP, c.Now())
-	c.auditLogin(ctx, username, "auth.login", in.IP, map[string]any{"totp": admin.TOTPEnabled()})
+	_ = c.Admins.RecordLogin(ctx, admin.ID, ip, c.Now())
+	c.auditLogin(ctx, admin.Username, "auth.login", ip, map[string]any{"totp": admin.TOTPEnabled()})
 	return &Principal{Admin: admin, Session: sess}, nil
 }
 

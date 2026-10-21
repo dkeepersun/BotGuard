@@ -315,8 +315,9 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 
 type loginView struct {
 	Username, Next string
-	NeedOTP        bool
-	Error          string
+	// Pending is set on the second step: password verified, code needed.
+	Pending string
+	Error   string
 }
 
 func safeNext(next string) string {
@@ -342,14 +343,18 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	v := loginView{Username: strings.TrimSpace(r.PostFormValue("username")), Next: safeNext(r.PostFormValue("next"))}
 	p, err := s.Console.Login(r.Context(), logic.LoginInput{Username: v.Username, Password: r.PostFormValue("password"),
-		OTP: r.PostFormValue("otp"), IP: s.clientIP(r)})
+		OTP: r.PostFormValue("otp"), IP: s.clientIP(r), Pending: r.PostFormValue("pending")})
+	var otp *logic.OTPChallenge
 	switch {
-	case errors.Is(err, logic.ErrOTPRequired):
-		v.NeedOTP = true
-		v.Error = err.Error()
-	case errors.Is(err, logic.ErrOTPInvalid):
-		v.NeedOTP, v.Error = true, err.Error()
-	case errors.Is(err, logic.ErrLoginFailed), errors.Is(err, logic.ErrLoginLocked):
+	case errors.As(err, &otp):
+		// Second step: only the code is asked for; a wrong code keeps the ticket.
+		v.Pending, v.Username = otp.Token, otp.Username
+		if errors.Is(err, logic.ErrOTPInvalid) {
+			v.Error = err.Error()
+		}
+		s.render(w, r, "login.html", View{Title: "动态码验证", Data: v})
+		return
+	case errors.Is(err, logic.ErrOTPInvalid), errors.Is(err, logic.ErrLoginFailed), errors.Is(err, logic.ErrLoginLocked), errors.Is(err, logic.ErrOTPExpired):
 		v.Error = err.Error()
 	case err != nil:
 		s.serverError(w, r, err)

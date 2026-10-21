@@ -10,3 +10,6 @@
 .pear-admin .layui-side .layui-logo .title { color: #fff !important; top: 0 !important; margin: 0 !important; font-size: 19px; }
 .pear-mini .layui-side .layui-logo .title { display: none !important; }
 .bg-avatar { line-height: 28px; }
+/* Small screens: the floating menu button replaces the header toggle. */
+.pear-collapsed-pe { background-color: #2563eb !important; box-shadow: 0 6px 16px rgba(37, 99, 235, .35) !important; }
+@media screen and (max-width: 768px) { .bg-role { display: none; } }

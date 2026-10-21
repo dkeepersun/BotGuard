@@ -10,7 +10,7 @@
 examples/demo/start.sh
 ```
 
-然后打开 <http://localhost:8080>（演示站）和 <http://localhost:8091>（管理后台）。管理后台账号是 `admin`，初始密码在启动结束时打印出来，首次登录必须修改。
+然后打开 <http://localhost:8080>（演示站）和 <http://localhost:8091>（管理后台）。管理后台账号是 `admin`，初始密码在启动结束时打印出来，首次登录必须修改；忘记密码时运行 `examples/demo/reset-admin.sh` 重新生成。
 
 - 第一次运行会生成 `examples/demo/.env`，里面是 MySQL 密码、challenge 签名密钥和 secret 加密主密钥（KEK）。这些都是本地演示用的随机值，已被 git 忽略。
 - 第一次启动要拉取 `php:8.3-cli-alpine` 镜像，并在容器里编译 gateway 和 botguard-ctl，需要几分钟。如果访问 proxy.golang.org 慢，先 `export GOPROXY=https://goproxy.cn,direct` 再运行。

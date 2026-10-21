@@ -188,3 +188,54 @@ func TestConsoleLockoutAndOwnerGuard(t *testing.T) {
 		t.Fatal("session survived a reset")
 	}
 }
+
+// The second login step takes only the code, with the ticket from the
+// password step: wrong codes keep the ticket, a used ticket is gone, and a
+// ticket allows a few attempts only.
+func TestConsoleTwoStepTOTP(t *testing.T) {
+	c, clock := newConsole(t)
+	ctx := context.Background()
+	pw, _ := c.CreateAdmin(ctx, nil, "", "ops", "", RoleOperator)
+	p, err := c.Login(ctx, LoginInput{Username: "ops", Password: pw})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _, _ := c.BeginTOTP(ctx, p)
+	code, _ := totp.Code(secret, *clock)
+	if err := c.ConfirmTOTP(ctx, p, "", code); err != nil {
+		t.Fatal(err)
+	}
+	*clock = clock.Add(30 * time.Second)
+
+	_, err = c.Login(ctx, LoginInput{Username: "ops", Password: pw, IP: "203.0.113.5"})
+	var ch *OTPChallenge
+	if !errors.As(err, &ch) || ch.Token == "" || ch.Username != "ops" || !errors.Is(err, ErrOTPRequired) {
+		t.Fatalf("password step: %v", err)
+	}
+	_, err = c.Login(ctx, LoginInput{Pending: ch.Token, OTP: "000000", IP: "203.0.113.5"})
+	var again *OTPChallenge
+	if !errors.As(err, &again) || again.Token != ch.Token || !errors.Is(err, ErrOTPInvalid) {
+		t.Fatalf("wrong code: %v", err)
+	}
+	code, _ = totp.Code(secret, *clock)
+	got, err := c.Login(ctx, LoginInput{Pending: ch.Token, OTP: code, IP: "203.0.113.5"})
+	if err != nil || got.Admin.Username != "ops" {
+		t.Fatalf("code step: %v", err)
+	}
+	if _, err := c.Login(ctx, LoginInput{Pending: ch.Token, OTP: code}); !errors.Is(err, ErrOTPExpired) {
+		t.Fatalf("ticket reused: %v", err)
+	}
+	if _, err := c.Login(ctx, LoginInput{Pending: "forged-ticket", OTP: code}); !errors.Is(err, ErrOTPExpired) {
+		t.Fatalf("forged ticket: %v", err)
+	}
+	_, err = c.Login(ctx, LoginInput{Username: "ops", Password: pw})
+	errors.As(err, &ch)
+	for i := 0; i < 5; i++ {
+		_, _ = c.Login(ctx, LoginInput{Pending: ch.Token, OTP: "111111"})
+	}
+	*clock = clock.Add(30 * time.Second)
+	code, _ = totp.Code(secret, *clock)
+	if _, err := c.Login(ctx, LoginInput{Pending: ch.Token, OTP: code}); !errors.Is(err, ErrOTPExpired) {
+		t.Fatalf("sixth attempt: %v", err)
+	}
+}
