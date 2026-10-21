@@ -35,6 +35,14 @@ jobs:
           node-version: "22"
       - run: make check
       - run: shellcheck -S warning scripts/install.sh scripts/botguard.sh scripts/release.sh scripts/build-repo.sh deploy/nfpm/*.sh
+      # macOS 的 bash 3.2 在非 UTF-8 环境下把 "$VAR（" 里全角字符的字节读成变量名的一部分，
+      # 变量后面紧跟中文时要写成 ${VAR}。
+      - name: No $VAR directly followed by non-ASCII
+        run: |
+          if grep -nP '\$[A-Za-z_][A-Za-z0-9_]*(?=[^\x00-\x7f])' scripts/*.sh deploy/nfpm/*.sh; then
+            echo "::error::变量后面紧跟非 ASCII 字符，请改成 \${VAR}"
+            exit 1
+          fi
       - run: make test-integration
         env:
           BOTGUARD_TEST_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/botguard_test
