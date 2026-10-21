@@ -1,8 +1,9 @@
 # Publishes the server (gateway, admin-web, botguard-ctl) when a tag vX.Y.Z is
-# pushed; vX.Y.Z-rc.1 and the like become pre-releases.
+# pushed, or when publish.yml (the manual "发版" workflow) has created the tag
+# and calls this workflow; vX.Y.Z-rc.1 and the like become pre-releases.
 #
-# - release: scripts/release.sh builds static linux/amd64 and linux/arm64
-#   tar.gz, .deb and .rpm packages plus checksums.txt; each file gets a build
+# - release: scripts/release.sh builds static linux and darwin (amd64, arm64)
+#   tar.gz, Linux .deb and .rpm packages plus checksums.txt; each file gets a build
 #   provenance attestation (gh attestation verify <file> -R dkeepersun/BotGuard).
 #   With the REPO_GPG_PRIVATE_KEY secret set, the rpm packages are signed.
 # - image: pushes ghcr.io/dkeepersun/botguard (amd64 + arm64).
@@ -13,9 +14,20 @@ name: release
 on:
   push:
     tags: ["v*"]
+  # A tag pushed with GITHUB_TOKEN starts no workflow, so publish.yml calls
+  # this one directly with the tag it created.
+  workflow_call:
+    inputs:
+      tag:
+        description: The vX.Y.Z tag to publish (must already exist)
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   release:
@@ -26,6 +38,8 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
@@ -41,7 +55,7 @@ jobs:
           else
             echo "::notice::REPO_GPG_PRIVATE_KEY is not set; rpm packages are unsigned"
           fi
-      - run: scripts/release.sh "$GITHUB_REF_NAME"
+      - run: scripts/release.sh "$TAG"
         env:
           BOTGUARD_REQUIRE_PACKAGES: "1"
           NFPM_RPM_PASSPHRASE: ${{ secrets.REPO_GPG_PASSPHRASE }}
@@ -58,9 +72,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           flags=()
-          case "$GITHUB_REF_NAME" in *-*) flags+=(--prerelease) ;; esac
-          gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.deb dist/*.rpm dist/checksums.txt \
-            --verify-tag --title "BotGuard $GITHUB_REF_NAME" --generate-notes "${flags[@]}"
+          case "$TAG" in *-*) flags+=(--prerelease) ;; esac
+          gh release create "$TAG" dist/*.tar.gz dist/*.deb dist/*.rpm dist/checksums.txt \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --title "BotGuard $TAG" --generate-notes "${flags[@]}"
 
   image:
     runs-on: ubuntu-latest
@@ -68,6 +82,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ env.TAG }}
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
@@ -75,15 +91,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      # 0.2.0 and 0.2 for every release; latest only for releases without a
-      # pre-release suffix.
+      # A release gets 0.2.0, 0.2 and latest; a pre-release (0.2.0-rc.1) only
+      # its own version tag.
       - id: meta
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/dkeepersun/botguard
+          # value: called from publish.yml the ref is the branch, not the tag.
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ env.TAG }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG }}
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -91,6 +108,6 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: VERSION=${{ github.ref_name }}
+          build-args: VERSION=${{ env.TAG }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

@@ -13,7 +13,7 @@ name: repo
 
 on:
   workflow_run:
-    workflows: [release]
+    workflows: [release, publish]
     types: [completed]
   workflow_dispatch:
 

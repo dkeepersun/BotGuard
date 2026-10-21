@@ -105,6 +105,11 @@ for target in $TARGETS; do
       "$NFPM" package --config "$DIST_DIR/nfpm.yaml" --packager "$format" --target "$DIST_DIR/" >/dev/null
     done
     rm -f "$DIST_DIR/nfpm.yaml"
+    # 预发布版本在 deb/rpm 文件名里写成 0.2.0~rc.1，GitHub 上传附件时会把 ~ 换成 .；
+    # 先改名，checksums.txt 才和 Release 上的文件名一致。包内的版本号不变。
+    for f in "$DIST_DIR"/*~*; do
+      if [[ -e "$f" ]]; then mv "$f" "${f//\~/.}"; fi
+    done
   fi
   rm -rf "$stage"
 done

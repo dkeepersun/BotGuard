@@ -82,7 +82,7 @@ Packagist 只认仓库根目录的 `composer.json`，所以两个 PHP 包要先�
 
 ## 四、服务端发布
 
-推送 `vX.Y.Z` 标签后，`release` 工作流（`.github/workflows/release.yml`）运行两个任务：
+推送 `vX.Y.Z` 标签，或手动运行 `publish` 工作流（它会创建标签，再调用 `release`）后，`release` 工作流（`.github/workflows/release.yml`）运行两个任务：
 
 **release**：
 
@@ -126,12 +126,15 @@ botguard_0.3.0_linux_amd64/
 
 1. 确认 main 上的 CI 通过（`install` 任务会在全新的 runner 上实际跑一遍安装脚本、deb 包和 Docker 部署）。新版本需要改配置或有不兼容变更时，先想好要写进 Release 说明的内容。
 2. 本机可以先试打包：`scripts/release.sh v0.3.0`，产物在 `dist/`（已加入 `.gitignore`）。装了 nfpm 时同时生成 deb 和 rpm：`go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0`。
-3. 打标签并推送：
+3. 打标签，两种方式效果相同，任选一种：
+   - **在网页上**：Actions → **publish** → Run workflow，填版本号（例如 `v0.3.0`），分支默认 `main`。工作流会先检查版本号格式、标签是否已存在、这个提交的 CI 是否已通过，再创建标签并发布。也可以用 API 或 `gh workflow run publish.yml -f version=v0.3.0` 触发。
+   - **在本机**：
 
-   ```bash
-   git tag -a v0.3.0 -m "BotGuard v0.3.0"
-   git push origin v0.3.0
-   ```
+     ```bash
+     git fetch origin
+     git tag -a v0.3.0 origin/main -m "BotGuard v0.3.0"
+     git push origin v0.3.0
+     ```
 
 4. 工作流结束后，在 Release 页面检查附件和自动生成的说明，需要时手动补充升级注意事项（配置变化、迁移耗时等）。确认 `repo` 工作流已更新软件源。
 
