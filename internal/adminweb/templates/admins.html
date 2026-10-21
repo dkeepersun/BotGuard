@@ -8,9 +8,9 @@
     <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>动态码</th><th>最近登录</th><th>创建时间</th><th class="actions">操作</th></tr></thead><tbody>
     {{range $d.Admins}}{{$self := eq .ID $.Me.Admin.ID}}<tr>
       <td><span class="cell-title">{{.Username}}</span>{{if $self}} <span class="badge plain blue">我</span>{{end}}{{if .DisplayName}}<div class="cell-sub">{{.DisplayName}}</div>{{end}}</td>
-      <td>{{role .Role}}</td>
-      <td>{{if .Enabled}}<span class="badge ok">启用</span>{{else}}<span class="badge">停用</span>{{end}}{{if .MustChangePassword}} <span class="badge warn plain">待改密码</span>{{end}}</td>
-      <td>{{if .TOTPEnabled}}<span class="badge ok plain">已开启</span>{{else}}<span class="muted">未开启</span>{{end}}</td>
+      <td class="nowrap">{{role .Role}}</td>
+      <td class="nowrap">{{if .Enabled}}<span class="badge ok">启用</span>{{else}}<span class="badge">停用</span>{{end}}{{if .MustChangePassword}} <span class="badge warn plain">待改密码</span>{{end}}</td>
+      <td class="nowrap">{{if .TOTPEnabled}}<span class="badge ok plain">已开启</span>{{else}}<span class="muted">未开启</span>{{end}}</td>
       <td class="cell-sub nowrap">{{if .LastLoginAt.Valid}}{{time .LastLoginAt.Time}}<div class="mono">{{.LastLoginIP.String}}</div>{{else}}从未登录{{end}}</td>
       <td class="cell-sub nowrap">{{time .CreatedAt}}</td>
       <td class="actions">
@@ -44,14 +44,14 @@
   </div>
   <div class="m-foot"><button type="button" class="btn" data-close>取消</button><button class="btn primary">保存</button></div></form></dialog>
 {{with $d.Reveal}}
-<dialog class="modal" id="dlg-reveal" data-autoshow data-locked>
+<dialog class="modal" id="dlg-reveal" data-autoshow data-locked data-url="/admins">
   <div class="m-head"><h3>{{.Title}}</h3></div>
   <div class="m-body">
     <p class="muted" style="margin-top:0">{{.Note}}</p>
-    <div class="alert warn"><b>密码只显示这一次。</b>关闭后无法再次查看。请通过安全的渠道交给对方，不要通过群聊明文发送。</div>
+    <div class="alert warn"><span><b>密码只显示这一次。</b>关闭后无法再次查看。请通过安全的渠道交给对方，不要通过群聊明文发送。</span></div>
     <div class="form-row"><span class="label">用户名</span><div class="secret-box"><span>{{.Username}}</span></div></div>
     <div class="form-row" style="margin-bottom:0"><span class="label">{{if .SignedOut}}新密码{{else}}初始密码{{end}}</span><div class="secret-box"><span id="pw">{{.Password}}</span><button class="btn sm" data-copy="#pw">复制</button></div></div>
   </div>
-  <div class="m-foot">{{if .SignedOut}}<a class="btn primary" href="/login" target="_top">我已保存，重新登录</a>{{else}}<button type="button" class="btn primary" data-close>我已保存，关闭</button>{{end}}</div>
+  <div class="m-foot">{{if .SignedOut}}<a class="btn primary" href="/login" target="_top">我已保存，重新登录</a>{{else}}<button type="button" class="btn primary" data-close data-done>我已保存，关闭</button>{{end}}</div>
 </dialog>{{end}}
 {{template "foot" .}}

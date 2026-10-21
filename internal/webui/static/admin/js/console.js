@@ -224,10 +224,18 @@
     openTab(auto.dataset.tabOpen, auto.dataset.title, auto.getAttribute('href'));
   }
 
-  // One-time secrets show in a dialog on load. A locked one ignores Esc and
-  // the backdrop, so it is only closed on purpose ("I have saved it").
+  // One-time secrets show in a dialog on load. A locked one is only closed
+  // on purpose ("I have saved it"): browsers let Esc close a dialog opened
+  // without a user gesture even when cancel is prevented, so reopen it.
   $$('dialog[data-autoshow]').forEach((d) => {
-    if (d.dataset.locked !== undefined) d.addEventListener('cancel', (e) => e.preventDefault());
+    // The page came from a POST; a reload should fetch the plain page, which
+    // does not show the secret again.
+    if (d.dataset.url) history.replaceState(null, '', d.dataset.url);
+    if (d.dataset.locked !== undefined) {
+      d.addEventListener('cancel', (e) => e.preventDefault());
+      d.addEventListener('click', (e) => { if (e.target.closest('[data-done]')) d.dataset.done = '1'; }, true);
+      d.addEventListener('close', () => { if (!d.dataset.done) d.showModal(); });
+    }
     d.showModal();
   });
 
@@ -282,7 +290,8 @@
       const b = e.target.closest('button[data-tab]');
       if (b) select(b.dataset.tab, true);
     });
-    const want = new URL(location.href).searchParams.get('tab');
+    // ?tab= wins; a page rendered by a POST (no query) names its own tab.
+    const want = new URL(location.href).searchParams.get('tab') || bar.dataset.tabDefault;
     select(buttons.some((b) => b.dataset.tab === want) ? want : buttons[0]?.dataset.tab, false);
   });
 
