@@ -1,0 +1,82 @@
+# Rebuilds the APT / YUM repository on GitHub Pages from the latest
+# (non pre-release) GitHub Release, after the release workflow succeeds or on
+# demand. The repository holds only the latest version: database migrations
+# only move forward, so older packages are not installable alternatives.
+#
+# One-time setup (docs/release.md, "软件源"):
+# - Settings → Pages → Source: GitHub Actions;
+# - secret REPO_GPG_PRIVATE_KEY (armored private key, also signs the rpm
+#   packages in release.yml) and optional REPO_GPG_PASSPHRASE.
+# Runs on the default branch (workflow_run), which the github-pages
+# environment allows by default.
+name: repo
+
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          REPO_GPG_PRIVATE_KEY: ${{ secrets.REPO_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$REPO_GPG_PRIVATE_KEY" ]; then
+            echo "::warning::REPO_GPG_PRIVATE_KEY is not set; skipping the APT/YUM repository"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ready == 'true'
+      - name: Download the latest release
+        if: steps.check.outputs.ready == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # gh release download without a tag takes the latest non pre-release.
+          gh release download --repo "$GITHUB_REPOSITORY" --dir pkgs --pattern '*.deb' --pattern '*.rpm'
+          ls -l pkgs
+      - name: Build the repository
+        if: steps.check.outputs.ready == 'true'
+        env:
+          REPO_GPG_PRIVATE_KEY: ${{ secrets.REPO_GPG_PRIVATE_KEY }}
+          REPO_GPG_PASSPHRASE: ${{ secrets.REPO_GPG_PASSPHRASE }}
+          REPO_URL: https://dkeepersun.github.io/BotGuard
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq apt-utils createrepo-c
+          printf '%s\n' "$REPO_GPG_PRIVATE_KEY" | gpg --batch --import
+          scripts/build-repo.sh pkgs site
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.check.outputs.ready == 'true'
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    if: needs.build.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

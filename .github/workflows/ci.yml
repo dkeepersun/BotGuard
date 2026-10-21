@@ -34,6 +34,7 @@ jobs:
         with:
           node-version: "22"
       - run: make check
+      - run: shellcheck -S warning scripts/install.sh scripts/botguard.sh scripts/release.sh scripts/build-repo.sh deploy/nfpm/*.sh
       - run: make test-integration
         env:
           BOTGUARD_TEST_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/botguard_test
@@ -57,3 +58,80 @@ jobs:
           extensions: curl
       - run: php packages/php/tests/run.php
       - run: find packages/php packages/laravel -name '*.php' -print0 | xargs -0 -n1 php -l
+
+  # The installation methods end to end on a fresh runner (systemd, sudo, no
+  # Redis): packages and the image are built from this commit and served over
+  # local HTTP in place of GitHub Releases and raw.githubusercontent.com.
+  install:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        method: [binary, deb, docker]
+    env:
+      VERSION: v0.0.0-ci
+      BOTGUARD_RELEASE_BASE: http://127.0.0.1:18080
+      BOTGUARD_RAW_BASE: http://127.0.0.1:18080/raw
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        if: matrix.method != 'docker'
+        with:
+          go-version-file: go.mod
+      - name: Build packages
+        if: matrix.method != 'docker'
+        run: |
+          go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0
+          BOTGUARD_REQUIRE_PACKAGES=1 scripts/release.sh "$VERSION" linux/amd64
+      - name: Build the image
+        if: matrix.method == 'docker'
+        run: docker build -t "ghcr.io/dkeepersun/botguard:${VERSION#v}" --build-arg VERSION="$VERSION" .
+      - name: Serve the release files
+        run: |
+          mkdir -p "/tmp/site/download/$VERSION" "/tmp/site/raw/$VERSION/deploy/docker"
+          cp dist/* "/tmp/site/download/$VERSION/" 2>/dev/null || true
+          cp deploy/docker/compose.yml "/tmp/site/raw/$VERSION/deploy/docker/"
+          (cd /tmp/site && python3 -m http.server 18080 >/dev/null 2>&1 &)
+          sleep 1
+
+      - name: Install (binary)
+        if: matrix.method == 'binary'
+        run: sh scripts/install.sh --method binary --version "$VERSION" -y
+      - name: Install (deb)
+        if: matrix.method == 'deb'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ./dist/botguard_*_amd64.deb
+          sudo botguard ctl admin create -username admin
+      - name: Install (docker)
+        if: matrix.method == 'docker'
+        run: sh scripts/install.sh --method docker --version "$VERSION" --dir /tmp/botguard -y
+
+      - name: Check the services
+        run: |
+          for port in 8090 8091; do
+            for _ in $(seq 1 30); do
+              curl -fsS "http://127.0.0.1:$port/readyz" | grep -q '"ready"' && break
+              sleep 1
+            done
+            curl -fsS "http://127.0.0.1:$port/readyz"; echo
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:8090/sdk/v1/load.js
+      - name: Check the native install
+        if: matrix.method != 'docker'
+        run: |
+          botguard status
+          sudo botguard ctl admin list | grep -q admin
+          systemctl is-enabled botguard-gateway botguard-admin-web
+          sudo test "$(sudo stat -c %U /var/lib/botguard/botguard.db)" = botguard
+      - name: Run the installer again (upgrade path)
+        if: matrix.method == 'binary'
+        run: |
+          sh scripts/install.sh --method binary --version "$VERSION" -y | tee /tmp/again.log
+          grep -q 已升级 /tmp/again.log
+      - name: Remove the package
+        if: matrix.method == 'deb'
+        run: |
+          sudo apt-get remove -y botguard
+          if systemctl cat botguard-gateway >/dev/null 2>&1; then exit 1; fi
+          sudo test -f /etc/botguard/botguard.env

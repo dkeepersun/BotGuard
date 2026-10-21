@@ -1,0 +1,64 @@
+# BotGuard 的 Docker Compose 部署：Redis + gateway + 管理后台，数据库为 SQLite（卷 botguard-data）。
+# install.sh --method docker 会下载本文件并在同目录生成 .env（随机密钥）；手动部署见 docs/install.md。
+#
+#   docker compose up -d
+#   docker compose exec admin-web botguard-ctl admin create -username admin
+name: botguard
+
+x-botguard: &botguard
+  image: ${BOTGUARD_IMAGE:-ghcr.io/dkeepersun/botguard}:${BOTGUARD_VERSION:-latest}
+  restart: unless-stopped
+  environment: &env
+    BOTGUARD_CHALLENGE_KEY_K1: ${BOTGUARD_CHALLENGE_KEY_K1:?.env 里缺少 BOTGUARD_CHALLENGE_KEY_K1}
+    BOTGUARD_SECRET_KEK: ${BOTGUARD_SECRET_KEK:?.env 里缺少 BOTGUARD_SECRET_KEK}
+    BOTGUARD_SECRET_KEK_PREVIOUS: ${BOTGUARD_SECRET_KEK_PREVIOUS:-}
+    BOTGUARD_PUBLIC_ENDPOINT: ${BOTGUARD_PUBLIC_ENDPOINT:-http://localhost:8090}
+    BOTGUARD_GATEWAY_URL: http://gateway:8090
+    BOTGUARD_REDIS_ADDR: redis:6379
+  volumes:
+    - botguard-data:/var/lib/botguard
+
+services:
+  redis:
+    image: ${BOTGUARD_REDIS_IMAGE:-redis:7.4-alpine}
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 20
+
+  gateway:
+    <<: *botguard
+    command: ["gateway", "-f", "/etc/botguard/gateway.yaml"]
+    ports:
+      - "${BOTGUARD_LISTEN:-0.0.0.0}:${BOTGUARD_PORT:-8090}:8090"
+    depends_on:
+      redis: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8090/healthz"]
+      interval: 5s
+      retries: 20
+
+  admin-web:
+    <<: *botguard
+    command: ["admin-web", "-f", "/etc/botguard/admin-web.yaml"]
+    environment:
+      <<: *env
+      # 容器里监听 0.0.0.0，但端口只发布到宿主机的 127.0.0.1，允许 HTTP 会话 Cookie。
+      # 对外开放管理后台时请改为经 HTTPS 反向代理访问，并在配置里打开 CookieSecure。
+      BOTGUARD_ADMIN_INSECURE_COOKIE: "1"
+    ports:
+      - "127.0.0.1:${BOTGUARD_ADMIN_PORT:-8091}:8091"
+    depends_on:
+      redis: { condition: service_healthy }
+      gateway: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8091/healthz"]
+      interval: 5s
+      retries: 20
+
+volumes:
+  botguard-data:
+  redis-data:

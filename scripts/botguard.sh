@@ -6,13 +6,18 @@
 # 说明见 docs/deploy.md。
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 安装脚本会把 /usr/local/bin/botguard 链接到这里，先解开链接再定位程序目录。
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 BIN_DIR="$ROOT_DIR/bin"
 LOG_DIR="$ROOT_DIR/logs"
 TEMPLATE_FILE="$ROOT_DIR/deploy/systemd/botguard.service.tmpl"
 UNIT_DIR=/etc/systemd/system
 RELEASE_BASE="${BOTGUARD_RELEASE_BASE:-https://github.com/dkeepersun/BotGuard/releases}"
+# init 生成的服务器配置和 SQLite 数据目录。
+ETC_DIR=/etc/botguard
+DATA_DIR=/var/lib/botguard
 
 # 有 go.mod 是源码目录；发布包里只有编译好的二进制和 VERSION 文件。
 if [[ -f "$ROOT_DIR/go.mod" ]]; then
@@ -61,8 +66,12 @@ usage() {
   upgrade [版本]        发布包：下载 GitHub Release（默认最新版）→ 校验 → 替换 → 迁移 → 重启
   migrate               执行 botguard-ctl migrate up
   ctl <参数...>          加载环境变量后执行 botguard-ctl，例如 ctl admin create -username admin
+                        装了 systemd 服务时以服务的运行用户执行（SQLite 文件属于它）
   status [服务]         运行状态、PID 和 /readyz
   logs <服务> [-n 行数] [-f]
+  init [-y] [--user 用户] [--public-endpoint 地址] [--listen 地址]
+                        生成服务器配置：创建运行用户、$ETC_DIR 下的配置和密钥、
+                        $DATA_DIR 数据目录；已有的文件不覆盖，只改参数指定的项
   install-systemd [--user 用户] [--group 组] [--no-start]
                         安装 systemd 服务并设为开机自启，默认装完立即（重新）启动
   uninstall-systemd     停止、禁用并删除 systemd 服务（不删二进制、配置和日志）
@@ -186,26 +195,55 @@ ensure_built() {
   if [[ -n "$missing" ]]; then build "$missing"; fi
 }
 
+# systemd 服务的运行用户；没装服务时返回失败。
+service_user() {
+  local unit user
+  unit="$UNIT_DIR/$(unit_name gateway).service"
+  [[ -f "$unit" ]] || return 1
+  user="$(awk -F= '/^User=/{print $2; exit}' "$unit")"
+  [[ -n "$user" ]] || return 1
+  echo "$user"
+}
+
+# botguard-ctl 和服务用同一个 SQLite 文件：以服务的运行用户执行，root 不会留下
+# 服务读写不了的文件；工作目录和服务一致，相对路径的数据库指向同一个文件。
+run_ctl() {
+  local user vars
+  cd "$ROOT_DIR"
+  user="$(service_user 2>/dev/null || true)"
+  if [[ -z "$user" || "$user" == "$(id -un)" ]]; then
+    "$BIN_DIR/botguard-ctl" "$@"
+  elif [[ "$(id -u)" -eq 0 ]]; then
+    # runuser 不加 -l 时保留环境变量。
+    runuser -u "$user" -- "$BIN_DIR/botguard-ctl" "$@"
+  elif [[ -n "$SUDO" ]]; then
+    vars="$(compgen -e | grep '^BOTGUARD_' | paste -sd, -)"
+    $SUDO ${vars:+--preserve-env="$vars"} -u "$user" -- "$BIN_DIR/botguard-ctl" "$@"
+  else
+    die "服务以 $user 运行，需要 root 或 sudo 才能以它的身份执行 botguard-ctl"
+  fi
+}
+
 migrate() {
   [[ -x "$BIN_DIR/botguard-ctl" ]] || build ""
   load_env
   echo "迁移库结构 ..."
-  "$BIN_DIR/botguard-ctl" migrate up
+  (run_ctl migrate up)
 }
 
 ctl() {
   [[ -x "$BIN_DIR/botguard-ctl" ]] || build ""
   load_env
-  exec "$BIN_DIR/botguard-ctl" "$@"
+  run_ctl "$@"
 }
 
 # ---------- 健康检查 ----------
 
 wait_healthy() {
-  local svc="$1" url i
+  local svc="$1" url
   command -v curl >/dev/null 2>&1 || return 0
   url="$(service_url "$svc")" || return 0
-  for i in $(seq 1 20); do
+  for _ in $(seq 1 20); do
     if curl -fsS -m 2 "$url/healthz" >/dev/null 2>&1; then
       echo "$svc 已就绪: $url"
       return 0
@@ -288,14 +326,14 @@ manual_start() {
 }
 
 manual_stop() {
-  local svc="$1" pid i
+  local svc="$1" pid
   if ! pid="$(running_pid "$svc")"; then
     echo "$svc 未运行"
     return 0
   fi
   echo "停止 $svc (PID $pid) ..."
   kill "$pid" 2>/dev/null || true
-  for i in $(seq 1 20); do
+  for _ in $(seq 1 20); do
     if ! kill -0 "$pid" 2>/dev/null; then
       rm -f "$(pid_file "$svc")"
       echo "$svc 已停止"
@@ -376,6 +414,10 @@ UPGRADE_FILES="bin/gateway bin/admin-web bin/botguard-ctl scripts/botguard.sh
 upgrade() {
   local want="${1:-latest}" os arch tag current name tmp f
   [[ "$FROM_SOURCE" -eq 0 ]] || die "这是源码目录，升级用 scripts/botguard.sh update（git pull 后重新编译）"
+  if [[ -f "$ROOT_DIR/PACKAGED" ]]; then
+    die "这是 deb/rpm 包安装的，用系统包管理器升级：sudo apt-get install --only-upgrade botguard 或 sudo dnf upgrade botguard"
+  fi
+  [[ -w "$ROOT_DIR" ]] || die "没有写 $ROOT_DIR 的权限，请用 sudo 执行"
   command -v curl >/dev/null 2>&1 || die "需要 curl"
   case "$(uname -s)" in
     Linux) os=linux ;;
@@ -483,6 +525,175 @@ logs() {
   fi
 }
 
+# ---------- 服务器初始化 ----------
+
+random_key() {
+  head -c 32 /dev/urandom | base64 | tr -d '\n'
+}
+
+# 本机对外的 IPv4 地址，拼默认的公开地址用。
+default_ip() {
+  local ip=""
+  if command -v ip >/dev/null 2>&1; then
+    ip="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") { print $(i + 1); exit }}')"
+  fi
+  [[ -n "$ip" ]] || ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  echo "${ip:-127.0.0.1}"
+}
+
+is_loopback() {
+  case "$1" in 127.* | localhost | ::1) return 0 ;; *) return 1 ;; esac
+}
+
+# ask 变量名 提示 默认值：交互时读一行，直接回车用默认值；-y 或没有终端时用默认值。
+ask() {
+  local answer=""
+  if [[ "$INIT_INTERACTIVE" -eq 1 ]]; then
+    read -r -p "$2 [$3]: " answer || true
+  fi
+  printf -v "$1" '%s' "${answer:-$3}"
+}
+
+# 改 KEY='value' 文件里的一项，没有就追加；先写临时文件再改名。
+set_env_value() {
+  local file="$1" key="$2" value="$3" tmp
+  [[ "$value" != *"'"* ]] || die "$key 的值不能包含单引号"
+  tmp="$(mktemp "$file.XXXXXX")"
+  if grep -q "^$key=" "$file"; then
+    awk -v k="$key" -v line="$key='$value'" 'index($0, k "=") == 1 { print line; next } { print }' "$file" > "$tmp"
+  else
+    cat "$file" > "$tmp"
+    echo "$key='$value'" >> "$tmp"
+  fi
+  chmod 0600 "$tmp"
+  mv -f "$tmp" "$file"
+}
+
+create_system_user() {
+  local nologin
+  nologin="$(command -v nologin 2>/dev/null || echo /usr/sbin/nologin)"
+  if command -v useradd >/dev/null 2>&1; then
+    useradd --system --user-group --home-dir "$DATA_DIR" --no-create-home --shell "$nologin" "$1"
+  elif command -v adduser >/dev/null 2>&1; then
+    # BusyBox（Alpine）
+    addgroup -S "$1"
+    adduser -S -D -H -h "$DATA_DIR" -s "$nologin" -G "$1" "$1"
+  else
+    die "找不到 useradd 或 adduser，请先手动创建用户 $1"
+  fi
+  echo "已创建系统用户 $1"
+}
+
+# 从 configs/ 渲染 /etc/botguard 下的配置：日志改为输出到标准输出（systemd 收进 journal），
+# gateway 监听指定的地址；发行版自带的 Redis 常是 7.0，不发 7.2 才有的 CLIENT SETINFO。
+# 其余保持样例的默认值。
+render_conf() {
+  local svc="$1" listen="$2" args=()
+  args+=(-e '/^Log:/,/^[^[:space:]]/ s/^\([[:space:]]*Mode:\) file/\1 console/')
+  args+=(-e 's/^\([[:space:]]*DisableIdentity:\) false/\1 true/')
+  if [[ "$svc" == gateway ]]; then
+    args+=(-e "s|^Host:.*|Host: $listen|")
+  fi
+  sed "${args[@]}" "$ROOT_DIR/configs/$svc.yaml"
+}
+
+init_server() {
+  local orig=("$@") run_user=botguard yes=0 endpoint="" listen="" port group env_file svc conf gateway_host tmp
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -y | --yes)
+        yes=1
+        shift
+        ;;
+      --user | --public-endpoint | --listen)
+        [[ $# -ge 2 && -n "$2" ]] || die "$1 需要参数"
+        case "$1" in
+          --user) run_user="$2" ;;
+          --public-endpoint) endpoint="$2" ;;
+          --listen) listen="$2" ;;
+        esac
+        shift 2
+        ;;
+      *) die "init 不认识的参数: $1" ;;
+    esac
+  done
+  if [[ "$(id -u)" -ne 0 ]]; then
+    [[ -n "$SUDO" ]] || die "init 需要 root"
+    exec $SUDO "$SCRIPT_PATH" init ${orig[@]+"${orig[@]}"}
+  fi
+  [[ -z "$listen" || "$listen" =~ ^[0-9A-Za-z.:_-]+$ ]] || die "监听地址无效: $listen"
+  [[ -z "$endpoint" || "$endpoint" =~ ^https?://[^[:space:]\']+$ ]] || die "公开地址应以 http:// 或 https:// 开头: $endpoint"
+  INIT_INTERACTIVE=0
+  if [[ "$yes" -eq 0 && -t 0 ]]; then INIT_INTERACTIVE=1; fi
+  env_file="$ETC_DIR/botguard.env"
+  port="$(awk '/^Port:/{print $2; exit}' "$ROOT_DIR/configs/gateway.yaml")"
+
+  if [[ ! -f "$ETC_DIR/gateway.yaml" && -z "$listen" ]]; then
+    [[ "$INIT_INTERACTIVE" -eq 0 ]] || echo "gateway 监听地址：直接对外提供服务填 0.0.0.0；放在 nginx 等反向代理后面填 127.0.0.1。"
+    ask listen "监听地址" 0.0.0.0
+  fi
+  if [[ ! -e "$env_file" && -z "$endpoint" ]]; then
+    if is_loopback "${listen:-127.0.0.1}"; then
+      endpoint="https://$(hostname -f 2>/dev/null || hostname)"
+    else
+      endpoint="http://$(default_ip):$port"
+    fi
+    [[ "$INIT_INTERACTIVE" -eq 0 ]] || echo "gateway 公开地址：浏览器和 SDK 用它访问 gateway，会写进管理后台给出的接入代码，之后可以改。"
+    ask endpoint "公开地址" "$endpoint"
+    [[ "$endpoint" =~ ^https?://[^[:space:]\']+$ ]] || die "公开地址应以 http:// 或 https:// 开头: $endpoint"
+  fi
+
+  if ! id "$run_user" >/dev/null 2>&1; then create_system_user "$run_user"; fi
+  group="$(id -gn "$run_user")"
+  install -d -m 0755 "$ETC_DIR"
+  # 数据库里有加密的应用密钥和密码哈希，只有运行用户能进。
+  install -d -m 0750 -o "$run_user" -g "$group" "$DATA_DIR"
+
+  for svc in $ALL_SERVICES; do
+    conf="$ETC_DIR/$svc.yaml"
+    if [[ ! -f "$conf" ]]; then
+      tmp="$(mktemp "$conf.XXXXXX")"
+      render_conf "$svc" "${listen:-0.0.0.0}" > "$tmp"
+      chmod 0644 "$tmp"
+      mv -f "$tmp" "$conf"
+      echo "已生成 $conf"
+    elif [[ "$svc" == gateway && -n "$listen" ]]; then
+      sed -i "s|^Host:.*|Host: $listen|" "$conf"
+      echo "已更新 $conf：Host: $listen"
+    fi
+  done
+
+  if [[ ! -e "$env_file" ]]; then
+    gateway_host="${listen:-0.0.0.0}"
+    case "$gateway_host" in 0.0.0.0 | "::") gateway_host=127.0.0.1 ;; esac
+    tmp="$(mktemp "$env_file.XXXXXX")"
+    cat > "$tmp" <<ENV
+# 由 botguard init 生成于 $(date '+%Y-%m-%d %H:%M:%S')。各项说明见 $ROOT_DIR/deploy/botguard.env.example。
+# 格式 KEY='value'，不要写 export：systemd 的 EnvironmentFile 不认。
+# 两个密钥生成后不要改：KEK 改了已有的应用密钥对就解不开了，轮换方法见 docs/deploy.md「更换 KEK」。
+
+BOTGUARD_DB_DRIVER='sqlite'
+BOTGUARD_DB_DSN='$DATA_DIR/botguard.db'
+
+BOTGUARD_CHALLENGE_KEY_K1='$(random_key)'
+BOTGUARD_SECRET_KEK='k1:$(random_key)'
+BOTGUARD_SECRET_KEK_PREVIOUS=''
+
+BOTGUARD_PUBLIC_ENDPOINT='$endpoint'
+BOTGUARD_GATEWAY_URL='http://$gateway_host:$port'
+ENV
+    chmod 0600 "$tmp"
+    mv -f "$tmp" "$env_file"
+    echo "已生成 $env_file（随机密钥，SQLite 数据库 $DATA_DIR/botguard.db）"
+  elif [[ -n "$endpoint" ]]; then
+    set_env_value "$env_file" BOTGUARD_PUBLIC_ENDPOINT "$endpoint"
+    echo "已更新 $env_file：BOTGUARD_PUBLIC_ENDPOINT='$endpoint'"
+  else
+    echo "$env_file 已存在，保持不变"
+  fi
+  echo "运行用户 $run_user，数据目录 $DATA_DIR"
+}
+
 # ---------- systemd ----------
 
 require_systemd() {
@@ -537,7 +748,7 @@ install_systemd() {
   for svc in $ALL_SERVICES; do
     unit="$(unit_name "$svc")"
     # 脚本方式启动的进程先停掉，否则和 systemd 抢端口。
-    if ! uses_systemd "$svc"; then manual_stop "$svc"; fi
+    if ! uses_systemd "$svc" && running_pid "$svc" >/dev/null; then manual_stop "$svc"; fi
     sed \
       -e "s|__PROJECT_DIR__|$(escape_sed "$ROOT_DIR")|g" \
       -e "s|__RUN_USER__|$(escape_sed "$run_user")|g" \
@@ -594,6 +805,7 @@ main() {
       ;;
     ctl) ctl "$@" ;;
     logs) logs "$@" ;;
+    init) init_server "$@" ;;
     install-systemd) install_systemd "$@" ;;
     uninstall-systemd) uninstall_systemd ;;
     help | -h | --help) usage ;;

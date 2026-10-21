@@ -4,7 +4,7 @@
 
 | 内容 | 渠道 | 标签 | 安装方式 |
 |---|---|---|---|
-| 服务端（gateway、admin-web、botguard-ctl） | GitHub Releases | `vX.Y.Z` | 下载发布包，见 [deploy.md](deploy.md) |
+| 服务端（gateway、admin-web、botguard-ctl） | GitHub Releases（tar.gz、deb、rpm）、APT/YUM 软件源、GHCR 镜像 | `vX.Y.Z` | 一键安装脚本，见 [install.md](install.md) |
 | `@botguard/browser` | npm | `browser-vX.Y.Z` | `npm install @botguard/browser` |
 | `botguard/php-sdk` | Packagist | `php-vX.Y.Z` | `composer require botguard/php-sdk` |
 | `botguard/laravel` | Packagist | `laravel-vX.Y.Z` | `composer require botguard/laravel` |
@@ -80,40 +80,61 @@ Packagist 只认仓库根目录的 `composer.json`，所以两个 PHP 包要先�
 2. 新建 Laravel 13 项目，执行 `composer require botguard/laravel`：lock 显示两个包都经 Packagist 解析，压缩包来自镜像仓库的 v0.1.0 标签。接上单独起的 gateway 后，`<x-botguard>` 从 gateway 加载组件，在浏览器中无感通过，控制器 `BotGuard::verify()` 返回通过。伪造的 token 返回 `TOKEN_INVALID`，`botguard:login` 规则判定失败。
 3. 从 gateway 跨域加载 `load.js` 的方式，已在 yihui-h5 模拟中验证（`docs/validation.md`）。
 
-## 四、服务端发布（GitHub Releases）
+## 四、服务端发布
 
-推送 `vX.Y.Z` 标签后，`release` 工作流（`.github/workflows/release.yml`）依次执行：
+推送 `vX.Y.Z` 标签后，`release` 工作流（`.github/workflows/release.yml`）运行两个任务：
+
+**release**：
 
 1. `make check`；
-2. `scripts/release.sh vX.Y.Z`：用 `CGO_ENABLED=0` 交叉编译 linux/amd64 和 linux/arm64 的静态二进制，版本号写进程序（`gateway -version`、`botguard-ctl version`、管理后台「系统信息」）；
-3. 为每个包生成构建来源证明（`actions/attest-build-provenance`），用户可以用 `gh attestation verify <文件> -R dkeepersun/BotGuard` 核对；
-4. 创建 GitHub Release，附上两个 tar.gz 和 `checksums.txt`，说明由 GitHub 自动生成（列出上一个 Release 以来合并的 PR，并附上两个版本的对比链接；直接提交到 main 的改动不会逐条列出，需要手动补充）。带 `-` 的版本（如 `v0.2.0-rc.1`）标为预发布，`upgrade` 默认取的“最新版”不包括预发布。
+2. `scripts/release.sh vX.Y.Z`：用 `CGO_ENABLED=0` 交叉编译 linux/amd64 和 linux/arm64 的静态二进制，版本号写进程序（`gateway -version`、`botguard-ctl version`、管理后台「系统信息」），每个平台打一个 tar.gz，再用 [nfpm](https://nfpm.goreleaser.com/) 打 deb 和 rpm（配置在 `deploy/nfpm/`）；配置了签名密钥时 rpm 带 GPG 签名；
+3. 为每个文件生成构建来源证明（`actions/attest-build-provenance`），用户可以用 `gh attestation verify <文件> -R dkeepersun/BotGuard` 核对；
+4. 创建 GitHub Release，附上 tar.gz、deb、rpm 和 `checksums.txt`，说明由 GitHub 自动生成（列出上一个 Release 以来合并的 PR；直接提交到 main 的改动不会逐条列出，需要手动补充）。带 `-` 的版本（如 `v0.3.0-rc.1`）标为预发布，`upgrade` 和安装脚本默认取的“最新版”不包括预发布。
 
-每个包解压后是一个可以直接部署的目录：
+**image**：构建 amd64 + arm64 镜像，推送到 `ghcr.io/dkeepersun/botguard`，标签为 `0.3.0`、`0.3`，正式版另加 `latest`。
+
+release 成功后，`repo` 工作流（`.github/workflows/repo.yml`）用最新正式版的 deb / rpm 重建 APT / YUM 软件源，发布到 GitHub Pages（<https://dkeepersun.github.io/BotGuard/>）。软件源只保留最新版本：迁移只向前，旧版本没有安装的意义。也可以在 Actions 页面手动运行 `repo` 重建。
+
+每个 tar.gz 解压后是一个可以直接部署的目录，deb / rpm 把同样的内容装到 `/opt/botguard`：
 
 ```
-botguard_0.2.0_linux_amd64/
+botguard_0.3.0_linux_amd64/
   bin/gateway  bin/admin-web  bin/botguard-ctl
-  configs/gateway.yaml  configs/admin-web.yaml     # 配置样例
+  configs/gateway.yaml  configs/admin-web.yaml     # 配置样例，botguard init 据此生成 /etc/botguard
   deploy/systemd/botguard.service.tmpl  deploy/botguard.env.example
   scripts/botguard.sh  docs/deploy.md  LICENSE  README.md  VERSION
 ```
 
-包里的文件清单在 `scripts/release.sh` 里写死，`deploy/` 下其他文件不会被带进去。
+包里的文件清单在 `scripts/release.sh` 里写死，`deploy/` 下其他文件不会被带进去。一键安装脚本 `scripts/install.sh` 不在包里，用户直接从 main 分支下载。
+
+### 软件源和镜像的一次性设置
+
+1. **签名密钥**。生成一把专用于软件源的 GPG 密钥（不设口令最简单；设了口令就把它存进 `REPO_GPG_PASSPHRASE`）：
+
+   ```bash
+   gpg --quick-gen-key "BotGuard Packages <你的邮箱>" rsa4096 sign never
+   gpg --armor --export-secret-keys "BotGuard Packages" > botguard-signing.asc
+   ```
+
+   在仓库 Settings → Secrets and variables → Actions 中新建 secret `REPO_GPG_PRIVATE_KEY`，内容为 `botguard-signing.asc`，然后删除本地文件。私钥同时用于签名 rpm 包和软件源元数据；公钥由工作流导出为 `gpg.key` 发布。**这把密钥不要更换**：换了之后，已经添加软件源的服务器需要重新导入公钥才能升级。
+2. **GitHub Pages**。Settings → Pages → Build and deployment → Source 选择 **GitHub Actions**。
+3. **镜像可见性**。第一次推送后，在 GitHub 个人主页 → Packages → `botguard` → Package settings 中把可见性改为 Public，否则用户拉取镜像需要登录。
+
+没有配置 `REPO_GPG_PRIVATE_KEY` 时，release 照常发布（rpm 不签名），`repo` 工作流会跳过并给出警告；一键安装脚本检测到软件源不可用时自动改用发布包安装。
 
 ### 发一个版本
 
-1. 确认 main 上的 CI 通过。新版本需要改配置或有不兼容变更时，先想好要写进 Release 说明的内容。
-2. 本机可以先试打包：`scripts/release.sh v0.2.0`，产物在 `dist/`（已加入 `.gitignore`）。
+1. 确认 main 上的 CI 通过（`install` 任务会在全新的 runner 上实际跑一遍安装脚本、deb 包和 Docker 部署）。新版本需要改配置或有不兼容变更时，先想好要写进 Release 说明的内容。
+2. 本机可以先试打包：`scripts/release.sh v0.3.0`，产物在 `dist/`（已加入 `.gitignore`）。装了 nfpm 时同时生成 deb 和 rpm：`go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0`。
 3. 打标签并推送：
 
    ```bash
-   git tag -a v0.2.0 -m "BotGuard v0.2.0"
-   git push origin v0.2.0
+   git tag -a v0.3.0 -m "BotGuard v0.3.0"
+   git push origin v0.3.0
    ```
 
-4. 工作流结束后，在 Release 页面检查附件和自动生成的说明，需要时手动补充升级注意事项（配置变化、迁移耗时等）。
+4. 工作流结束后，在 Release 页面检查附件和自动生成的说明，需要时手动补充升级注意事项（配置变化、迁移耗时等）。确认 `repo` 工作流已更新软件源。
 
-第一次发版建议先推 `v0.1.0-rc.1` 这样的预发布标签，确认工作流、附件和 `upgrade` 都正常后再发正式版。标签一旦推送就不要移动或复用；发错了就发下一个版本号。
+第一次发版建议先推 `v0.3.0-rc.1` 这样的预发布标签，确认工作流、附件、镜像和 `upgrade` 都正常后再发正式版。标签一旦推送就不要移动或复用；发错了就发下一个版本号。
 
-`vX.Y.Z` 标签同时也是 Go 模块版本，所以 `go install github.com/dkeepersun/BotGuard/cmd/gateway@v0.2.0` 也能装上对应版本（这样编译的程序版本号显示为模块版本）。
+`vX.Y.Z` 标签同时也是 Go 模块版本，所以 `go install github.com/dkeepersun/BotGuard/cmd/gateway@v0.3.0` 也能装上对应版本（这样编译的程序版本号显示为模块版本）。

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 打服务端发布包：每个目标平台一个 tar.gz，外加 checksums.txt，输出到 dist/。
+# 打服务端发布包：每个目标平台一个 tar.gz，Linux 平台另打 deb 和 rpm（需要 nfpm），
+# 外加 checksums.txt，输出到 dist/。
 # .github/workflows/release.yml 在推送 vX.Y.Z 标签时调用它；本机也可以直接运行来检查打包结果。
 # 说明见 docs/release.md。
 set -euo pipefail
@@ -16,7 +17,11 @@ usage() {
   版本   vX.Y.Z 或 vX.Y.Z-rc.1，与 git 标签一致
   平台   GOOS/GOARCH，默认 $DEFAULT_TARGETS
 
-输出 dist/botguard_<版本>_<系统>_<架构>.tar.gz 和 dist/checksums.txt。
+输出 dist/botguard_<版本>_<系统>_<架构>.tar.gz、Linux 的 .deb / .rpm 和 dist/checksums.txt。
+
+环境变量:
+  BOTGUARD_REQUIRE_PACKAGES=1  找不到 nfpm 时报错（发布工作流这样设置）；默认只打 tar.gz
+  NFPM_RPM_KEY_FILE           可选，签名 rpm 的 GPG 私钥文件（口令放 NFPM_RPM_PASSPHRASE）
 USAGE
 }
 
@@ -40,6 +45,14 @@ shift
 TARGETS="${*:-$DEFAULT_TARGETS}"
 
 command -v go >/dev/null 2>&1 || die "找不到 go 命令"
+NFPM=""
+if command -v nfpm >/dev/null 2>&1; then
+  NFPM=nfpm
+elif [[ "${BOTGUARD_REQUIRE_PACKAGES:-}" == 1 ]]; then
+  die "找不到 nfpm，无法打 deb/rpm：go install github.com/goreleaser/nfpm/v2/cmd/nfpm@v2.43.0"
+else
+  echo "提示: 没有 nfpm，只打 tar.gz"
+fi
 
 sha256() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi
@@ -83,9 +96,18 @@ for target in $TARGETS; do
   chmod 0755 "$stage"/bin/* "$stage/scripts/botguard.sh"
 
   (cd "$DIST_DIR" && pack "$name.tar.gz" "$name")
+  if [[ -n "$NFPM" && "$goos" == linux ]]; then
+    # nfpm 不展开 contents 里的变量，先渲染出这个平台的配置。
+    sed -e "s|\${STAGE}|$stage|g" -e "s|\${VERSION}|${VERSION#v}|g" -e "s|\${ARCH}|$goarch|g" \
+      -e "s|\${NFPM_RPM_KEY_FILE}|${NFPM_RPM_KEY_FILE:-}|g" deploy/nfpm/nfpm.yaml > "$DIST_DIR/nfpm.yaml"
+    for format in deb rpm; do
+      "$NFPM" package --config "$DIST_DIR/nfpm.yaml" --packager "$format" --target "$DIST_DIR/" >/dev/null
+    done
+    rm -f "$DIST_DIR/nfpm.yaml"
+  fi
   rm -rf "$stage"
 done
 
-(cd "$DIST_DIR" && sha256 ./*.tar.gz | sed 's| \./| |' > checksums.txt)
+(cd "$DIST_DIR" && sha256 ./*.tar.gz ./*.deb ./*.rpm 2>/dev/null | sed 's| \./| |' > checksums.txt)
 echo
 cat "$DIST_DIR/checksums.txt"

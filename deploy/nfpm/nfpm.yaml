@@ -1,0 +1,59 @@
+# deb / rpm 包定义，scripts/release.sh 在仓库根目录调用 nfpm 打包。
+# 下面的 ${STAGE} 等由 scripts/release.sh 替换（nfpm 不展开 contents 里的环境变量）：
+#   STAGE    已组装好的发布目录（和 tar.gz 内容相同）
+#   VERSION  不带 v 的版本号
+#   ARCH     amd64 | arm64（nfpm 会换成 rpm 的 x86_64 / aarch64）
+#   NFPM_RPM_KEY_FILE  可选，签名 rpm 的 GPG 私钥文件
+# 程序装在 /opt/botguard，和发布包的目录相同；安装后脚本生成 /etc/botguard 配置并注册 systemd 服务。
+name: botguard
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+version_schema: semver
+section: net
+priority: optional
+maintainer: dkeepersun <dkeepersun@users.noreply.github.com>
+vendor: BotGuard
+homepage: https://github.com/dkeepersun/BotGuard
+license: MIT
+description: |-
+  Self-hosted anti-bot verification service (gateway + admin console).
+  自建反机器人验证服务：gateway、管理后台和 botguard-ctl 命令行。
+
+depends:
+  - bash
+
+overrides:
+  deb:
+    depends:
+      - bash
+      - curl
+    # apt 默认安装 Recommends；Redis 在别的机器上时可以用 --no-install-recommends 跳过。
+    recommends:
+      - redis-server
+  rpm:
+    depends:
+      - bash
+      - curl
+      - shadow-utils
+      - util-linux
+    recommends:
+      - redis
+
+contents:
+  - src: ${STAGE}/
+    dst: /opt/botguard/
+    type: tree
+  - src: deploy/nfpm/PACKAGED
+    dst: /opt/botguard/PACKAGED
+  - src: /opt/botguard/scripts/botguard.sh
+    dst: /usr/bin/botguard
+    type: symlink
+
+scripts:
+  postinstall: deploy/nfpm/postinstall.sh
+  preremove: deploy/nfpm/preremove.sh
+
+rpm:
+  signature:
+    key_file: ${NFPM_RPM_KEY_FILE}
