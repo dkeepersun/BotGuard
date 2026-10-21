@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"runtime/debug"
 	"strings"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
 	"github.com/dkeepersun/BotGuard/internal/store"
+	"github.com/dkeepersun/BotGuard/internal/version"
 	"github.com/zeromicro/go-zero/core/conf"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
@@ -26,7 +26,12 @@ import (
 
 func main() {
 	path := flag.String("f", "configs/admin-web.yaml", "configuration file")
+	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
+	if *showVersion {
+		fmt.Println("admin-web", version.String())
+		return
+	}
 	var c config.AdminConfig
 	// Secrets and DSNs come from the environment, never the YAML file.
 	conf.MustLoad(*path, &c, conf.UseEnv())
@@ -92,7 +97,7 @@ func main() {
 		"会话时长":         fmt.Sprintf("空闲 %d 分钟 / 最长 %d 小时", c.Session.IdleMinutes, c.Session.AbsoluteHours),
 		"Cookie":       map[bool]string{true: "仅 HTTPS（Secure）", false: "允许 HTTP（仅限本机或内网）"}[c.CookieSecure],
 		"启动时间":         time.Now().Format("2006-01-02 15:04:05"),
-		"程序版本":         buildVersion(),
+		"程序版本":         version.String(),
 	}
 	httpClient := &http.Client{Timeout: 2 * time.Second}
 	checks := func(ctx context.Context) []adminweb.Check {
@@ -165,33 +170,4 @@ func orDash(s string) string {
 		return "未配置（接入代码中会显示占位地址）"
 	}
 	return s
-}
-
-func buildVersion() string {
-	bi, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "unknown"
-	}
-	rev, dirty := "", false
-	for _, s := range bi.Settings {
-		switch s.Key {
-		case "vcs.revision":
-			rev = s.Value
-		case "vcs.modified":
-			dirty = s.Value == "true"
-		}
-	}
-	if len(rev) > 7 {
-		rev = rev[:7]
-	}
-	if rev == "" {
-		if bi.Main.Version == "" || bi.Main.Version == "(devel)" {
-			return "开发构建（无版本信息）"
-		}
-		return bi.Main.Version
-	}
-	if dirty {
-		rev += "（含未提交改动）"
-	}
-	return rev
 }

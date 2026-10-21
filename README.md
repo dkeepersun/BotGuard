@@ -90,11 +90,20 @@ bin/botguard-ctl app show -app app_xxx
 
 轮换密钥对用 `secret rotate -secret sid_xxx -grace 24h`：立即生成新密钥对，旧的在宽限期结束后失效，期间两组都能用。变更在 gateway 应用缓存过期后生效（默认 10 秒内）。
 
+## 服务器部署
+
+[GitHub Releases](https://github.com/dkeepersun/BotGuard/releases) 提供编译好的 Linux 发布包（amd64 / arm64），解压即可部署，服务器上不需要 Go。`scripts/botguard.sh` 管理 gateway 和 admin-web：启停、迁移、看日志，`install-systemd` 一条命令装成开机自启的 systemd 服务，之后用 `scripts/botguard.sh upgrade` 升级到新版本（源码部署用 `update`）。目录约定、首次部署步骤和注意事项见 [docs/deploy.md](docs/deploy.md)，发版流程见 [docs/release.md](docs/release.md)。
+
+```sh
+scripts/botguard.sh install-systemd   # 安装 botguard-gateway / botguard-admin-web 并启动
+scripts/botguard.sh status            # 状态、PID 和 /readyz
+scripts/botguard.sh upgrade           # 下载最新发布包、校验、迁移并重启
+scripts/botguard.sh logs gateway -f
+```
+
 ## 升级
 
 SQLite：直接替换程序后重启，新版启动时自动迁移（整批迁移在一个事务里，失败会整体回滚）。
-
-MySQL：先迁移，再换 gateway：
 
 1. 用新版 `botguard-ctl migrate up`。迁移只向前、带 checksum，并用数据库锁防止并发执行。
 2. 滚动替换 gateway。新版 gateway 在库结构落后时 `/readyz` 返回 503 `schema_outdated`，不会接流量。

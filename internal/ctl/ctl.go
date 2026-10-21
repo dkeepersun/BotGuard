@@ -19,6 +19,8 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/credential"
 	"github.com/dkeepersun/BotGuard/internal/service/sealer"
 	"github.com/dkeepersun/BotGuard/internal/store"
+	"github.com/dkeepersun/BotGuard/internal/version"
+	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
 const (
@@ -69,6 +71,8 @@ const usage = `用法：botguard-ctl <命令> [参数]
                                                     -allow-weak 跳过强度要求，只用于本地测试环境
   admin enable  -username 用户名                    启用账号
   admin disable -username 用户名                    停用账号（不能停用最后一个启用的超级管理员）
+
+  version                                           显示程序版本
 
 应用、来源、action、密钥对的变更会在 gateway 的应用缓存过期后生效（默认 10 秒内）。
 `
@@ -171,6 +175,10 @@ func (a *App) run(ctx context.Context, args []string) error {
 	if len(args) < 2 {
 		if len(args) == 1 && (args[0] == "help" || args[0] == "-h" || args[0] == "--help") {
 			fmt.Fprint(a.Out, usage)
+			return nil
+		}
+		if len(args) == 1 && (args[0] == "version" || args[0] == "-version" || args[0] == "--version") {
+			fmt.Fprintln(a.Out, "botguard-ctl", version.String())
 			return nil
 		}
 		return usageError("缺少命令")
