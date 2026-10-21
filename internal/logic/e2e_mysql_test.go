@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -164,6 +165,27 @@ func TestCachedRevocationTakesEffectWithinTTL(t *testing.T) {
 	time.Sleep(1100 * time.Millisecond)
 	if k, err := cached.SecretPair(ctx, key.SecretID); err != nil || k.Usable(time.Now()) {
 		t.Fatalf("after TTL the key must be unusable: %+v %v", k, err)
+	}
+}
+
+// TestKnownKeysListsAppsAndSecrets checks the query behind CachedApps' index,
+// revoked secrets included.
+func TestKnownKeysListsAppsAndSecrets(t *testing.T) {
+	_, conn := testdb.Open(t)
+	ctx := context.Background()
+	seal := testSealer(t)
+	admin := &AppAdmin{Repo: repository.NewAppAdmin(conn), Sealer: seal, Now: time.Now}
+	app, _ := admin.CreateApp(ctx, "index", "")
+	key, _, err := admin.CreateSecret(ctx, app, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.RevokeSecret(ctx, key.SecretID); err != nil {
+		t.Fatal(err)
+	}
+	appKeys, secretIDs, err := repository.NewMySQLApps(conn, seal).KnownKeys(ctx)
+	if err != nil || !slices.Contains(appKeys, app) || !slices.Contains(secretIDs, key.SecretID) {
+		t.Fatalf("known keys: %v %v %v", appKeys, secretIDs, err)
 	}
 }
 

@@ -108,7 +108,7 @@ MVP 单平台管理多个应用，所有业务查询都必须带 app_id；不声
 - `bg:pow:used:<challenge_id>`：challenge 已提交标记，solve 时 `SET NX EX <剩余有效期>`；单 key 操作，不需要 hash tag。
 - `bg:{appID}:token:<sha256(token)>`：证明通过后的随机 token 摘要，绑定 app/action/origin，TTL 60 秒。原始 token 不存日志。
 - `bg:{appID}:verify:<requestID>`：规范化请求摘要、消费结果，建议 TTL 10 分钟，服务端认证后才允许读取。
-- `bg:{appID}:rate:<dimension>:<bucket>`：应用/IP/action 配额；Lua 原子计数和设置 TTL。
+- `bg:{appID}:rate:<dimension>:<bucket>`：应用/IP/action 配额；Lua 原子计数和设置 TTL。每个进程记住 Redis 已报告超限的 key，同一窗口内后续请求直接拒绝，不再访问 Redis；Redis 计数在窗口内只增不减，所以这不会拒绝 Redis 本会放行的请求，多副本也成立。
 - `bg:admin:session:<hash>`：管理员 ID、会话版本、CSRF、空闲/绝对过期；建议 30 分钟/8 小时，后续配置化。
 
 为什么签发无状态：`/v1/challenges` 是无需认证的公开接口，也是调用量最大的接口。若每次签发都写 Redis，攻击者只要刷签发就能打满 Redis 内存。改为签名后，签发只更新有界的限流计数；Redis 写入推迟到 solve，且 solve 先限流、先校验签名，伪造或过期的 challenge 不会产生写入。代价是多了一组需要轮换和保护的签名密钥：它由部署配置注入，所有 gateway 副本共享，泄露即 PoW 失效（轮换流程见契约）。

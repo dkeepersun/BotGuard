@@ -126,7 +126,7 @@ func main() {
 		log.Fatal(err)
 	}
 	log.Printf("BotGuard admin console on %s:%d", c.Host, c.Port)
-	server.Start()
+	server.StartWithOpts(config.ServerLimits(c.Timeout))
 }
 
 func orDash(s string) string {
