@@ -7,7 +7,7 @@
 ## 1. 部署与安全基线
 
 - 独立进程 `cmd/admin-web`，默认 8091 端口，建议只在内网或 VPN 内开放。界面用 Go 服务端渲染（`html/template`）加 PearAdmin（Layui），静态资源全部内嵌，不依赖任何 CDN。
-- 配置项：MySQL、Redis、`BOTGUARD_SECRET_KEK`（加密新建的密钥对和 TOTP 密钥）、gateway 的公开地址（用于生成接入代码）、会话时长、可信代理、Cookie 是否只走 HTTPS。
+- 配置项：数据库（默认 SQLite，可选 MySQL，见 README）、Redis、`BOTGUARD_SECRET_KEK`（加密新建的密钥对和 TOTP 密钥）、gateway 的公开地址（用于生成接入代码）、会话时长、可信代理、Cookie 是否只走 HTTPS。
 - 认证：
   - 用户名 + 密码，密码用 PBKDF2-SHA256（60 万次迭代，16 字节随机盐）存储；
   - 可选 TOTP 二次验证（RFC 6238，30 秒步长，允许前后各 1 步，同一验证码不能重复使用）；
@@ -69,10 +69,27 @@ gateway 在签发、solve、verify 时更新 Redis 计数，写入失败不影�
 
 `botguard_audit_log` 由迁移 0005 建立。仓储层的写操作在同一个事务里写入审计记录：业务变更提交了，审计一定在；业务变更失败，就不会留下审计。审计记录的操作人：后台操作为 `admin:<用户名>`，命令行操作为 `cli:<系统用户名>`。变更内容会脱敏，`secret_key`、密码、TOTP 密钥永远不写进审计。
 
-## 6. 首次使用
+审计日志默认保留 180 天，由后台的定期清理删除，见下一节。
+
+## 6. 数据清理
+
+管理后台启动后立即清理一次，之后每 `Cleanup.IntervalMinutes` 分钟（默认 60）一次：
+
+| 数据 | 默认保留 | 配置项 |
+|---|---|---|
+| 审计日志 | 180 天 | `Cleanup.AuditLogDays` |
+| 宽限期已结束或已吊销的密钥对 | 30 天 | `Cleanup.RetiredSecretDays` |
+
+- 天数为 0 表示永久保留；`Cleanup.Enabled: false` 关闭清理。
+- 每次最多删除 1000 行，分批进行，不会长时间锁住 SQLite。删除后执行 `PRAGMA incremental_vacuum` 归还空间，并截断 WAL 文件。
+- 清理不写审计；有删除时在日志中记一行数量。「系统状态」页显示当前使用的数据库和清理策略。
+- 不运行后台的部署，可以用 `botguard-ctl data purge [-audit-days 180] [-secret-days 30]` 配合 cron 定时执行。
+
+## 7. 首次使用
+
+SQLite（默认）不需要迁移，第一次运行任一程序时自动建表；MySQL 先执行 `bin/botguard-ctl migrate up`。
 
 ```sh
-bin/botguard-ctl migrate up
 bin/botguard-ctl admin create -username admin -role owner   # 生成随机初始密码，只显示一次
 make admin                                                  # http://127.0.0.1:8091
 ```

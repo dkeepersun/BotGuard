@@ -12,16 +12,16 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/migration"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
 type Gateway struct {
 	Logic *logic.Gateway
 	IPs   *clientip.Resolver
 	rds   *redis.Redis
-	db    sqlx.SqlConn
+	db    *store.DB
 	// schema is the migration version this binary needs; schemaOK latches
 	// once the database has it, since migrations only move forward.
 	schema   int
@@ -41,20 +41,29 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	dsn, err := config.NormalizeMySQLDSN(c.MySQL.DataSource)
+	dbc, err := c.DB()
 	if err != nil {
 		return nil, err
 	}
-	db := sqlx.NewMysql(dsn)
+	db, err := store.Open(dbc)
+	if err != nil {
+		return nil, err
+	}
+	// SQLite is migrated here; a MySQL schema waits for botguard-ctl and
+	// keeps /readyz at schema_outdated until then.
+	if _, err := migration.Prepare(context.Background(), db); err != nil {
+		return nil, err
+	}
+	logx.Infof("database: %s %s", db.Driver, db.Name)
 	seal, err := c.Sealer()
 	if err != nil {
 		return nil, err
 	}
-	schema, err := migration.Latest()
+	schema, err := migration.Latest(db.Driver)
 	if err != nil {
 		return nil, err
 	}
-	apps, err := repository.NewCachedApps(repository.NewMySQLApps(db, seal), config.Seconds(c.AppCache.TTLSeconds), c.AppCache.Limit)
+	apps, err := repository.NewCachedApps(repository.NewSQLApps(db, seal), config.Seconds(c.AppCache.TTLSeconds), c.AppCache.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -120,14 +129,14 @@ func (g *Gateway) Ready(ctx context.Context) string {
 	if !g.rds.PingCtx(ctx) {
 		return "store_unavailable"
 	}
-	raw, err := g.db.RawDB()
+	raw, err := g.db.Raw()
 	if err != nil || raw.PingContext(ctx) != nil {
 		return "store_unavailable"
 	}
 	if g.schemaOK.Load() {
 		return ""
 	}
-	applied, err := migration.Applied(ctx, raw)
+	applied, err := migration.Applied(ctx, raw, g.db.Driver)
 	if err != nil {
 		return "store_unavailable"
 	}

@@ -378,3 +378,19 @@
   - 单独起了一个 gateway（基于发布提交 4c25d82，独立的 Redis 容器和数据库），Laravel 页面用 `<x-botguard action="login" />`；
   - 在浏览器中点击后无感通过（约 1.7 万次哈希，0.03 秒），提交后控制器 `BotGuard::verify()` 返回 passed，风险等级 low；
   - 伪造的 token 返回 `TOKEN_INVALID`，`passes(null)` 返回 false，`botguard:login` 规则判定失败。
+
+## 2026-10-21：默认 SQLite 存储与自动清理
+
+**改动**
+- 新增 `internal/store`：数据库默认 SQLite（modernc.org/sqlite，纯 Go），可用 `BOTGUARD_DB_DRIVER=mysql` 切回 MySQL；只设旧变量 `BOTGUARD_MYSQL_DSN` 的部署仍走 MySQL。
+- 迁移按方言分目录：`sql/mysql`（原 0001–0006，checksum 不变）和 `sql/sqlite`（从 0006 开始的完整库结构），两边版本号对齐。SQLite 由 gateway、管理后台、ctl 启动时自动迁移，整批迁移在一个 `BEGIN IMMEDIATE` 事务中。
+- 仓储层去掉方言差异：`FOR UPDATE`（SQLite 的事务一开始就持有写锁）、`ON DUPLICATE KEY UPDATE` / `ON CONFLICT`、唯一键冲突识别。
+- 管理后台每小时清理过期数据（审计日志 180 天，失效密钥对 30 天），新增 `botguard-ctl data purge`；日志默认写文件，100 MB 切分，保留 7 天。
+
+**验证**
+- `make check` 通过。不设任何环境变量时，原先只能在 MySQL 上跑的集成测试（ctl 全流程、管理后台、端到端签发与 verify、迁移）现在都在临时 SQLite 文件上执行，并全部通过。
+- 新增测试：SQLite 迁移失败整体回滚；4 个并发 Prepare 只执行一次迁移；清理分批删除 2500 条旧审计、只删超期密钥对（包括 SQLite 触发器维护的 `updated_at`）；配置在新旧环境变量下选对数据库；SQLite 时间按 UTC 存取、文件权限 0600。
+- 冒烟：在空目录、只设密钥和 Redis 的情况下，`botguard-ctl admin create` 新建 `data/botguard.db`，gateway `/readyz` 返回 ready，管理后台登录页 200；ctl 配置应用后，gateway 从 SQLite 读取策略并签发 challenge；`logs/gateway`、`logs/admin-web` 按配置生成。
+
+**未验证**
+- 本次没有在 MySQL 上重新执行集成测试（本机没有 MySQL）；MySQL 的 SQL 仅改动了 `FOR UPDATE` 的拼接方式，由 CI 的 MySQL 任务覆盖。

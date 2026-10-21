@@ -8,6 +8,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/handler"
 	"github.com/dkeepersun/BotGuard/internal/svc"
 	"github.com/zeromicro/go-zero/core/conf"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/zeromicro/go-zero/rest"
 )
@@ -34,6 +35,11 @@ func main() {
 	// go-zero logs every SQL statement with its arguments by default; app keys
 	// in those come straight from unauthenticated callers.
 	sqlx.DisableStmtLog()
+	// Before anything logs, so file logging and its retention cover startup.
+	if c.Log.ServiceName == "" {
+		c.Log.ServiceName = c.Name
+	}
+	logx.MustSetup(c.Log)
 	ctx, err := svc.NewGateway(c)
 	if err != nil {
 		log.Fatal(err)

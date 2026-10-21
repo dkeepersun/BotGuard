@@ -1,6 +1,6 @@
 # BotGuard
 
-自建反机器人验证服务：go-zero + Redis + MySQL，后台使用 Go 服务端模板和 PearAdmin。
+自建反机器人验证服务：go-zero + Redis + SQLite（默认，内嵌无需安装）或 MySQL，后台使用 Go 服务端模板和 PearAdmin。
 
 已实现：
 
@@ -28,12 +28,14 @@ examples/demo/start.sh   # 演示站 http://localhost:8080，管理后台 http:/
 
 需要 Go 1.26.3 或更高版本（当前开发机验证版本），依赖 go-zero v1.10.3。Go 版本与最低 SDK 版本将独立维护。
 
+只需要 Redis，数据库默认是内嵌的 SQLite：第一次启动时自动创建 `data/botguard.db` 并建表，不用装 MySQL、也不用手动迁移。
+
 密钥只生成一次，写进一个只有自己可读的文件，gateway 和 botguard-ctl 都从它加载。KEK 必须两边一致：如果在两个终端里各生成一次，ctl 生成的密钥对在 gateway 上无法解密（ctl 发现库里已有密钥对解不开时会拒绝创建）。
 
 ```sh
 umask 077
 cat > ~/.botguard.env <<ENV
-export BOTGUARD_MYSQL_DSN='user:pass@tcp(127.0.0.1:3306)/botguard'
+export BOTGUARD_DB_DSN="\$HOME/botguard/data/botguard.db"   # 可选；不设时为当前目录下的 data/botguard.db
 export BOTGUARD_CHALLENGE_KEY_K1='$(openssl rand -base64 32)'
 export BOTGUARD_SECRET_KEK='k1:$(openssl rand -base64 32)'
 ENV
@@ -41,7 +43,6 @@ ENV
 
 make check
 make build
-bin/botguard-ctl migrate up   # gateway 在库结构落后时 /readyz 返回 schema_outdated
 bin/botguard-ctl admin create -username admin   # 第一个超级管理员，初始密码只显示一次
 make gateway  # http://127.0.0.1:8090/readyz
 make admin    # 另一个终端，管理后台 http://127.0.0.1:8091
@@ -49,17 +50,37 @@ make admin    # 另一个终端，管理后台 http://127.0.0.1:8091
 
 管理后台还需要 `BOTGUARD_PUBLIC_ENDPOINT`（gateway 的公开地址，写进接入代码）和可选的 `BOTGUARD_GATEWAY_URL`（用于检查 gateway 状态），见 `configs/admin-web.yaml`。
 
-gateway 需要 Redis（建议 ≥ 7.2）和已迁移的 MySQL（MySQL ≥ 8.0 或 MariaDB ≥ 10.5.2，迁移会检查）；密钥与 DSN 只从环境变量读取，缺失时拒绝启动。DSN 会被自动补上 `parseTime=true`、`loc=UTC`、`time_zone='+00:00'`，并强制关闭 `multiStatements`。管理后台默认只用 HTTPS Cookie；`CookieSecure: false` 只允许 loopback 监听地址。建议只在内网或 VPN 内开放管理后台。
+gateway 需要 Redis（建议 ≥ 7.2）；密钥与数据库连接只从环境变量读取，密钥缺失时拒绝启动。管理后台默认只用 HTTPS Cookie；`CookieSecure: false` 只允许 loopback 监听地址。建议只在内网或 VPN 内开放管理后台。
+
+### 数据库：SQLite 或 MySQL
+
+| 环境变量 | 说明 |
+|---|---|
+| `BOTGUARD_DB_DRIVER` | `sqlite`（默认）或 `mysql` |
+| `BOTGUARD_DB_DSN` | SQLite 文件路径（默认 `data/botguard.db`，相对工作目录），或 MySQL DSN |
+| `BOTGUARD_MYSQL_DSN` | 旧变量，仍然有效：没设 `BOTGUARD_DB_DRIVER` 时，设了它就继续用 MySQL，老部署升级后不会悄悄换成空的 SQLite |
+
+- **SQLite**（默认）：纯 Go 驱动，不依赖 CGO 和系统库。gateway、管理后台、botguard-ctl 启动时自动建表和迁移（多个进程同时启动也安全）；文件权限 0600，开启 WAL，gateway 读和后台写互不阻塞。三个程序必须指向**同一个文件**，生产环境请用绝对路径；ctl 新建文件时会提示路径。适合单机部署；多台机器共用配置时用 MySQL。
+- **MySQL**（MySQL ≥ 8.0 或 MariaDB ≥ 10.5.2，迁移会检查）：`BOTGUARD_DB_DRIVER=mysql`，`BOTGUARD_DB_DSN='user:pass@tcp(127.0.0.1:3306)/botguard'`。启动前执行 `bin/botguard-ctl migrate up`，库结构落后时 gateway 的 `/readyz` 返回 `schema_outdated`。DSN 会被自动补上 `parseTime=true`、`loc=UTC`、`time_zone='+00:00'`，并强制关闭 `multiStatements`。
+
+两种库之间没有自动的数据迁移工具；已有 MySQL 部署继续用 MySQL 即可。
+
+### 长期运行：自动清理
+
+服务按“无人值守长期运行”设计，数据和日志都不会无限增长：
+
+- **数据库**：管理后台每小时清理一次（`configs/admin-web.yaml` 的 `Cleanup`）：删除 180 天前的审计日志，以及宽限期结束或吊销已满 30 天的密钥对；SQLite 随后回收空闲页、截断 WAL。天数设为 0 表示永久保留。没有运行管理后台时，可以用 `bin/botguard-ctl data purge` 配合 cron 手动清理。gateway 不做清理，因为它可能只有只读的数据库账号。
+- **Redis**：无需清理。token、限流、会话等每个键都带过期时间，每小时统计保留 32 天，实时事件每个应用最多 2000 条。
+- **日志**：默认写入 `logs/gateway`、`logs/admin-web`，单个文件超过 100 MB 就切分并压缩，7 天前的自动删除（`configs/*.yaml` 的 `Log`）。在 systemd 或 Docker 下可改为 `Mode: console`，由它们负责收集和轮转。
 
 ## 接入一个应用
 
 推荐在管理后台操作：「应用管理 → 新建应用」，再在应用详情里添加允许来源、调整验证策略、创建密钥对，「接入代码」标签页给出填好 app_key 的前后端代码。
 
-也可以用命令行。`botguard-ctl` 同样从环境变量读取 `BOTGUARD_MYSQL_DSN` 和 `BOTGUARD_SECRET_KEK`（不接受命令行参数，避免进入 shell 历史）。完整命令见 `bin/botguard-ctl help`。
+也可以用命令行。`botguard-ctl` 同样从环境变量读取数据库配置（`BOTGUARD_DB_DRIVER`、`BOTGUARD_DB_DSN`）和 `BOTGUARD_SECRET_KEK`（不接受命令行参数，避免进入 shell 历史）。完整命令见 `bin/botguard-ctl help`。
 
 ```sh
 make build
-bin/botguard-ctl migrate up
 bin/botguard-ctl app create -name 商城               # 输出 app_key（前端用，相当于易盾 captchaId）
 bin/botguard-ctl origin add -app app_xxx -origin https://shop.example.com
 bin/botguard-ctl action set -app app_xxx -action login   # 新建默认 adaptive + 全部题型；-mode invisible|interactive|adaptive，-kinds slider,rotate,click_text,click_shape
@@ -71,7 +92,9 @@ bin/botguard-ctl app show -app app_xxx
 
 ## 升级
 
-先迁移，再换 gateway：
+SQLite：直接替换程序后重启，新版启动时自动迁移（整批迁移在一个事务里，失败会整体回滚）。
+
+MySQL：先迁移，再换 gateway：
 
 1. 用新版 `botguard-ctl migrate up`。迁移只向前、带 checksum，并用数据库锁防止并发执行。
 2. 滚动替换 gateway。新版 gateway 在库结构落后时 `/readyz` 返回 503 `schema_outdated`，不会接流量。
@@ -82,7 +105,7 @@ bin/botguard-ctl app show -app app_xxx
 
 ## 测试
 
-`make check` 只需要 Go；`make test-sdk` 运行 PHP SDK 与浏览器组件的测试（需要 php 和 node）。集成测试需要专用的临时 MySQL 库和 Redis 实例，**其中所有表和键都会被清空**：
+`make check` 只需要 Go：数据库集成测试默认在临时 SQLite 文件上运行，Redis 用 miniredis。`make test-sdk` 运行 PHP SDK 与浏览器组件的测试（需要 php 和 node）。要在 MySQL 和真实 Redis 上再跑一遍，需要专用的临时库和实例，**其中所有表和键都会被清空**：
 
 ```sh
 export BOTGUARD_TEST_MYSQL_DSN='root@tcp(127.0.0.1:3399)/botguard_test'

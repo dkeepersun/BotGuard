@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
-	"github.com/go-sql-driver/mysql"
+	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
@@ -17,19 +17,14 @@ const statusDisabled = 2
 // AppAdmin writes app configuration. Every change that affects issued
 // challenges bumps active_policy_version in the same transaction.
 type AppAdmin struct {
-	conn sqlx.SqlConn
+	conn *store.DB
 }
 
-func NewAppAdmin(conn sqlx.SqlConn) *AppAdmin { return &AppAdmin{conn: conn} }
+func NewAppAdmin(conn *store.DB) *AppAdmin { return &AppAdmin{conn: conn} }
 
-func isDuplicate(err error) bool {
-	var me *mysql.MySQLError
-	return errors.As(err, &me) && me.Number == 1062
-}
-
-func appIDForUpdate(ctx context.Context, s sqlx.Session, appKey string) (int64, error) {
+func (r *AppAdmin) appIDForUpdate(ctx context.Context, s sqlx.Session, appKey string) (int64, error) {
 	var id int64
-	err := s.QueryRowCtx(ctx, &id, "SELECT id FROM botguard_app WHERE app_key = ? FOR UPDATE", appKey)
+	err := s.QueryRowCtx(ctx, &id, "SELECT id FROM botguard_app WHERE app_key = ?"+r.conn.ForUpdate(), appKey)
 	if errors.Is(err, sqlx.ErrNotFound) {
 		return 0, domain.ErrNotFound
 	}
@@ -44,7 +39,7 @@ func bumpPolicy(ctx context.Context, s sqlx.Session, appID int64) error {
 func (r *AppAdmin) CreateApp(ctx context.Context, appKey, name, remark string) error {
 	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
 		_, err := s.ExecCtx(ctx, "INSERT INTO botguard_app (app_key, name, remark, status) VALUES (?, ?, ?, ?)", appKey, name, remark, statusEnabled)
-		if isDuplicate(err) {
+		if r.conn.IsDuplicate(err) {
 			return domain.ErrDuplicate
 		}
 		if err != nil {
@@ -60,7 +55,7 @@ func (r *AppAdmin) SetAppEnabled(ctx context.Context, appKey string, enabled boo
 		status = statusEnabled
 	}
 	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
-		if _, err := appIDForUpdate(ctx, s, appKey); err != nil {
+		if _, err := r.appIDForUpdate(ctx, s, appKey); err != nil {
 			return err
 		}
 		if _, err := s.ExecCtx(ctx, "UPDATE botguard_app SET status = ? WHERE app_key = ?", status, appKey); err != nil {
@@ -74,7 +69,7 @@ func (r *AppAdmin) SetAppEnabled(ctx context.Context, appKey string, enabled boo
 // challenges, so the policy version stays.
 func (r *AppAdmin) UpdateApp(ctx context.Context, appKey, name, remark string) error {
 	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
-		if _, err := appIDForUpdate(ctx, s, appKey); err != nil {
+		if _, err := r.appIDForUpdate(ctx, s, appKey); err != nil {
 			return err
 		}
 		if _, err := s.ExecCtx(ctx, "UPDATE botguard_app SET name = ?, remark = ? WHERE app_key = ?", name, remark, appKey); err != nil {
@@ -86,7 +81,7 @@ func (r *AppAdmin) UpdateApp(ctx context.Context, appKey, name, remark string) e
 
 func (r *AppAdmin) DeleteAction(ctx context.Context, appKey, action string) error {
 	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
-		id, err := appIDForUpdate(ctx, s, appKey)
+		id, err := r.appIDForUpdate(ctx, s, appKey)
 		if err != nil {
 			return err
 		}
@@ -106,12 +101,12 @@ func (r *AppAdmin) DeleteAction(ctx context.Context, appKey, action string) erro
 
 func (r *AppAdmin) AddOrigin(ctx context.Context, appKey, origin string) error {
 	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
-		id, err := appIDForUpdate(ctx, s, appKey)
+		id, err := r.appIDForUpdate(ctx, s, appKey)
 		if err != nil {
 			return err
 		}
 		if _, err := s.ExecCtx(ctx, "INSERT INTO botguard_app_origin (app_id, origin) VALUES (?, ?)", id, origin); err != nil {
-			if isDuplicate(err) {
+			if r.conn.IsDuplicate(err) {
 				return domain.ErrDuplicate
 			}
 			return err
@@ -125,7 +120,7 @@ func (r *AppAdmin) AddOrigin(ctx context.Context, appKey, origin string) error {
 
 func (r *AppAdmin) RemoveOrigin(ctx context.Context, appKey, origin string) error {
 	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
-		id, err := appIDForUpdate(ctx, s, appKey)
+		id, err := r.appIDForUpdate(ctx, s, appKey)
 		if err != nil {
 			return err
 		}
@@ -143,16 +138,29 @@ func (r *AppAdmin) RemoveOrigin(ctx context.Context, appKey, origin string) erro
 	})
 }
 
+// upsertAction completes the INSERT in UpsertAction. The row is already
+// locked, so either form only ever updates it in place.
+func (r *AppAdmin) upsertAction() string {
+	if r.conn.Driver == store.MySQL {
+		return `
+ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), challenge_mode = VALUES(challenge_mode),
+  challenge_kinds = VALUES(challenge_kinds), pow_puzzles = VALUES(pow_puzzles), pow_difficulty = VALUES(pow_difficulty)`
+	}
+	return `
+ON CONFLICT (app_id, action) DO UPDATE SET enabled = excluded.enabled, challenge_mode = excluded.challenge_mode,
+  challenge_kinds = excluded.challenge_kinds, pow_puzzles = excluded.pow_puzzles, pow_difficulty = excluded.pow_difficulty`
+}
+
 func (r *AppAdmin) UpsertAction(ctx context.Context, appKey, action string, p domain.ActionPolicy) error {
 	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
-		id, err := appIDForUpdate(ctx, s, appKey)
+		id, err := r.appIDForUpdate(ctx, s, appKey)
 		if err != nil {
 			return err
 		}
 		// Saving the same policy again is a no-op: no new policy version, no
 		// audit row (seed scripts and retries re-apply configuration).
 		var cur []actionRow
-		if err := s.QueryRowsCtx(ctx, &cur, "SELECT action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty FROM botguard_app_action WHERE app_id = ? AND action = ? FOR UPDATE", id, action); err != nil {
+		if err := s.QueryRowsCtx(ctx, &cur, "SELECT action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty FROM botguard_app_action WHERE app_id = ? AND action = ?"+r.conn.ForUpdate(), id, action); err != nil {
 			return err
 		}
 		if len(cur) == 1 && cur[0].Enabled == p.Enabled && cur[0].Mode == p.Mode && cur[0].Kinds == strings.Join(p.Kinds, ",") &&
@@ -160,9 +168,7 @@ func (r *AppAdmin) UpsertAction(ctx context.Context, appKey, action string, p do
 			return nil
 		}
 		if _, err := s.ExecCtx(ctx, `INSERT INTO botguard_app_action (app_id, action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), challenge_mode = VALUES(challenge_mode),
-  challenge_kinds = VALUES(challenge_kinds), pow_puzzles = VALUES(pow_puzzles), pow_difficulty = VALUES(pow_difficulty)`,
+VALUES (?, ?, ?, ?, ?, ?, ?)`+r.upsertAction(),
 			id, action, p.Enabled, p.Mode, strings.Join(p.Kinds, ","), p.Puzzles, p.Difficulty); err != nil {
 			return err
 		}
@@ -194,22 +200,22 @@ func nullString(s string) sql.NullString { return sql.NullString{String: s, Vali
 
 func (r *AppAdmin) CreateSecret(ctx context.Context, appKey string, k NewSecret) error {
 	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
-		id, err := appIDForUpdate(ctx, s, appKey)
+		id, err := r.appIDForUpdate(ctx, s, appKey)
 		if err != nil {
 			return err
 		}
-		if err := insertSecret(ctx, s, id, k); err != nil {
+		if err := r.insertSecret(ctx, s, id, k); err != nil {
 			return err
 		}
 		return writeAudit(ctx, s, k.SecretID)
 	})
 }
 
-func insertSecret(ctx context.Context, s sqlx.Session, appID int64, k NewSecret) error {
+func (r *AppAdmin) insertSecret(ctx context.Context, s sqlx.Session, appID int64, k NewSecret) error {
 	_, err := s.ExecCtx(ctx,
 		"INSERT INTO botguard_app_secret (secret_id, app_id, secret_ciphertext, kek_id, status, expires_at, rotated_from) VALUES (?, ?, ?, ?, ?, ?, ?)",
 		k.SecretID, appID, k.Ciphertext, k.KEKID, statusEnabled, nullTime(k.ExpiresAt), nullString(k.RotatedFrom))
-	if isDuplicate(err) {
+	if r.conn.IsDuplicate(err) {
 		return domain.ErrDuplicate
 	}
 	return err
@@ -218,7 +224,7 @@ func insertSecret(ctx context.Context, s sqlx.Session, appID int64, k NewSecret)
 func (r *AppAdmin) RevokeSecret(ctx context.Context, secretID string) error {
 	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
 		var n int
-		if err := s.QueryRowCtx(ctx, &n, "SELECT COUNT(*) FROM botguard_app_secret WHERE secret_id = ? FOR UPDATE", secretID); err != nil {
+		if err := s.QueryRowCtx(ctx, &n, "SELECT COUNT(*) FROM botguard_app_secret WHERE secret_id = ?"+r.conn.ForUpdate(), secretID); err != nil {
 			return err
 		}
 		if n == 0 {
@@ -239,7 +245,7 @@ func (r *AppAdmin) RotateSecret(ctx context.Context, oldSecretID string, k NewSe
 	err := r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
 		var old secretRow
 		err := s.QueryRowCtx(ctx, &old,
-			"SELECT "+secretColumns+" FROM botguard_app_secret WHERE secret_id = ? FOR UPDATE", oldSecretID)
+			"SELECT "+secretColumns+" FROM botguard_app_secret WHERE secret_id = ?"+r.conn.ForUpdate(), oldSecretID)
 		if errors.Is(err, sqlx.ErrNotFound) {
 			return domain.ErrNotFound
 		}
@@ -250,7 +256,7 @@ func (r *AppAdmin) RotateSecret(ctx context.Context, oldSecretID string, k NewSe
 			return domain.ErrInvalidState
 		}
 		k.RotatedFrom = oldSecretID
-		if err := insertSecret(ctx, s, old.AppID, k); err != nil {
+		if err := r.insertSecret(ctx, s, old.AppID, k); err != nil {
 			return err
 		}
 		if old.ExpiresAt.Valid && old.ExpiresAt.Time.Before(until) {

@@ -16,7 +16,9 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/migration"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/zeromicro/go-zero/core/conf"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 	"github.com/zeromicro/go-zero/rest"
@@ -37,12 +39,24 @@ func main() {
 	c.Middlewares.Breaker = false
 	// Statements carry password hashes and TOTP ciphertexts.
 	sqlx.DisableStmtLog()
+	// Before anything logs, so file logging and its retention cover startup.
+	if c.Log.ServiceName == "" {
+		c.Log.ServiceName = c.Name
+	}
+	logx.MustSetup(c.Log)
 
-	dsn, err := config.NormalizeMySQLDSN(c.MySQL.DataSource)
+	dbc, err := c.DB()
 	if err != nil {
 		log.Fatal(err)
 	}
-	db := sqlx.NewMysql(dsn)
+	db, err := store.Open(dbc)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if _, err := migration.Prepare(context.Background(), db); err != nil {
+		log.Fatal(err)
+	}
+	logx.Infof("database: %s %s", db.Driver, db.Name)
 	rds, err := redis.NewRedis(c.Redis)
 	if err != nil {
 		log.Fatal(err)
@@ -59,7 +73,7 @@ func main() {
 	idle, absolute := time.Duration(c.Session.IdleMinutes)*time.Minute, time.Duration(c.Session.AbsoluteHours)*time.Hour
 	console := &logic.Console{Admins: repository.NewAdmins(db), Audit: repo, Sessions: repository.NewSessions(rds, idle, absolute),
 		Limiter: repository.NewRateLimiter(rds), Redis: rds, Sealer: seal, Now: time.Now}
-	latest, err := migration.Latest()
+	latest, err := migration.Latest(db.Driver)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -68,7 +82,10 @@ func main() {
 	if seal != nil {
 		kek = seal.Active()
 	}
+	dbName := map[store.Driver]string{store.SQLite: "SQLite", store.MySQL: "MySQL"}[db.Driver]
 	info := map[string]string{
+		"数据库":          dbName + "（" + db.Name + "）",
+		"数据清理":         cleanupInfo(c),
 		"gateway 公开地址": orDash(c.PublicEndpoint),
 		"程序内置库结构版本":    fmt.Sprintf("%04d", latest),
 		"KEK":          kek,
@@ -82,13 +99,13 @@ func main() {
 		ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
 		defer cancel()
 		var out []adminweb.Check
-		raw, err := db.RawDB()
-		mysqlOK := err == nil && raw.PingContext(ctx) == nil
-		out = append(out, adminweb.Check{Name: "MySQL", OK: mysqlOK, Detail: map[bool]string{true: "连接正常", false: "无法连接"}[mysqlOK]})
+		raw, err := db.Raw()
+		dbOK := err == nil && raw.PingContext(ctx) == nil
+		out = append(out, adminweb.Check{Name: dbName, OK: dbOK, Detail: map[bool]string{true: "连接正常", false: "无法连接"}[dbOK]})
 		redisOK := rds.PingCtx(ctx)
 		out = append(out, adminweb.Check{Name: "Redis", OK: redisOK, Detail: map[bool]string{true: "连接正常", false: "无法连接（会话与统计不可用）"}[redisOK]})
-		if mysqlOK {
-			applied, err := migration.Applied(ctx, raw)
+		if dbOK {
+			applied, err := migration.Applied(ctx, raw, db.Driver)
 			ok := err == nil && applied >= latest
 			detail := fmt.Sprintf("已执行 %04d，程序需要 %04d", applied, latest)
 			if !ok {
@@ -120,8 +137,27 @@ func main() {
 	if err := web.Register(server); err != nil {
 		log.Fatal(err)
 	}
+	if c.Cleanup.Enabled {
+		days := func(n int) time.Duration { return time.Duration(n) * 24 * time.Hour }
+		retention := repository.NewRetention(db, days(c.Cleanup.AuditLogDays), days(c.Cleanup.RetiredSecretDays))
+		go retention.Run(context.Background(), time.Duration(c.Cleanup.IntervalMinutes)*time.Minute, time.Now)
+	}
 	log.Printf("BotGuard admin console on %s:%d", c.Host, c.Port)
 	server.Start()
+}
+
+func cleanupInfo(c config.AdminConfig) string {
+	if !c.Cleanup.Enabled {
+		return "已关闭"
+	}
+	keep := func(n int) string {
+		if n == 0 {
+			return "永久"
+		}
+		return fmt.Sprintf("%d 天", n)
+	}
+	return fmt.Sprintf("每 %d 分钟；审计日志保留 %s，失效密钥对保留 %s", c.Cleanup.IntervalMinutes,
+		keep(c.Cleanup.AuditLogDays), keep(c.Cleanup.RetiredSecretDays))
 }
 
 func orDash(s string) string {

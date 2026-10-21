@@ -11,6 +11,7 @@ import (
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
 	"github.com/dkeepersun/BotGuard/internal/service/sealer"
+	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/zeromicro/go-zero/core/collection"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
@@ -28,14 +29,14 @@ type AppStore interface {
 	SecretPair(ctx context.Context, secretID string) (*domain.SecretPair, error)
 }
 
-// MySQLApps reads app configuration. It is read-only; writes belong to admin.
-type MySQLApps struct {
-	conn   sqlx.SqlConn
+// SQLApps reads app configuration. It is read-only; writes belong to admin.
+type SQLApps struct {
+	conn   *store.DB
 	sealer *sealer.Sealer
 }
 
-func NewMySQLApps(conn sqlx.SqlConn, s *sealer.Sealer) *MySQLApps {
-	return &MySQLApps{conn: conn, sealer: s}
+func NewSQLApps(conn *store.DB, s *sealer.Sealer) *SQLApps {
+	return &SQLApps{conn: conn, sealer: s}
 }
 
 type appRow struct {
@@ -65,7 +66,7 @@ type secretRow struct {
 
 const secretColumns = "secret_id, app_id, secret_ciphertext, kek_id, status, expires_at"
 
-func (r *MySQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, error) {
+func (r *SQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, error) {
 	var row appRow
 	err := r.conn.QueryRowCtx(ctx, &row,
 		"SELECT id, app_key, status, active_policy_version FROM botguard_app WHERE app_key = ?", appKey)
@@ -115,7 +116,7 @@ func (r *MySQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, e
 // legacy Bearer key) is returned unusable; a ciphertext that does not open is
 // an error, so a missing or wrong KEK fails closed instead of rejecting
 // callers as if their signature were wrong.
-func (r *MySQLApps) SecretPair(ctx context.Context, secretID string) (*domain.SecretPair, error) {
+func (r *SQLApps) SecretPair(ctx context.Context, secretID string) (*domain.SecretPair, error) {
 	var row secretRow
 	err := r.conn.QueryRowCtx(ctx, &row, "SELECT "+secretColumns+" FROM botguard_app_secret WHERE secret_id = ?", secretID)
 	if errors.Is(err, sqlx.ErrNotFound) {
