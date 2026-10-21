@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
+	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
@@ -37,10 +38,10 @@ const adminColumns = "id, username, display_name, password_hash, role, status, s
 
 // Admins stores console accounts. Writes are audited like AppAdmin's.
 type Admins struct {
-	conn sqlx.SqlConn
+	conn *store.DB
 }
 
-func NewAdmins(conn sqlx.SqlConn) *Admins { return &Admins{conn: conn} }
+func NewAdmins(conn *store.DB) *Admins { return &Admins{conn: conn} }
 
 func (r *Admins) get(ctx context.Context, where string, arg any) (*Admin, error) {
 	var a Admin
@@ -80,7 +81,7 @@ func (r *Admins) Create(ctx context.Context, username, displayName, passwordHash
 	err := r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
 		res, err := s.ExecCtx(ctx, "INSERT INTO botguard_admin (username, display_name, password_hash, role, status, must_change_password) VALUES (?, ?, ?, ?, 1, ?)",
 			username, displayName, passwordHash, role, mustChange)
-		if isDuplicate(err) {
+		if r.conn.IsDuplicate(err) {
 			return domain.ErrDuplicate
 		}
 		if err != nil {
@@ -100,7 +101,7 @@ func (r *Admins) Create(ctx context.Context, username, displayName, passwordHash
 func (r *Admins) update(ctx context.Context, id int64, endSessions bool, set string, args ...any) error {
 	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
 		var username string
-		err := s.QueryRowCtx(ctx, &username, "SELECT username FROM botguard_admin WHERE id = ? FOR UPDATE", id)
+		err := s.QueryRowCtx(ctx, &username, "SELECT username FROM botguard_admin WHERE id = ?"+r.conn.ForUpdate(), id)
 		if errors.Is(err, sqlx.ErrNotFound) {
 			return domain.ErrNotFound
 		}

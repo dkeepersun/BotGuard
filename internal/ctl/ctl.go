@@ -12,31 +12,37 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/dkeepersun/BotGuard/internal/config"
 	"github.com/dkeepersun/BotGuard/internal/domain"
 	"github.com/dkeepersun/BotGuard/internal/logic"
 	"github.com/dkeepersun/BotGuard/internal/migration"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/credential"
 	"github.com/dkeepersun/BotGuard/internal/service/sealer"
+	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/dkeepersun/BotGuard/internal/version"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
 const (
-	DSNEnv = "BOTGUARD_MYSQL_DSN"
-	KEKEnv = "BOTGUARD_SECRET_KEK"
+	DriverEnv = "BOTGUARD_DB_DRIVER"
+	DSNEnv    = "BOTGUARD_DB_DSN"
+	// LegacyDSNEnv still selects MySQL when DriverEnv is unset.
+	LegacyDSNEnv = "BOTGUARD_MYSQL_DSN"
+	KEKEnv       = "BOTGUARD_SECRET_KEK"
 )
 
 const usage = `用法：botguard-ctl <命令> [参数]
 
 环境变量（不接受命令行参数，避免进入 shell 历史）：
-  BOTGUARD_MYSQL_DSN   数据库连接
+  BOTGUARD_DB_DRIVER   数据库类型：sqlite（默认）或 mysql
+  BOTGUARD_DB_DSN      SQLite 文件路径（默认 data/botguard.db，相对当前目录）或 MySQL DSN；
+                       必须与 gateway、管理后台指向同一个库。旧变量 BOTGUARD_MYSQL_DSN 仍可用
   BOTGUARD_SECRET_KEK  加密 secret_key 的主密钥，格式 id:base64(32 字节)；
                        创建或轮换密钥对时需要，必须与 gateway 配置一致
 
-  migrate up                                        执行未执行的迁移
+  migrate up                                        执行未执行的迁移（SQLite 在每次使用时自动迁移）
   migrate status                                    查看迁移状态
+  data purge [-audit-days 180] [-secret-days 30]    立即清理过期数据：超期审计日志、失效或吊销超期的密钥对；
+                                                    0 表示不清理。管理后台运行时每小时自动执行
   app create  -name 名称 [-remark 备注]             创建应用，输出 app_key
   app list                                          列出应用
   app show    -app app_key                          查看应用的来源、action 和密钥对
@@ -74,15 +80,14 @@ const usage = `用法：botguard-ctl <命令> [参数]
 // warnings go to Err, so scripts that capture Out (app_key, secret pairs)
 // still show why a command failed.
 type App struct {
-	Env    func(string) string
-	Out    io.Writer
-	Err    io.Writer
-	Now    func() time.Time
-	openDB func(dsn string) sqlx.SqlConn
+	Env func(string) string
+	Out io.Writer
+	Err io.Writer
+	Now func() time.Time
 }
 
 func New(env func(string) string, out, errOut io.Writer) *App {
-	return &App{Env: env, Out: out, Err: errOut, Now: time.Now, openDB: func(dsn string) sqlx.SqlConn { return sqlx.NewMysql(dsn) }}
+	return &App{Env: env, Out: out, Err: errOut, Now: time.Now}
 }
 
 type usageError string
@@ -122,16 +127,36 @@ func describe(err error) string {
 	}
 }
 
-func (a *App) conn() (sqlx.SqlConn, error) {
-	dsn, err := config.NormalizeMySQLDSN(a.Env(DSNEnv))
+// open connects without migrating, for the migrate commands.
+func (a *App) open() (*store.DB, error) {
+	cfg, err := store.Config{Driver: a.Env(DriverEnv), DataSource: a.Env(DSNEnv)}.Resolve(a.Env(LegacyDSNEnv))
 	if err != nil {
-		return nil, fmt.Errorf("%s 无效：%w", DSNEnv, err)
+		return nil, fmt.Errorf("%s / %s 无效：%w", DriverEnv, DSNEnv, err)
 	}
-	return a.openDB(dsn), nil
+	db, err := store.Open(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if db.Created {
+		fmt.Fprintf(a.Err, "已新建 SQLite 数据库 %s（gateway 与管理后台须使用同一文件）\n", db.Name)
+	}
+	return db, nil
 }
 
-func (a *App) admin() (*logic.AppAdmin, error) {
-	c, err := a.conn()
+// conn connects and, on SQLite, brings the schema up to date first.
+func (a *App) conn(ctx context.Context) (*store.DB, error) {
+	db, err := a.open()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := migration.Prepare(ctx, db); err != nil {
+		return nil, fmt.Errorf("SQLite 自动迁移失败：%w", err)
+	}
+	return db, nil
+}
+
+func (a *App) admin(ctx context.Context) (*logic.AppAdmin, error) {
+	c, err := a.conn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -200,6 +225,8 @@ func (a *App) run(ctx context.Context, args []string) error {
 		return a.adminStatus(ctx, args[1] == "enable", rest)
 	case "secret rotate":
 		return a.secretRotate(ctx, rest)
+	case "data purge":
+		return a.dataPurge(ctx, rest)
 	default:
 		return usageError("未知命令：" + cmd)
 	}
@@ -225,15 +252,15 @@ func (a *App) migrate(ctx context.Context, sub string, args []string) error {
 	if err := parse(flag.NewFlagSet("migrate", flag.ContinueOnError), args); err != nil {
 		return err
 	}
-	c, err := a.conn()
+	c, err := a.open()
 	if err != nil {
 		return err
 	}
-	db, err := c.RawDB()
+	db, err := c.Raw()
 	if err != nil {
 		return err
 	}
-	r, err := migration.Open(ctx, db)
+	r, err := migration.Open(ctx, db, c.Driver)
 	if err != nil {
 		return err
 	}
@@ -274,7 +301,7 @@ func (a *App) appCreate(ctx context.Context, args []string) error {
 	if err := parse(fs, args, "name"); err != nil {
 		return err
 	}
-	adm, err := a.admin()
+	adm, err := a.admin(ctx)
 	if err != nil {
 		return err
 	}
@@ -290,7 +317,7 @@ func (a *App) appList(ctx context.Context, args []string) error {
 	if err := parse(flag.NewFlagSet("app list", flag.ContinueOnError), args); err != nil {
 		return err
 	}
-	adm, err := a.admin()
+	adm, err := a.admin(ctx)
 	if err != nil {
 		return err
 	}
@@ -323,7 +350,7 @@ func (a *App) appShow(ctx context.Context, args []string) error {
 	if err := parse(fs, args, "app"); err != nil {
 		return err
 	}
-	adm, err := a.admin()
+	adm, err := a.admin(ctx)
 	if err != nil {
 		return err
 	}
@@ -383,7 +410,7 @@ func (a *App) appEnable(ctx context.Context, enable bool, args []string) error {
 	if err := parse(fs, args, "app"); err != nil {
 		return err
 	}
-	adm, err := a.admin()
+	adm, err := a.admin(ctx)
 	if err != nil {
 		return err
 	}
@@ -401,7 +428,7 @@ func (a *App) origin(ctx context.Context, add bool, args []string) error {
 	if err := parse(fs, args, "app", "origin"); err != nil {
 		return err
 	}
-	adm, err := a.admin()
+	adm, err := a.admin(ctx)
 	if err != nil {
 		return err
 	}
@@ -438,7 +465,7 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 	if set["mode"] && set["kinds"] && *mode == domain.ModeSlider {
 		return usageError("-mode slider 只出滑块，不能同时指定 -kinds；请改用 -mode interactive -kinds ...")
 	}
-	adm, err := a.admin()
+	adm, err := a.admin(ctx)
 	if err != nil {
 		return err
 	}
@@ -511,7 +538,7 @@ func (a *App) secretCreate(ctx context.Context, args []string) error {
 	if err := parse(fs, args, "app"); err != nil {
 		return err
 	}
-	adm, err := a.admin()
+	adm, err := a.admin(ctx)
 	if err != nil {
 		return err
 	}
@@ -537,7 +564,7 @@ func (a *App) secretRevoke(ctx context.Context, args []string) error {
 	if err := parse(fs, args, "secret"); err != nil {
 		return err
 	}
-	adm, err := a.admin()
+	adm, err := a.admin(ctx)
 	if err != nil {
 		return err
 	}
@@ -556,7 +583,7 @@ func (a *App) secretRotate(ctx context.Context, args []string) error {
 	if err := parse(fs, args, "secret"); err != nil {
 		return err
 	}
-	adm, err := a.admin()
+	adm, err := a.admin(ctx)
 	if err != nil {
 		return err
 	}
@@ -572,8 +599,8 @@ func (a *App) secretRotate(ctx context.Context, args []string) error {
 	return nil
 }
 
-func (a *App) console() (*logic.Console, error) {
-	c, err := a.conn()
+func (a *App) console(ctx context.Context) (*logic.Console, error) {
+	c, err := a.conn(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -593,7 +620,7 @@ func (a *App) adminCreate(ctx context.Context, args []string) error {
 	if err := parse(fs, args, "username"); err != nil {
 		return err
 	}
-	c, err := a.console()
+	c, err := a.console(ctx)
 	if err != nil {
 		return err
 	}
@@ -610,7 +637,7 @@ func (a *App) adminList(ctx context.Context, args []string) error {
 	if err := parse(flag.NewFlagSet("admin list", flag.ContinueOnError), args); err != nil {
 		return err
 	}
-	c, err := a.console()
+	c, err := a.console(ctx)
 	if err != nil {
 		return err
 	}
@@ -648,7 +675,7 @@ func (a *App) adminReset(ctx context.Context, args []string) error {
 	if err := parse(fs, args, "username"); err != nil {
 		return err
 	}
-	c, err := a.console()
+	c, err := a.console(ctx)
 	if err != nil {
 		return err
 	}
@@ -671,7 +698,7 @@ func (a *App) adminStatus(ctx context.Context, enable bool, args []string) error
 	if err := parse(fs, args, "username"); err != nil {
 		return err
 	}
-	c, err := a.console()
+	c, err := a.console(ctx)
 	if err != nil {
 		return err
 	}
@@ -714,7 +741,7 @@ func (a *App) adminSetPassword(ctx context.Context, args []string) error {
 	if pw == "" {
 		return usageError("请通过环境变量 " + AdminPasswordEnv + " 提供新密码")
 	}
-	c, err := a.console()
+	c, err := a.console(ctx)
 	if err != nil {
 		return err
 	}
@@ -729,5 +756,28 @@ func (a *App) adminSetPassword(ctx context.Context, args []string) error {
 	if *weak {
 		fmt.Fprintln(a.Err, "警告：已跳过密码强度要求。弱密码只能用于本地测试环境，不要用于对外开放的管理后台。")
 	}
+	return nil
+}
+
+func (a *App) dataPurge(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("data purge", flag.ContinueOnError)
+	auditDays := fs.Int("audit-days", 180, "")
+	secretDays := fs.Int("secret-days", 30, "")
+	if err := parse(fs, args); err != nil {
+		return err
+	}
+	if *auditDays < 0 || *secretDays < 0 {
+		return usageError("天数不能为负数")
+	}
+	db, err := a.conn(ctx)
+	if err != nil {
+		return err
+	}
+	day := 24 * time.Hour
+	p, err := repository.NewRetention(db, time.Duration(*auditDays)*day, time.Duration(*secretDays)*day).Purge(ctx, a.Now())
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(a.Out, "已删除审计日志 %d 条、失效密钥对 %d 个\n", p.AuditLog, p.Secrets)
 	return nil
 }

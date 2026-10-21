@@ -8,9 +8,14 @@
 // another application. Databases from before the prefix (bg_* and sys_*
 // tables) are renamed in place the next time migrations run.
 //
+// Each dialect has its own directory, sql/mysql and sql/sqlite, with the same
+// version numbers. SQLite history starts at 0006 (the schema MySQL reached
+// in 0006), so from then on a migration adds one file to each directory.
+//
 // MySQL DDL commits implicitly, so a migration that fails part-way leaves its
 // earlier statements applied and is not recorded. Fix the schema by hand and
-// rerun; keep migrations small to limit that window.
+// rerun; keep migrations small to limit that window. SQLite DDL is
+// transactional: a run applies all pending migrations or none.
 package migration
 
 import (
@@ -29,17 +34,24 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
+	"github.com/dkeepersun/BotGuard/internal/store"
 )
 
-//go:embed sql/*.sql
+//go:embed sql
 var files embed.FS
 
 const lockName = "botguard_migrate"
 
 var namePattern = regexp.MustCompile(`^(\d{4})_([a-z0-9_]+)\.sql$`)
 
-const trackingTable = `CREATE TABLE IF NOT EXISTS botguard_schema_migration (
+const sqliteTrackingTable = `CREATE TABLE IF NOT EXISTS botguard_schema_migration (
+  version INTEGER NOT NULL PRIMARY KEY,
+  name TEXT NOT NULL,
+  checksum TEXT NOT NULL,
+  applied_at DATETIME NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+)`
+
+const mysqlTrackingTable = `CREATE TABLE IF NOT EXISTS botguard_schema_migration (
   version INT UNSIGNED NOT NULL,
   name VARCHAR(128) NOT NULL,
   checksum CHAR(64) NOT NULL,
@@ -87,9 +99,9 @@ type Status struct {
 	AppliedAt *time.Time
 }
 
-// Load parses the embedded migrations in version order.
-func Load() ([]Migration, error) {
-	return load(files, "sql")
+// Load parses the embedded migrations for one dialect in version order.
+func Load(d store.Driver) ([]Migration, error) {
+	return load(files, "sql/"+string(d))
 }
 
 func load(fsys fs.FS, dir string) ([]Migration, error) {
@@ -153,22 +165,38 @@ func Split(sqlText string) []string {
 // migration statements share a session.
 type Runner struct {
 	conn       *sql.Conn
+	driver     store.Driver
 	migrations []Migration
 }
 
-// Open takes the migration lock; Close releases it.
-func Open(ctx context.Context, db *sql.DB) (*Runner, error) {
-	ms, err := Load()
+// querier is a *sql.Conn, or the *sql.Tx a SQLite run happens in.
+type querier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// Open takes the migration lock (MySQL); Close releases it.
+func Open(ctx context.Context, db *sql.DB, d store.Driver) (*Runner, error) {
+	ms, err := Load(d)
 	if err != nil {
 		return nil, err
 	}
-	return open(ctx, db, ms)
+	return open(ctx, db, d, ms)
 }
 
-func open(ctx context.Context, db *sql.DB, ms []Migration) (*Runner, error) {
+func open(ctx context.Context, db *sql.DB, d store.Driver, ms []Migration) (*Runner, error) {
 	conn, err := db.Conn(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if d == store.SQLite {
+		// No lock to take: Up runs in one write transaction, which SQLite
+		// serializes across processes.
+		if _, err := conn.ExecContext(ctx, sqliteTrackingTable); err != nil {
+			conn.Close()
+			return nil, err
+		}
+		return &Runner{conn: conn, driver: d, migrations: ms}, nil
 	}
 	var version string
 	if err := conn.QueryRowContext(ctx, "SELECT VERSION()").Scan(&version); err != nil {
@@ -192,11 +220,11 @@ func open(ctx context.Context, db *sql.DB, ms []Migration) (*Runner, error) {
 		conn.Close()
 		return nil, err
 	}
-	if _, err := conn.ExecContext(ctx, trackingTable); err != nil {
+	if _, err := conn.ExecContext(ctx, mysqlTrackingTable); err != nil {
 		conn.Close()
 		return nil, err
 	}
-	return &Runner{conn: conn, migrations: ms}, nil
+	return &Runner{conn: conn, driver: d, migrations: ms}, nil
 }
 
 // adoptLegacy renames a database from before the botguard_ prefix. It acts
@@ -281,8 +309,8 @@ func CheckServerVersion(version string) error {
 }
 
 // Latest is the newest migration version built into this binary.
-func Latest() (int, error) {
-	ms, err := Load()
+func Latest(d store.Driver) (int, error) {
+	ms, err := Load(d)
 	if err != nil || len(ms) == 0 {
 		return 0, err
 	}
@@ -291,11 +319,10 @@ func Latest() (int, error) {
 
 // Applied returns the newest applied version, 0 for a fresh database. It
 // takes no lock, so the gateway can call it from its readiness probe.
-func Applied(ctx context.Context, db *sql.DB) (int, error) {
+func Applied(ctx context.Context, db *sql.DB, d store.Driver) (int, error) {
 	var v sql.NullInt64
 	err := db.QueryRowContext(ctx, "SELECT MAX(version) FROM botguard_schema_migration").Scan(&v)
-	var me *mysql.MySQLError
-	if errors.As(err, &me) && me.Number == 1146 { // table does not exist
+	if store.IsMissingTable(d, err) {
 		return 0, nil
 	}
 	if err != nil {
@@ -305,14 +332,20 @@ func Applied(ctx context.Context, db *sql.DB) (int, error) {
 }
 
 func (r *Runner) Close() error {
-	_, _ = r.conn.ExecContext(context.Background(), "SELECT RELEASE_LOCK(?)", lockName)
+	if r.driver == store.MySQL {
+		_, _ = r.conn.ExecContext(context.Background(), "SELECT RELEASE_LOCK(?)", lockName)
+	}
 	return r.conn.Close()
 }
 
 // Status lists every known migration with its applied time, after checking
 // that the database history matches this binary.
 func (r *Runner) Status(ctx context.Context) ([]Status, error) {
-	rows, err := r.conn.QueryContext(ctx, "SELECT version, checksum, applied_at FROM botguard_schema_migration ORDER BY version")
+	return r.status(ctx, r.conn)
+}
+
+func (r *Runner) status(ctx context.Context, q querier) ([]Status, error) {
+	rows, err := q.QueryContext(ctx, "SELECT version, checksum, applied_at FROM botguard_schema_migration ORDER BY version")
 	if err != nil {
 		return nil, err
 	}
@@ -362,7 +395,25 @@ func (r *Runner) Status(ctx context.Context) ([]Status, error) {
 
 // Up applies pending migrations in order and returns the ones applied.
 func (r *Runner) Up(ctx context.Context) ([]Migration, error) {
-	status, err := r.Status(ctx)
+	if r.driver == store.SQLite {
+		// The DSN begins transactions IMMEDIATE: a second process starting at
+		// the same time waits here, then finds nothing left to apply.
+		tx, err := r.conn.BeginTx(ctx, nil)
+		if err != nil {
+			return nil, err
+		}
+		done, err := r.up(ctx, tx)
+		if err != nil {
+			tx.Rollback()
+			return nil, err
+		}
+		return done, tx.Commit()
+	}
+	return r.up(ctx, r.conn)
+}
+
+func (r *Runner) up(ctx context.Context, q querier) ([]Migration, error) {
+	status, err := r.status(ctx, q)
 	if err != nil {
 		return nil, err
 	}
@@ -372,12 +423,15 @@ func (r *Runner) Up(ctx context.Context) ([]Migration, error) {
 			continue
 		}
 		for i, stmt := range s.Statements {
-			if _, err := r.conn.ExecContext(ctx, stmt); err != nil {
+			if _, err := q.ExecContext(ctx, stmt); err != nil {
+				if r.driver == store.SQLite {
+					return nil, fmt.Errorf("迁移 %04d_%s 第 %d 条语句失败（已整体回滚）：%w", s.Version, s.Name, i+1, err)
+				}
 				return done, fmt.Errorf("迁移 %04d_%s 第 %d 条语句失败（之前的 DDL 已生效，需人工处理后重试）：%w",
 					s.Version, s.Name, i+1, err)
 			}
 		}
-		if _, err := r.conn.ExecContext(ctx,
+		if _, err := q.ExecContext(ctx,
 			"INSERT INTO botguard_schema_migration (version, name, checksum) VALUES (?, ?, ?)",
 			s.Version, s.Name, s.Checksum); err != nil {
 			return done, err
@@ -385,4 +439,23 @@ func (r *Runner) Up(ctx context.Context) ([]Migration, error) {
 		done = append(done, s.Migration)
 	}
 	return done, nil
+}
+
+// Prepare brings a SQLite database up to date at startup: BotGuard owns the
+// file and there is no separate install step. MySQL schemas are left to
+// "botguard-ctl migrate up", so an upgrade stays an explicit operator step.
+func Prepare(ctx context.Context, db *store.DB) ([]Migration, error) {
+	if db.Driver != store.SQLite {
+		return nil, nil
+	}
+	raw, err := db.Raw()
+	if err != nil {
+		return nil, err
+	}
+	r, err := Open(ctx, raw, db.Driver)
+	if err != nil {
+		return nil, err
+	}
+	defer r.Close()
+	return r.Up(ctx)
 }

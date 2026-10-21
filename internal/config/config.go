@@ -11,6 +11,7 @@ import (
 
 	"github.com/dkeepersun/BotGuard/internal/service/challenge"
 	"github.com/dkeepersun/BotGuard/internal/service/sealer"
+	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 	"github.com/zeromicro/go-zero/rest"
 )
@@ -20,9 +21,10 @@ import (
 type AdminConfig struct {
 	rest.RestConf
 	Redis redis.RedisConf
-	MySQL struct {
-		DataSource string
-	}
+	// Database defaults to a SQLite file; see store.Config.
+	Database store.Config `json:",optional"`
+	// MySQL is the setting from before Database, still honoured.
+	MySQL LegacyMySQL `json:",optional"`
 	// SecretKEK seals new secret pairs and TOTP secrets; same value as the
 	// gateway's.
 	SecretKEK         string   `json:",optional"`
@@ -41,7 +43,23 @@ type AdminConfig struct {
 	}
 	// TrustedProxies are CIDRs whose X-Forwarded-For is believed.
 	TrustedProxies []string `json:",optional"`
+	// Cleanup deletes old database rows (docs/admin.md). Only the console
+	// runs it: the gateway may hold a read-only database account.
+	Cleanup struct {
+		Enabled         bool `json:",default=true"`
+		IntervalMinutes int  `json:",default=60"`
+		// 0 keeps rows forever.
+		AuditLogDays      int `json:",default=180"`
+		RetiredSecretDays int `json:",default=30"`
+	}
 }
+
+// LegacyMySQL is the pre-Database configuration block.
+type LegacyMySQL struct {
+	DataSource string `json:",optional"`
+}
+
+func (c AdminConfig) DB() (store.Config, error) { return c.Database.Resolve(c.MySQL.DataSource) }
 
 func (c AdminConfig) Sealer() (*sealer.Sealer, error) {
 	if strings.TrimSpace(c.SecretKEK) == "" {
@@ -57,14 +75,20 @@ func (c AdminConfig) Sealer() (*sealer.Sealer, error) {
 }
 
 func (c AdminConfig) Validate() error {
-	if _, err := NormalizeMySQLDSN(c.MySQL.DataSource); err != nil {
-		return fmt.Errorf("MySQL.DataSource: %w", err)
+	if _, err := c.DB(); err != nil {
+		return fmt.Errorf("Database: %w", err)
 	}
 	if c.Redis.Host == "" {
 		return errors.New("Redis.Host is required")
 	}
 	if _, err := c.Sealer(); err != nil {
 		return fmt.Errorf("SecretKEK: %w", err)
+	}
+	if c.Cleanup.IntervalMinutes < 5 || c.Cleanup.IntervalMinutes > 1440 {
+		return errors.New("Cleanup.IntervalMinutes must be within [5, 1440]")
+	}
+	if c.Cleanup.AuditLogDays < 0 || c.Cleanup.RetiredSecretDays < 0 {
+		return errors.New("Cleanup days must not be negative (0 keeps rows forever)")
 	}
 	if ip := net.ParseIP(c.Host); !c.CookieSecure && (ip == nil || !ip.IsLoopback()) {
 		// A non-loopback listener without HTTPS cookies would send sessions
@@ -92,9 +116,10 @@ type ChallengeKeyConf struct {
 type GatewayConfig struct {
 	rest.RestConf
 	Redis redis.RedisConf
-	MySQL struct {
-		DataSource string
-	}
+	// Database defaults to a SQLite file; see store.Config.
+	Database store.Config `json:",optional"`
+	// MySQL is the setting from before Database, still honoured.
+	MySQL     LegacyMySQL `json:",optional"`
 	Challenge struct {
 		Keys          []ChallengeKeyConf
 		TTLSeconds    int    `json:",default=120"`
@@ -137,6 +162,8 @@ type GatewayConfig struct {
 	}
 }
 
+func (c GatewayConfig) DB() (store.Config, error) { return c.Database.Resolve(c.MySQL.DataSource) }
+
 // Keyring decodes and validates the challenge signing keys.
 func (c GatewayConfig) Keyring() (*challenge.Keyring, error) {
 	keys := make([]challenge.Key, 0, len(c.Challenge.Keys))
@@ -168,8 +195,8 @@ func (c GatewayConfig) Validate() error {
 	if _, err := c.Sealer(); err != nil {
 		return fmt.Errorf("SecretKEK: %w", err)
 	}
-	if _, err := NormalizeMySQLDSN(c.MySQL.DataSource); err != nil {
-		return fmt.Errorf("MySQL.DataSource: %w", err)
+	if _, err := c.DB(); err != nil {
+		return fmt.Errorf("Database: %w", err)
 	}
 	if c.Redis.Host == "" {
 		return errors.New("Redis.Host is required")

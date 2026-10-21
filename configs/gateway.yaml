@@ -10,6 +10,17 @@ Timeout: 3000
 Middlewares:
   Log: false
   Trace: false
+# Log files rotate at 100 MB and are deleted after 7 days, so a long-running
+# install never fills the disk. Use Mode: console under systemd or Docker,
+# which keep logs themselves (configure their rotation too).
+Log:
+  Mode: file
+  Path: logs/gateway
+  Rotation: size
+  MaxSize: 100
+  MaxBackups: 7
+  KeepDays: 7
+  Compress: true
 
 Redis:
   Host: 127.0.0.1:6379
@@ -18,9 +29,18 @@ Redis:
   # breaker counts the handshake error as a failure.
   DisableIdentity: false
 
+# SQLite by default: the file and its tables are created on first start, no
+# database server needed. Set BOTGUARD_DB_DRIVER=mysql and BOTGUARD_DB_DSN to
+# use MySQL (then run botguard-ctl migrate up before starting), e.g.
+# user:pass@tcp(127.0.0.1:3306)/botguard; parseTime, loc=UTC and
+# time_zone='+00:00' are forced at startup. Give SQLite an absolute path in
+# production; gateway, admin-web and botguard-ctl must all use the same file.
+Database:
+  Driver: ${BOTGUARD_DB_DRIVER}   # sqlite (default) | mysql
+  DataSource: ${BOTGUARD_DB_DSN}  # SQLite file (default data/botguard.db) or MySQL DSN
+# Deployments from before the Database block: a set BOTGUARD_MYSQL_DSN still
+# selects MySQL when BOTGUARD_DB_DRIVER is empty.
 MySQL:
-  # e.g. user:pass@tcp(127.0.0.1:3306)/botguard
-  # parseTime, loc=UTC and time_zone='+00:00' are forced at startup.
   DataSource: ${BOTGUARD_MYSQL_DSN}
 
 Challenge:
@@ -32,7 +52,7 @@ Challenge:
   TTLSeconds: 120
   MaxDifficulty: 1000000
 
-# Seals app secret keys in MySQL. Format id:base64(32 bytes); generate with
+# Seals app secret keys in the database. Format id:base64(32 bytes); generate with
 #   echo "k1:$(openssl rand -base64 32)"
 # botguard-ctl must use the same value to create secret pairs.
 SecretKEK: ${BOTGUARD_SECRET_KEK}

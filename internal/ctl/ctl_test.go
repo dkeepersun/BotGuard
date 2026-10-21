@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/service/password"
+	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/dkeepersun/BotGuard/internal/testdb"
 )
 
@@ -20,12 +21,14 @@ type runner struct {
 	pw  string
 }
 
-func newRunner(t *testing.T, dsn string) *runner {
+func newRunner(t *testing.T, db store.Config) *runner {
 	r := &runner{t: t, out: &bytes.Buffer{}}
 	r.app = New(func(k string) string {
 		switch k {
+		case DriverEnv:
+			return db.Driver
 		case DSNEnv:
-			return dsn
+			return db.DataSource
 		case KEKEnv:
 			return r.kek
 		case AdminPasswordEnv:
@@ -55,7 +58,7 @@ func field(t *testing.T, out, name string) string {
 }
 
 func TestUsageErrorsNeedNoDatabase(t *testing.T) {
-	r := newRunner(t, "")
+	r := newRunner(t, store.Config{Driver: "oracle"})
 	r.run(2)
 	r.run(2, "app")
 	r.run(2, "app", "explode")
@@ -63,7 +66,7 @@ func TestUsageErrorsNeedNoDatabase(t *testing.T) {
 	r.run(2, "origin", "add", "-app", "pk_x")
 	r.run(2, "app", "list", "extra")
 	r.run(2, "action", "set", "-app", "pk_x", "-action", "login", "-mode", "slider", "-kinds", "click_text")
-	if out := r.run(1, "app", "list"); !strings.Contains(out, "BOTGUARD_MYSQL_DSN") {
+	if out := r.run(1, "app", "list"); !strings.Contains(out, DriverEnv) {
 		t.Fatalf("missing DSN message: %s", out)
 	}
 	if out := r.run(0, "help"); !strings.Contains(out, "migrate up") {
@@ -162,16 +165,21 @@ func TestOperatorWorkflow(t *testing.T) {
 	if out := r.run(0, "migrate", "status"); !strings.Contains(out, "已执行") {
 		t.Fatalf("status: %s", out)
 	}
+	// Everything above is recent: nothing to purge yet.
+	if out := r.run(0, "data", "purge"); !strings.Contains(out, "审计日志 0 条、失效密钥对 0 个") {
+		t.Fatalf("purge: %s", out)
+	}
+	r.run(2, "data", "purge", "-audit-days", "-1")
 }
 
 // Scripts capture stdout for app keys and secrets; errors must not vanish into it.
 func TestErrorsGoToStderr(t *testing.T) {
 	var out, errOut bytes.Buffer
-	app := New(func(string) string { return "" }, &out, &errOut)
+	app := New(func(k string) string { return map[string]string{DriverEnv: "oracle"}[k] }, &out, &errOut)
 	if code := app.Run(context.Background(), []string{"app", "list"}); code != 1 {
 		t.Fatalf("exit %d", code)
 	}
-	if out.Len() != 0 || !strings.Contains(errOut.String(), "BOTGUARD_MYSQL_DSN") {
+	if out.Len() != 0 || !strings.Contains(errOut.String(), DriverEnv) {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errOut.String())
 	}
 }

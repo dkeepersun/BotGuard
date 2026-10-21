@@ -21,9 +21,10 @@ import (
 	"github.com/zeromicro/go-zero/core/stores/redis"
 )
 
-// TestEndToEndWithMySQL drives the gateway against apps written by the
-// management use case, so the read queries are checked against the real schema.
-func TestEndToEndWithMySQL(t *testing.T) {
+// TestEndToEndWithDatabase drives the gateway against apps written by the
+// management use case, so the read queries are checked against the real
+// schema (SQLite, or MySQL with BOTGUARD_TEST_MYSQL_DSN).
+func TestEndToEndWithDatabase(t *testing.T) {
 	_, conn := testdb.Open(t)
 	ctx := context.Background()
 	clock := time.Date(2026, 10, 20, 8, 0, 0, 0, time.UTC)
@@ -64,7 +65,7 @@ func TestEndToEndWithMySQL(t *testing.T) {
 	rds := redis.New(mr.Addr(), redis.WithIdentity())
 	keys, _ := challenge.NewKeyring([]challenge.Key{{ID: "k1", Secret: bytes.Repeat([]byte("e"), 32), Active: true}})
 	g := &Gateway{
-		Apps: repository.NewMySQLApps(conn, seal), State: repository.NewState(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
+		Apps: repository.NewSQLApps(conn, seal), State: repository.NewState(rds), Limiter: repository.NewRateLimiter(rds), Keys: keys,
 		Settings: Settings{ChallengeTTL: 2 * time.Minute, TokenTTL: time.Minute, ResultTTL: 10 * time.Minute, ClockSkew: 5 * time.Second,
 			MaxDifficulty: 1 << 20, SignatureWindow: 5 * time.Minute, ChallengePerIPPerMinute: 1000, SolvePerIPPerMinute: 1000, VerifyPerKeyPerMinute: 1000, AuthFailuresPerIPPerMinute: 60,
 			RiskMedium: 30, RiskHigh: 70, HighDifficultyFactor: 4, FallbackDifficultyFactor: 8, FailureWindow: 10 * time.Minute, SliderTolerance: 4},
@@ -78,7 +79,7 @@ func TestEndToEndWithMySQL(t *testing.T) {
 			t.Fatalf("issue: %v", err)
 		}
 		if c.Params.Puzzles != 3 {
-			t.Fatalf("policy not read from MySQL: %+v", c.Params)
+			t.Fatalf("policy not read from the database: %+v", c.Params)
 		}
 		nonces, _ := pow.Solve(c.Algorithm, c.ChallengeID, c.Params)
 		out, _, err := g.Solve(ctx, SolveInput{AppKey: app, Challenge: c.Challenge, Nonces: nonces, Origin: origin, ClientIP: ip})
@@ -152,7 +153,7 @@ func TestCachedRevocationTakesEffectWithinTTL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cached, err := repository.NewCachedApps(repository.NewMySQLApps(conn, seal), time.Second, 100)
+	cached, err := repository.NewCachedApps(repository.NewSQLApps(conn, seal), time.Second, 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +184,7 @@ func TestKnownKeysListsAppsAndSecrets(t *testing.T) {
 	if err := admin.RevokeSecret(ctx, key.SecretID); err != nil {
 		t.Fatal(err)
 	}
-	appKeys, secretIDs, err := repository.NewMySQLApps(conn, seal).KnownKeys(ctx)
+	appKeys, secretIDs, err := repository.NewSQLApps(conn, seal).KnownKeys(ctx)
 	if err != nil || !slices.Contains(appKeys, app) || !slices.Contains(secretIDs, key.SecretID) {
 		t.Fatalf("known keys: %v %v %v", appKeys, secretIDs, err)
 	}
@@ -210,7 +211,7 @@ func TestWrongKEKFailsClosed(t *testing.T) {
 		t.Fatal(err)
 	}
 	other, _ := sealer.New("t2:" + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32)))
-	if _, err := repository.NewMySQLApps(conn, other).SecretPair(ctx, key.SecretID); !errors.Is(err, sealer.ErrUnknownKEK) {
+	if _, err := repository.NewSQLApps(conn, other).SecretPair(ctx, key.SecretID); !errors.Is(err, sealer.ErrUnknownKEK) {
 		t.Fatalf("unknown KEK: %v", err)
 	}
 	db, err := conn.RawDB()

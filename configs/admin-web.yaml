@@ -7,12 +7,33 @@ Timeout: 5000
 Middlewares:
   Log: false
   Trace: false
+# Log files rotate at 100 MB and are deleted after 7 days, so a long-running
+# install never fills the disk. Use Mode: console under systemd or Docker,
+# which keep logs themselves (configure their rotation too).
+Log:
+  Mode: file
+  Path: logs/admin-web
+  Rotation: size
+  MaxSize: 100
+  MaxBackups: 7
+  KeepDays: 7
+  Compress: true
 
 Redis:
   Host: 127.0.0.1:6379
   Type: node
   DisableIdentity: false
 
+# SQLite by default: the file and its tables are created on first start, no
+# database server needed. Set BOTGUARD_DB_DRIVER=mysql and BOTGUARD_DB_DSN to
+# use MySQL (then run botguard-ctl migrate up before starting). Give SQLite an
+# absolute path in production; gateway, admin-web and botguard-ctl must all use
+# the same file.
+Database:
+  Driver: ${BOTGUARD_DB_DRIVER}   # sqlite (default) | mysql
+  DataSource: ${BOTGUARD_DB_DSN}  # SQLite file (default data/botguard.db) or MySQL DSN
+# Deployments from before the Database block: a set BOTGUARD_MYSQL_DSN still
+# selects MySQL when BOTGUARD_DB_DRIVER is empty.
 MySQL:
   DataSource: ${BOTGUARD_MYSQL_DSN}
 
@@ -33,3 +54,12 @@ Session:
   AbsoluteHours: 8
 
 TrustedProxies: []
+
+# Hourly cleanup of old database rows; 0 days keeps them forever. Redis data
+# needs none: every key expires on its own.
+Cleanup:
+  Enabled: true
+  IntervalMinutes: 60
+  AuditLogDays: 180
+  # Secret pairs whose rotation grace ended, or that were revoked, this long ago.
+  RetiredSecretDays: 30

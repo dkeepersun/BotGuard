@@ -36,7 +36,7 @@
                                                │
                       logic → service → repository
                                       ├─ Redis: 临时状态、限流、消费结果
-                                      └─ MySQL: 配置、账户、审计、规则版本
+                                      └─ SQLite（默认）/ MySQL: 配置、账户、审计、规则版本
 管理员 ──> admin-web (go-zero + html/template + PearAdmin)
 ```
 
