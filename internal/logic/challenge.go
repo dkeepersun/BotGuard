@@ -256,7 +256,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		return nil, "", errx.ErrOriginNotAllowed
 	}
 	ipBucket := clientip.Bucket(in.ClientIP)
-	count, retry, err := g.Limiter.Take(ctx, dimChallenge, ipBucket, rateWindow)
+	count, retry, err := g.Limiter.Take(ctx, dimChallenge, ipBucket, g.Settings.ChallengePerIPPerMinute, rateWindow)
 	if err != nil {
 		logx.WithContext(ctx).Errorf("rate limiter: %v", err)
 		return nil, "", errx.ErrUnavailable

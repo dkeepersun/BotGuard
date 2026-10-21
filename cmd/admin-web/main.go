@@ -148,7 +148,7 @@ func main() {
 		go retention.Run(context.Background(), time.Duration(c.Cleanup.IntervalMinutes)*time.Minute, time.Now)
 	}
 	log.Printf("BotGuard admin console on %s:%d", c.Host, c.Port)
-	server.Start()
+	server.StartWithOpts(config.ServerLimits(c.Timeout))
 }
 
 func cleanupInfo(c config.AdminConfig) string {

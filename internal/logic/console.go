@@ -158,7 +158,7 @@ func truncateRunes(s string, n int) string {
 func (c *Console) Login(ctx context.Context, in LoginInput) (*Principal, error) {
 	username := strings.ToLower(strings.TrimSpace(in.Username))
 	for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, username}} {
-		n, _, err := c.Limiter.Count(ctx, dim.name, dim.subject, loginWindow)
+		n, _, err := c.Limiter.Count(ctx, dim.name, dim.subject, loginMaxFails, loginWindow)
 		if err != nil {
 			return nil, err
 		}
@@ -171,7 +171,7 @@ func (c *Console) Login(ctx context.Context, in LoginInput) (*Principal, error) 
 	}
 	fail := func(err error, reason string) (*Principal, error) {
 		for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, username}} {
-			_, _, _ = c.Limiter.Take(ctx, dim.name, dim.subject, loginWindow)
+			_, _, _ = c.Limiter.Take(ctx, dim.name, dim.subject, loginMaxFails, loginWindow)
 		}
 		c.auditLogin(ctx, username, "auth.login_failed", in.IP, map[string]any{"reason": reason})
 		return nil, err
@@ -281,7 +281,7 @@ func (c *Console) completeOTP(ctx context.Context, in LoginInput) (*Principal, e
 		return nil, err
 	}
 	for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, admin.Username}} {
-		n, _, err := c.Limiter.Count(ctx, dim.name, dim.subject, loginWindow)
+		n, _, err := c.Limiter.Count(ctx, dim.name, dim.subject, loginMaxFails, loginWindow)
 		if err != nil {
 			return nil, err
 		}
@@ -299,7 +299,7 @@ func (c *Console) completeOTP(ctx context.Context, in LoginInput) (*Principal, e
 			return nil, err
 		}
 		for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, admin.Username}} {
-			_, _, _ = c.Limiter.Take(ctx, dim.name, dim.subject, loginWindow)
+			_, _, _ = c.Limiter.Take(ctx, dim.name, dim.subject, loginMaxFails, loginWindow)
 		}
 		c.auditLogin(ctx, admin.Username, "auth.login_failed", in.IP, map[string]any{"reason": otpReason(err)})
 		return nil, &OTPChallenge{Token: in.Pending, Username: admin.Username, retry: err}

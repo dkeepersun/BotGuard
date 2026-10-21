@@ -271,7 +271,7 @@ func (g *Gateway) Verify(ctx context.Context, in VerifyInput) (out *VerifyOutput
 	// Zero disables the limit (tests and embedded use; config requires >= 1).
 	ipBucket, authLimit := clientip.Bucket(in.ClientIP), g.Settings.AuthFailuresPerIPPerMinute
 	if authLimit > 0 {
-		fails, retry, err := g.Limiter.Count(ctx, dimAuthFail, ipBucket, rateWindow)
+		fails, retry, err := g.Limiter.Count(ctx, dimAuthFail, ipBucket, authLimit, rateWindow)
 		if err != nil {
 			logx.WithContext(ctx).Errorf("rate limiter %s: %v", dimAuthFail, err)
 			return nil, errx.ErrUnavailable
@@ -284,7 +284,7 @@ func (g *Gateway) Verify(ctx context.Context, in VerifyInput) (out *VerifyOutput
 	// Clock errors are rejected before any lookup and must stay visible as
 	// TIMESTAMP_EXPIRED, so only signature failures count.
 	if authLimit > 0 && errors.Is(err, errx.ErrUnauthorized) {
-		if _, _, lerr := g.Limiter.Take(ctx, dimAuthFail, ipBucket, rateWindow); lerr != nil {
+		if _, _, lerr := g.Limiter.Take(ctx, dimAuthFail, ipBucket, authLimit, rateWindow); lerr != nil {
 			logx.WithContext(ctx).Errorf("rate limiter %s: %v", dimAuthFail, lerr)
 		}
 	}

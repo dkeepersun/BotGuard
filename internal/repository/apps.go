@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
@@ -27,6 +29,12 @@ const (
 type AppStore interface {
 	AppByKey(ctx context.Context, appKey string) (*domain.App, error)
 	SecretPair(ctx context.Context, secretID string) (*domain.SecretPair, error)
+}
+
+// KeyLister lists every app key and secret id, whatever their status, for
+// CachedApps' index of known keys.
+type KeyLister interface {
+	KnownKeys(ctx context.Context) (appKeys, secretIDs []string, err error)
 }
 
 // SQLApps reads app configuration. It is read-only; writes belong to admin.
@@ -140,15 +148,53 @@ func (r *SQLApps) SecretPair(ctx context.Context, secretID string) (*domain.Secr
 	return k, nil
 }
 
+func (r *SQLApps) KnownKeys(ctx context.Context) (appKeys, secretIDs []string, err error) {
+	if err := r.conn.QueryRowsCtx(ctx, &appKeys, "SELECT app_key FROM botguard_app"); err != nil {
+		return nil, nil, err
+	}
+	if err := r.conn.QueryRowsCtx(ctx, &secretIDs, "SELECT secret_id FROM botguard_app_secret"); err != nil {
+		return nil, nil, err
+	}
+	return appKeys, secretIDs, nil
+}
+
 // CachedApps bounds both staleness (ttl) and memory (limit). Misses are
 // cached separately, so repeated unknown keys cost no query and a flood of
-// random keys cannot evict the apps and secret pairs that are in use. Callers
-// must still rate-limit unknown keys: each new one is one MySQL query.
+// random keys cannot evict the apps and secret pairs that are in use.
+//
+// When the source is a KeyLister, CachedApps also keeps an index of every
+// existing app key and secret id, reloaded every ttl. A key missing from the
+// index is most likely made up, so looking it up spends from a small shared
+// budget (unknownQueriesPerSecond) instead of costing a query each: a flood
+// of random keys from many addresses cannot turn into database load. The budget
+// still lets a key created since the last reload through in normal traffic.
 type CachedApps struct {
 	src    AppStore
 	apps   *collection.Cache
 	keys   *collection.Cache
 	misses *collection.Cache
+
+	lister     KeyLister
+	ttl        time.Duration
+	now        func() time.Time
+	index      atomic.Pointer[keyIndex]
+	refreshing atomic.Bool
+	unknown    *tokenBucket
+}
+
+const (
+	// unknownQueriesPerSecond bounds lookups of keys missing from the index,
+	// across all callers.
+	unknownQueriesPerSecond = 20
+	// indexMaxAgeTTLs is how many ttls an index stays in use while reloads
+	// fail; after that every key is looked up again, as without an index.
+	indexMaxAgeTTLs  = 6
+	indexLoadTimeout = 5 * time.Second
+)
+
+type keyIndex struct {
+	keys     map[string]struct{}
+	loadedAt time.Time
 }
 
 func NewCachedApps(src AppStore, ttl time.Duration, limit int) (*CachedApps, error) {
@@ -164,11 +210,20 @@ func NewCachedApps(src AppStore, ttl time.Duration, limit int) (*CachedApps, err
 	if err != nil {
 		return nil, err
 	}
-	return &CachedApps{src: src, apps: apps, keys: keys, misses: misses}, nil
+	c := &CachedApps{src: src, apps: apps, keys: keys, misses: misses, ttl: ttl, now: time.Now,
+		unknown: newTokenBucket(unknownQueriesPerSecond, time.Now)}
+	c.lister, _ = src.(KeyLister)
+	return c, nil
 }
 
 func take[T any](c *CachedApps, cache *collection.Cache, key string, fetch func() (*T, error)) (*T, error) {
+	if v, ok := cache.Get(key); ok {
+		return v.(*T), nil
+	}
 	if _, ok := c.misses.Get(key); ok {
+		return nil, domain.ErrNotFound
+	}
+	if !c.mayExist(key) {
 		return nil, domain.ErrNotFound
 	}
 	v, err := cache.Take(key, func() (any, error) { return fetch() })
@@ -179,6 +234,58 @@ func take[T any](c *CachedApps, cache *collection.Cache, key string, fetch func(
 		return nil, err
 	}
 	return v.(*T), nil
+}
+
+// mayExist reports whether key is worth a query. Without a usable index
+// every key is; otherwise keys in the index are, and the rest share the
+// unknown-key budget.
+func (c *CachedApps) mayExist(key string) bool {
+	if c.lister == nil {
+		return true
+	}
+	now := c.now()
+	idx := c.index.Load()
+	if idx == nil || now.Sub(idx.loadedAt) >= c.ttl {
+		c.reloadAsync()
+	}
+	if idx == nil || now.Sub(idx.loadedAt) >= indexMaxAgeTTLs*c.ttl {
+		return true
+	}
+	if _, ok := idx.keys[key]; ok {
+		return true
+	}
+	return c.unknown.take()
+}
+
+// reloadAsync starts one reload in the background; lookups never wait for it.
+func (c *CachedApps) reloadAsync() {
+	if !c.refreshing.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer c.refreshing.Store(false)
+		ctx, cancel := context.WithTimeout(context.Background(), indexLoadTimeout)
+		defer cancel()
+		if err := c.reload(ctx); err != nil {
+			logx.WithContext(ctx).Errorf("load known app keys: %v", err)
+		}
+	}()
+}
+
+func (c *CachedApps) reload(ctx context.Context) error {
+	appKeys, secretIDs, err := c.lister.KnownKeys(ctx)
+	if err != nil {
+		return err
+	}
+	idx := &keyIndex{keys: make(map[string]struct{}, len(appKeys)+len(secretIDs)), loadedAt: c.now()}
+	for _, k := range appKeys {
+		idx.keys["app:"+k] = struct{}{}
+	}
+	for _, k := range secretIDs {
+		idx.keys["secret:"+k] = struct{}{}
+	}
+	c.index.Store(idx)
+	return nil
 }
 
 func (c *CachedApps) AppByKey(ctx context.Context, appKey string) (*domain.App, error) {
@@ -228,4 +335,32 @@ func ParseKinds(stored string) []string {
 		return []string{domain.KindSlider}
 	}
 	return out
+}
+
+// tokenBucket allows rate events per second with a burst of one second's
+// worth.
+type tokenBucket struct {
+	mu     sync.Mutex
+	rate   float64
+	tokens float64
+	last   time.Time
+	now    func() time.Time
+}
+
+func newTokenBucket(rate float64, now func() time.Time) *tokenBucket {
+	return &tokenBucket{rate: rate, tokens: rate, last: now(), now: now}
+}
+
+func (b *tokenBucket) take() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if now := b.now(); now.After(b.last) {
+		b.tokens = min(b.rate, b.tokens+now.Sub(b.last).Seconds()*b.rate)
+		b.last = now
+	}
+	if b.tokens < 1 {
+		return false
+	}
+	b.tokens--
+	return true
 }

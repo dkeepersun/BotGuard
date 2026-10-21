@@ -20,7 +20,6 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/sealer"
 	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/dkeepersun/BotGuard/internal/version"
-	"github.com/zeromicro/go-zero/core/stores/sqlx"
 )
 
 const (
