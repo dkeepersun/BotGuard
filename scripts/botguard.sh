@@ -174,8 +174,19 @@ launchd_restart() {
   fi
 }
 
+# bootout 发出 SIGTERM 就返回，不等进程退出；等它真正退出，紧接着的 start 才不会
+# 撞上还没释放的端口，uninstall 返回时服务也确实停了。
 launchd_stop() {
-  if launchd_loaded "$1"; then launchctl bootout "$(launchd_target "$1")" 2>/dev/null || true; fi
+  local pid
+  launchd_loaded "$1" || return 0
+  pid="$(launchd_field "$1" pid)"
+  launchctl bootout "$(launchd_target "$1")" 2>/dev/null || true
+  [[ -n "$pid" ]] || return 0
+  for _ in $(seq 1 40); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.5
+  done
+  echo "警告: ${1}（PID ${pid}）20 秒内没有退出" >&2
 }
 
 # launchctl print 里的 "state = running" 和 "pid = 123"。
@@ -538,7 +549,7 @@ upgrade() {
   (cd "$tmp" && grep " $name.tar.gz\$" checksums.txt | sha256_check) || die "校验和不符，已放弃升级，没有改动任何文件"
   tar -xzf "$tmp/$name.tar.gz" -C "$tmp"
   for f in $UPGRADE_FILES; do
-    [[ -e "$tmp/$name/$f" ]] || die "发布包缺少 $f，已放弃升级"
+    [[ -e "$tmp/$name/$f" ]] || die "发布包缺少 ${f}，已放弃升级"
   done
   # 逐个改名替换：运行中的服务和正在执行的本脚本仍持有旧文件，不受影响。
   for f in $UPGRADE_FILES; do
@@ -797,7 +808,7 @@ init_server() {
       echo "已生成 $conf"
     elif [[ "$svc" == gateway && -n "$listen" ]]; then
       set_yaml_host "$conf" "$listen"
-      echo "已更新 $conf：Host: $listen"
+      echo "已更新 ${conf}：Host: $listen"
     fi
   done
 
@@ -822,14 +833,14 @@ BOTGUARD_GATEWAY_URL='http://$gateway_host:$port'
 ENV
     chmod 0600 "$tmp"
     mv -f "$tmp" "$env_file"
-    echo "已生成 $env_file（随机密钥，SQLite 数据库 $DATA_DIR/botguard.db）"
+    echo "已生成 ${env_file}（随机密钥，SQLite 数据库 $DATA_DIR/botguard.db）"
   elif [[ -n "$endpoint" ]]; then
     set_env_value "$env_file" BOTGUARD_PUBLIC_ENDPOINT "$endpoint"
-    echo "已更新 $env_file：BOTGUARD_PUBLIC_ENDPOINT='$endpoint'"
+    echo "已更新 ${env_file}：BOTGUARD_PUBLIC_ENDPOINT='$endpoint'"
   else
     echo "$env_file 已存在，保持不变"
   fi
-  echo "运行用户 $run_user，数据目录 $DATA_DIR"
+  echo "运行用户 ${run_user}，数据目录 $DATA_DIR"
 }
 
 # ---------- systemd ----------
@@ -870,7 +881,7 @@ install_systemd() {
   [[ -n "$run_group" ]] || run_group="$(id -gn "$run_user")"
   [[ -f "$TEMPLATE_FILE" ]] || die "找不到模板: $TEMPLATE_FILE"
   [[ "$BOTGUARD_ENV_FILE" == /* && "$BOTGUARD_CONF_DIR" == /* ]] || die "BOTGUARD_ENV_FILE 和 BOTGUARD_CONF_DIR 必须是绝对路径"
-  [[ -e "$BOTGUARD_ENV_FILE" ]] || die "环境变量文件不存在: $BOTGUARD_ENV_FILE（参考 deploy/botguard.env.example）"
+  [[ -e "$BOTGUARD_ENV_FILE" ]] || die "环境变量文件不存在: ${BOTGUARD_ENV_FILE}（参考 deploy/botguard.env.example）"
   # systemd 的 EnvironmentFile 不认 export，带 export 的行会被忽略，服务因缺密钥起不来。
   if $SUDO grep -qE '^[[:space:]]*export[[:space:]]' "$BOTGUARD_ENV_FILE"; then
     die "$BOTGUARD_ENV_FILE 里有 export 开头的行，systemd 不识别。去掉: sudo sed -i 's/^[[:space:]]*export[[:space:]]*//' $BOTGUARD_ENV_FILE"
@@ -903,8 +914,8 @@ install_systemd() {
   for svc in $ALL_SERVICES; do
     $SUDO systemctl enable "$(unit_name "$svc")" >/dev/null 2>&1
   done
-  echo "代码目录 $ROOT_DIR，运行用户 $run_user:$run_group"
-  echo "配置目录 $BOTGUARD_CONF_DIR，环境变量 $BOTGUARD_ENV_FILE"
+  echo "代码目录 ${ROOT_DIR}，运行用户 $run_user:$run_group"
+  echo "配置目录 ${BOTGUARD_CONF_DIR}，环境变量 $BOTGUARD_ENV_FILE"
   echo "已设为开机自启"
   if [[ "$start_now" -eq 1 ]]; then
     restart "$ALL_SERVICES"
@@ -951,7 +962,7 @@ install_launchd() {
   [[ "$OS" == Darwin ]] || die "install-launchd 只用于 macOS；Linux 用 install-systemd"
   [[ "$(id -u)" -ne 0 ]] || die "请用普通用户执行（不要 sudo），服务会以当前用户运行"
   [[ -f "$PLIST_TEMPLATE" ]] || die "找不到模板: $PLIST_TEMPLATE"
-  [[ -e "$BOTGUARD_ENV_FILE" ]] || die "环境变量文件不存在: $BOTGUARD_ENV_FILE（先执行 botguard init）"
+  [[ -e "$BOTGUARD_ENV_FILE" ]] || die "环境变量文件不存在: ${BOTGUARD_ENV_FILE}（先执行 botguard init）"
   for svc in $ALL_SERVICES; do
     conf="$(conf_file "$svc")"
     [[ -f "$conf" ]] || die "配置文件不存在: $conf"
@@ -975,8 +986,8 @@ install_launchd() {
     mv -f "$tmp" "$plist"
     echo "已安装 $plist"
   done
-  echo "程序目录 $ROOT_DIR，以当前用户 $(id -un) 运行，登录后自动启动"
-  echo "配置目录 $BOTGUARD_CONF_DIR，环境变量 $BOTGUARD_ENV_FILE，日志 $LOG_DIR"
+  echo "程序目录 ${ROOT_DIR}，以当前用户 $(id -un) 运行，登录后自动启动"
+  echo "配置目录 ${BOTGUARD_CONF_DIR}，环境变量 ${BOTGUARD_ENV_FILE}，日志 $LOG_DIR"
   if [[ "$start_now" -eq 1 ]]; then
     for svc in $ALL_SERVICES; do
       launchd_start "$svc"

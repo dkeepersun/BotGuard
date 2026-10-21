@@ -352,7 +352,7 @@ setup_native() {
 create_admin() {
   # 只有表头一行说明还没有管理员。
   if [ "$($SUDO "$BG" ctl admin list 2>/dev/null | wc -l)" -gt 1 ]; then return 0; fi
-  say "创建管理员 $ADMIN_USER（初始密码只显示这一次，请立即记下，首次登录后修改）"
+  say "创建管理员 ${ADMIN_USER}（初始密码只显示这一次，请立即记下，首次登录后修改）"
   $SUDO "$BG" ctl admin create -username "$ADMIN_USER" || warn "创建管理员失败，稍后执行: sudo botguard ctl admin create -username $ADMIN_USER"
 }
 
@@ -372,7 +372,7 @@ install_binary() {
   ask_settings
   ensure_redis
   name="botguard_${TAG#v}_${OSNAME}_${ARCH}"
-  say "下载 BotGuard $TAG（$OSNAME/$ARCH）"
+  say "下载 BotGuard ${TAG}（$OSNAME/${ARCH}）"
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
   curl -fL --progress-bar -o "$tmp/$name.tar.gz" "$RELEASE_BASE/download/$TAG/$name.tar.gz" || die "下载失败: $RELEASE_BASE/download/$TAG/$name.tar.gz"
@@ -462,7 +462,7 @@ install_docker() {
   compose="$INSTALL_DIR/compose.yml"
   envf="$INSTALL_DIR/.env"
   $FSUDO install -d -m 0755 "$INSTALL_DIR"
-  say "下载 compose.yml（$ref）"
+  say "下载 compose.yml（${ref}）"
   curl -fsSL "$RAW_BASE/$ref/deploy/docker/compose.yml" | $FSUDO tee "$compose" >/dev/null || die "下载 compose.yml 失败"
   if $FSUDO test -e "$envf"; then
     say "$envf 已存在，更新镜像版本为 ${TAG#v}"
@@ -481,7 +481,7 @@ BOTGUARD_SECRET_KEK=k1:$(key)
 BOTGUARD_SECRET_KEK_PREVIOUS=
 BOTGUARD_PUBLIC_ENDPOINT=$PUBLIC_ENDPOINT
 ENV
-    say "已生成 $envf（随机密钥）"
+    say "已生成 ${envf}（随机密钥）"
   fi
   if [ "$START" -eq 0 ]; then
     $DOCKER compose -f "$compose" --env-file "$envf" pull
@@ -490,7 +490,7 @@ ENV
   say "启动容器"
   $DOCKER compose -f "$compose" --env-file "$envf" up -d --wait
   if [ "$($DOCKER compose -f "$compose" --env-file "$envf" exec -T admin-web botguard-ctl admin list 2>/dev/null | wc -l)" -le 1 ]; then
-    say "创建管理员 $ADMIN_USER（初始密码只显示这一次，请立即记下，首次登录后修改）"
+    say "创建管理员 ${ADMIN_USER}（初始密码只显示这一次，请立即记下，首次登录后修改）"
     $DOCKER compose -f "$compose" --env-file "$envf" exec -T admin-web botguard-ctl admin create -username "$ADMIN_USER" ||
       warn "创建管理员失败，稍后执行: docker compose -f $compose exec admin-web botguard-ctl admin create -username $ADMIN_USER"
   fi
@@ -503,11 +503,11 @@ summary() {
   if [ "${UPGRADED:-0}" -eq 1 ]; then
     say "BotGuard 已升级完成"
   else
-    say "BotGuard 安装完成（方式: $METHOD）"
+    say "BotGuard 安装完成（方式: ${METHOD}）"
   fi
   if [ "$METHOD" = docker ]; then
     cat <<EOF
-  文件目录   $INSTALL_DIR（compose.yml、.env）
+  文件目录   ${INSTALL_DIR}（compose.yml、.env）
   查看状态   cd "$INSTALL_DIR" && docker compose ps
   查看日志   docker compose logs -f gateway
   升级       重新执行本安装命令，或 cd "$INSTALL_DIR" && docker compose pull && docker compose up -d
@@ -515,7 +515,7 @@ EOF
   elif [ "$OS" = Darwin ]; then
     cat <<EOF
   程序目录   $INSTALL_DIR
-  配置目录   $ETC_DIR（gateway.yaml、admin-web.yaml、botguard.env）
+  配置目录   ${ETC_DIR}（gateway.yaml、admin-web.yaml、botguard.env）
   数据和日志 程序目录下的 data/、logs/
   查看状态   botguard status
   查看日志   botguard logs gateway -f
@@ -527,7 +527,7 @@ EOF
     esac
   else
     cat <<EOF
-  配置目录   $ETC_DIR（gateway.yaml、admin-web.yaml、botguard.env）
+  配置目录   ${ETC_DIR}（gateway.yaml、admin-web.yaml、botguard.env）
   数据目录   /var/lib/botguard（SQLite）
   查看状态   botguard status
   查看日志   botguard logs gateway -f
