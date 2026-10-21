@@ -25,7 +25,7 @@ final class VerifyResult
         public readonly ?string $challengeKind = null,
         /** low / medium / high, as scored by the gateway. */
         public readonly ?string $riskLevel = null,
-        /** @var list<string> reason codes such as NO_SIGNALS or FALLBACK_CHOSEN */
+        /** @var list<string> reason codes such as NO_SIGNALS, FALLBACK_CHOSEN or CAPACITY_DEGRADED */
         public readonly array $riskReasons = [],
     ) {
     }

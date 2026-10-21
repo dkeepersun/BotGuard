@@ -146,13 +146,23 @@ type GatewayConfig struct {
 		FallbackPerIPPerMinute  int `json:",default=5"`
 		// Failed verify signatures per IP before 429 (no secret lookups).
 		AuthFailuresPerIPPerMinute int `json:",default=60"`
+		// Image challenges per app across all IPs; beyond it they degrade to
+		// harder PoW. 0 disables.
+		InteractivePerAppPerMinute int `json:",default=6000"`
 	}
 	Risk struct {
 		MediumThreshold          int `json:",default=30"`
 		HighThreshold            int `json:",default=70"`
 		HighDifficultyFactor     int `json:",default=4"`
 		FallbackDifficultyFactor int `json:",default=8"`
+		DegradedDifficultyFactor int `json:",default=8"`
 		FailureWindowSeconds     int `json:",default=600"`
+	}
+	// PuzzlePool pre-generates PerKind puzzles of every interactive kind.
+	// Workers 0 means half the CPUs (at least one); PerKind 0 disables it.
+	PuzzlePool struct {
+		PerKind int `json:",default=64"`
+		Workers int `json:",default=0"`
 	}
 	Slider struct {
 		Tolerance int `json:",default=4"`
@@ -226,10 +236,14 @@ func (c GatewayConfig) Validate() error {
 		inRange("RateLimit.VerifyPerKeyPerMinute", c.RateLimit.VerifyPerKeyPerMinute, 1, 10_000_000),
 		inRange("RateLimit.FallbackPerIPPerMinute", c.RateLimit.FallbackPerIPPerMinute, 1, 1000),
 		inRange("RateLimit.AuthFailuresPerIPPerMinute", c.RateLimit.AuthFailuresPerIPPerMinute, 1, 100_000),
+		inRange("RateLimit.InteractivePerAppPerMinute", c.RateLimit.InteractivePerAppPerMinute, 0, 10_000_000),
 		inRange("Risk.MediumThreshold", c.Risk.MediumThreshold, 1, 100),
 		inRange("Risk.HighThreshold", c.Risk.HighThreshold, c.Risk.MediumThreshold+1, 101),
 		inRange("Risk.HighDifficultyFactor", c.Risk.HighDifficultyFactor, 1, 64),
 		inRange("Risk.FallbackDifficultyFactor", c.Risk.FallbackDifficultyFactor, 1, 256),
+		inRange("Risk.DegradedDifficultyFactor", c.Risk.DegradedDifficultyFactor, 1, 256),
+		inRange("PuzzlePool.PerKind", c.PuzzlePool.PerKind, 0, 1024),
+		inRange("PuzzlePool.Workers", c.PuzzlePool.Workers, 0, 256),
 		inRange("Risk.FailureWindowSeconds", c.Risk.FailureWindowSeconds, 60, 86400),
 		inRange("Slider.Tolerance", c.Slider.Tolerance, 1, 20),
 		inRange("Rotate.ToleranceDegrees", c.Rotate.ToleranceDegrees, 2, 20),

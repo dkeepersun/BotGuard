@@ -67,6 +67,11 @@ const (
 	// (straight drags, clicks without moves). Informational, like fallback:
 	// every relaxed path stays visible to the business server.
 	ReasonTouchInput = "TOUCH_INPUT"
+	// The action called for an interactive challenge but the gateway had no
+	// image capacity for the app (its quota, or every generator busy), so the
+	// client got harder PoW alone. Informational: the business server may
+	// require another check.
+	ReasonCapacityDegraded = "CAPACITY_DEGRADED"
 )
 
 // Pointer types the widget reports. Anything else is treated as a mouse, the
@@ -108,6 +113,7 @@ var Weights = map[string]int{
 	ReasonKeyboardInput:      15,
 	ReasonFallbackChosen:     0, // informational: the business server decides
 	ReasonTouchInput:         0, // informational
+	ReasonCapacityDegraded:   0, // informational
 }
 
 const (

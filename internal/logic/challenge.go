@@ -5,10 +5,12 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"net/netip"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
@@ -29,7 +31,11 @@ import (
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
-const dimFallback = "fallback"
+const (
+	dimFallback = "fallback"
+	// dimAppInteractive counts interactive challenges per app.
+	dimAppInteractive = "appinteractive"
+)
 
 // sealedState travels inside the signed challenge, encrypted: the browser
 // carries it back on solve but can neither read nor change it.
@@ -135,16 +141,31 @@ func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback 
 	}
 }
 
-// reserveSlot bounds concurrent image generation; release must be called.
-func (g *Gateway) reserveSlot() (release func(), ok bool) {
+// slots is the semaphore bounding concurrent image generation, one slot per
+// CPU, shared by requests and pool workers.
+func (g *Gateway) slots() chan struct{} {
 	g.slotsOnce.Do(func() { g.puzzleSlots = make(chan struct{}, runtime.NumCPU()) })
-	select {
-	case g.puzzleSlots <- struct{}{}:
-		return func() { <-g.puzzleSlots }, true
-	default:
-		// Never queue image generation behind a flood; shed instead.
-		return nil, false
+	return g.puzzleSlots
+}
+
+// errSaturated means every generation slot is busy and the pool is empty.
+var errSaturated = errors.New("puzzle generation saturated")
+
+// puzzle returns a fresh puzzle of an interactive kind: from the pool when it
+// has one, otherwise generated now if a slot is free. It never queues behind
+// a flood; it answers errSaturated instead.
+func (g *Gateway) puzzle(kind string) (any, error) {
+	if v, ok := g.pool.take(kind); ok {
+		return v, nil
 	}
+	slots := g.slots()
+	select {
+	case slots <- struct{}{}:
+		defer func() { <-slots }()
+	default:
+		return nil, errSaturated
+	}
+	return g.generate(kind)
 }
 
 func cryptoRand() (*rand.Rand, error) {
@@ -155,20 +176,30 @@ func cryptoRand() (*rand.Rand, error) {
 	return rand.New(rand.NewChaCha8(seed)), nil
 }
 
-func (g *Gateway) newClickPuzzle(kind string) (click.Puzzle, error) {
-	release, ok := g.reserveSlot()
-	if !ok {
-		return click.Puzzle{}, errors.New("click generation saturated")
-	}
-	defer release()
-	if g.Clicks != nil {
+// generate makes one puzzle of kind: a slider.Puzzle, rotate.Puzzle,
+// jigsaw.Puzzle or click.Puzzle. It takes no slot; callers bound it.
+func (g *Gateway) generate(kind string) (any, error) {
+	switch {
+	case kind == domain.KindSlider && g.Puzzles != nil:
+		return g.Puzzles()
+	case kind == domain.KindRotate && g.Rotates != nil:
+		return g.Rotates()
+	case kind == domain.KindJigsaw && g.Jigsaws != nil:
+		return g.Jigsaws()
+	case domain.ClickKind(kind) && g.Clicks != nil:
 		return g.Clicks(kind)
 	}
 	r, err := cryptoRand()
 	if err != nil {
-		return click.Puzzle{}, err
+		return nil, err
 	}
 	switch kind {
+	case domain.KindSlider:
+		return slider.Generate(r)
+	case domain.KindRotate:
+		return rotate.Generate(r)
+	case domain.KindJigsaw:
+		return jigsaw.Generate(r)
 	case domain.KindClickText:
 		return clicktext.Generate(r)
 	case domain.KindClickOrder:
@@ -177,57 +208,37 @@ func (g *Gateway) newClickPuzzle(kind string) (click.Puzzle, error) {
 		return clickicon.Generate(r)
 	case domain.KindSpatial:
 		return spatial.Generate(r)
-	default:
+	case domain.KindClickShape:
 		return clickshape.Generate(r)
+	default:
+		return nil, fmt.Errorf("no generator for kind %q", kind)
 	}
 }
 
-func (g *Gateway) newJigsaw() (jigsaw.Puzzle, error) {
-	release, ok := g.reserveSlot()
-	if !ok {
-		return jigsaw.Puzzle{}, errors.New("jigsaw generation saturated")
+// interactivePuzzle returns a puzzle of kind, or nil when the app is over its
+// interactive quota or generation is saturated; the caller then degrades.
+// The quota counts across addresses and replicas, so a flood spread over many
+// IPs against one app cannot take the image capacity every app shares.
+func (g *Gateway) interactivePuzzle(ctx context.Context, appID int64, kind string) (any, error) {
+	if quota := g.Settings.InteractivePerAppPerMinute; quota > 0 {
+		ok, _, err := g.Limiter.Allow(ctx, dimAppInteractive, strconv.FormatInt(appID, 10), quota, rateWindow)
+		if err != nil {
+			logx.WithContext(ctx).Errorf("rate limiter %s: %v", dimAppInteractive, err)
+			return nil, errx.ErrUnavailable
+		}
+		if !ok {
+			return nil, nil
+		}
 	}
-	defer release()
-	if g.Jigsaws != nil {
-		return g.Jigsaws()
+	v, err := g.puzzle(kind)
+	if errors.Is(err, errSaturated) {
+		return nil, nil
 	}
-	r, err := cryptoRand()
 	if err != nil {
-		return jigsaw.Puzzle{}, err
+		logx.WithContext(ctx).Errorf("%s: %v", kind, err)
+		return nil, errx.ErrUnavailable
 	}
-	return jigsaw.Generate(r)
-}
-
-func (g *Gateway) newRotate() (rotate.Puzzle, error) {
-	release, ok := g.reserveSlot()
-	if !ok {
-		return rotate.Puzzle{}, errors.New("rotate generation saturated")
-	}
-	defer release()
-	if g.Rotates != nil {
-		return g.Rotates()
-	}
-	r, err := cryptoRand()
-	if err != nil {
-		return rotate.Puzzle{}, err
-	}
-	return rotate.Generate(r)
-}
-
-func (g *Gateway) newPuzzle() (slider.Puzzle, error) {
-	release, ok := g.reserveSlot()
-	if !ok {
-		return slider.Puzzle{}, errors.New("slider generation saturated")
-	}
-	defer release()
-	if g.Puzzles != nil {
-		return g.Puzzles()
-	}
-	r, err := cryptoRand()
-	if err != nil {
-		return slider.Puzzle{}, err
-	}
-	return slider.Generate(r)
+	return v, nil
 }
 
 // Issue scores the request, picks the challenge kind and signs a challenge
@@ -303,6 +314,19 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	})
 	level := risk.Level(assessment.Score, g.Settings.RiskMedium, g.Settings.RiskHigh)
 	kind, factor := g.chooseKind(policy, level, in.Fallback, rand.IntN)
+	var puzzle any
+	if domain.ValidInteractiveKind(kind) {
+		if puzzle, err = g.interactivePuzzle(ctx, app.ID, kind); err != nil {
+			return nil, origin, err
+		}
+		if puzzle == nil {
+			// No image capacity for this app right now. Refusing would hand
+			// a flood its goal, so the client gets harder PoW instead and the
+			// business server sees why in risk_reasons.
+			kind, factor = domain.KindInvisible, factor*max(1, g.Settings.DegradedDifficultyFactor)
+			assessment = assessment.Add(risk.Assessment{Reasons: []string{risk.ReasonCapacityDegraded}})
+		}
+	}
 	st.kind, st.level, st.reasons = kind, level, assessment.Reasons
 
 	difficulty := min(policy.Difficulty*factor, g.Settings.MaxDifficulty)
@@ -316,48 +340,28 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		return nil, origin, errx.ErrUnavailable
 	}
 	state := sealedState{Score: assessment.Score, Reasons: assessment.Reasons}
-	var render *SliderRender
-	if kind == domain.KindSlider {
-		puzzle, err := g.newPuzzle()
-		if err != nil {
-			logx.WithContext(ctx).Errorf("slider: %v", err)
-			return nil, origin, errx.ErrUnavailable
-		}
-		state.X = puzzle.X
-		render = &SliderRender{Width: slider.Width, Height: slider.Height, Background: puzzle.Background,
-			Piece: puzzle.Piece, PieceY: puzzle.Y, PieceSize: slider.PieceSize}
-	}
-	var rotateRender *RotateRender
-	if kind == domain.KindRotate {
-		puzzle, err := g.newRotate()
-		if err != nil {
-			logx.WithContext(ctx).Errorf("rotate: %v", err)
-			return nil, origin, errx.ErrUnavailable
-		}
-		state.X = int(math.Round(puzzle.AnswerX()))
-		rotateRender = &RotateRender{Width: rotate.Width, Height: rotate.Height, Background: puzzle.Background,
-			Disc: puzzle.Disc, CX: puzzle.CX, CY: puzzle.CY, Radius: puzzle.Radius, Track: rotate.Track}
-	}
-	var jigsawRender *JigsawRender
-	if kind == domain.KindJigsaw {
-		puzzle, err := g.newJigsaw()
-		if err != nil {
-			logx.WithContext(ctx).Errorf("jigsaw: %v", err)
-			return nil, origin, errx.ErrUnavailable
-		}
-		state.Swap = []int{puzzle.A, puzzle.B}
-		jigsawRender = &JigsawRender{Width: jigsaw.Width, Height: jigsaw.Height, Image: puzzle.Image, Rows: jigsaw.Rows, Cols: jigsaw.Cols}
-	}
-	var clickRender *ClickRender
-	if domain.ClickKind(kind) {
-		puzzle, err := g.newClickPuzzle(kind)
-		if err != nil {
-			logx.WithContext(ctx).Errorf("%s: %v", kind, err)
-			return nil, origin, errx.ErrUnavailable
-		}
-		state.Targets = puzzle.Targets
-		clickRender = &ClickRender{Width: puzzle.Width, Height: puzzle.Height, Image: puzzle.Image,
-			Prompt: puzzle.Prompt, PromptImage: puzzle.PromptImage, Targets: len(puzzle.Targets)}
+	var (
+		render       *SliderRender
+		rotateRender *RotateRender
+		jigsawRender *JigsawRender
+		clickRender  *ClickRender
+	)
+	switch pz := puzzle.(type) {
+	case slider.Puzzle:
+		state.X = pz.X
+		render = &SliderRender{Width: slider.Width, Height: slider.Height, Background: pz.Background,
+			Piece: pz.Piece, PieceY: pz.Y, PieceSize: slider.PieceSize}
+	case rotate.Puzzle:
+		state.X = int(math.Round(pz.AnswerX()))
+		rotateRender = &RotateRender{Width: rotate.Width, Height: rotate.Height, Background: pz.Background,
+			Disc: pz.Disc, CX: pz.CX, CY: pz.CY, Radius: pz.Radius, Track: rotate.Track}
+	case jigsaw.Puzzle:
+		state.Swap = []int{pz.A, pz.B}
+		jigsawRender = &JigsawRender{Width: jigsaw.Width, Height: jigsaw.Height, Image: pz.Image, Rows: jigsaw.Rows, Cols: jigsaw.Cols}
+	case click.Puzzle:
+		state.Targets = pz.Targets
+		clickRender = &ClickRender{Width: pz.Width, Height: pz.Height, Image: pz.Image,
+			Prompt: pz.Prompt, PromptImage: pz.PromptImage, Targets: len(pz.Targets)}
 	}
 	private, err := json.Marshal(state)
 	if err != nil {

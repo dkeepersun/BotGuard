@@ -21,7 +21,7 @@ var reasonNames = map[string]string{
 	"DESKTOP_NO_PLUGINS": "桌面浏览器无插件", "CLICK_WITHOUT_MOVE": "点击前无鼠标移动", "FAST_CLICK": "点击过快",
 	"NO_SIGNALS": "未上报浏览器信号", "UA_HEADER_MISMATCH": "UA 与请求头不一致", "IP_RECENT_FAILURES": "同 IP 近期失败",
 	"IP_HIGH_RATE": "同 IP 请求频繁", "FALLBACK_CHOSEN": "选择了无障碍路径", "KEYBOARD_INPUT": "键盘完成拖动题",
-	"TOUCH_INPUT": "触摸输入",
+	"TOUCH_INPUT": "触摸输入", "CAPACITY_DEGRADED": "图片题容量不足，降级为 PoW",
 	// Verify rejections.
 	"TOKEN_INVALID": "token 无效", "TOKEN_EXPIRED": "token 过期", "TOKEN_CONSUMED": "token 已被使用",
 	"ACTION_MISMATCH": "action 不符", "ORIGIN_NOT_ALLOWED": "来源不允许", "APP_MISMATCH": "应用不符",
