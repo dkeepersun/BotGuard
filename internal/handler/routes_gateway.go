@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strings"
 
 	"github.com/dkeepersun/BotGuard/internal/errx"
 	"github.com/dkeepersun/BotGuard/internal/logic"
@@ -122,10 +123,27 @@ func fail(w http.ResponseWriter, err error, requestID string) {
 	response.Fail(w, e.Status, e.Code, e.Message, requestID, e.RetryAfter)
 }
 
+// HeaderAppOrigin carries the app://<package name> origin of a native
+// client (e.g. a uni-app App sending through its logic layer), which has no
+// Origin header of its own.
+const HeaderAppOrigin = "X-BotGuard-Origin"
+
+// requestOrigin is the browser's Origin. Only when there is none, i.e. the
+// caller is not a browser (browsers send Origin with every POST, "null"
+// included), does the app origin header count, so a web page cannot claim
+// an app's origin.
+func requestOrigin(r *http.Request) string {
+	if origin := r.Header.Get("Origin"); origin != "" {
+		return origin
+	}
+	return r.Header.Get(HeaderAppOrigin)
+}
+
 // cors is only ever called with an origin already allowed for the app.
+// App origins come from native clients, which do not use CORS.
 func cors(w http.ResponseWriter, origin string) {
 	w.Header().Add("Vary", "Origin")
-	if origin != "" {
+	if origin != "" && !strings.HasPrefix(origin, "app://") {
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 	}
 }
@@ -157,7 +175,7 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out, origin, err := g.Logic.Issue(r.Context(), logic.IssueInput{
-		AppKey: body.AppKey, Action: body.Action, Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r),
+		AppKey: body.AppKey, Action: body.Action, Origin: requestOrigin(r), ClientIP: g.IPs.Resolve(r),
 		HeaderUA: r.UserAgent(), Signals: body.Signals, Fallback: body.Fallback,
 	})
 	cors(w, origin)
@@ -183,7 +201,7 @@ func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {
 	}
 	out, origin, err := g.Logic.Solve(r.Context(), logic.SolveInput{
 		AppKey: body.AppKey, Challenge: body.Challenge, Nonces: body.Nonces,
-		Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r), Answer: body.Answer, Signals: body.Signals,
+		Origin: requestOrigin(r), ClientIP: g.IPs.Resolve(r), Answer: body.Answer, Signals: body.Signals,
 		HeaderUA: r.UserAgent(),
 	})
 	cors(w, origin)

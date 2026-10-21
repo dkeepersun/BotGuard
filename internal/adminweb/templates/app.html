@@ -151,7 +151,7 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
 <dialog class="modal" id="dlg-origin"><form method="post" action="/apps/{{$a.AppKey}}/origins/add">{{template "csrf" .CSRF}}
   <div class="m-head"><h3>添加允许来源</h3><button type="button" class="x" data-close aria-label="关闭">×</button></div>
   <div class="m-body"><div class="form-row" style="margin-bottom:0"><label for="origin">来源</label><input class="input mono" id="origin" name="origin" required placeholder="https://www.example.com">
-    <div class="help">协议 + 域名 + 端口，精确匹配、不支持通配符，如 https://shop.example.com、http://localhost:8080</div></div></div>
+    <div class="help">协议 + 域名 + 端口，精确匹配、不支持通配符，如 https://shop.example.com、http://localhost:8080；App（如 uni-app 的 App 端）填 app:// 加包名，如 app://com.example.shop</div></div></div>
   <div class="m-foot"><button type="button" class="btn" data-close>取消</button><button class="btn primary">添加</button></div></form></dialog>
 
 <dialog class="modal" id="dlg-edit"><form method="post" action="/apps/{{$a.AppKey}}/update">{{template "csrf" .CSRF}}

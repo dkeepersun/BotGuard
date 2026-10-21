@@ -92,7 +92,7 @@ func (a *AppAdmin) DeleteAction(ctx context.Context, appKey, action string) erro
 func NormalizeOriginInput(raw string) (string, error) {
 	n, ok := domain.NormalizeOrigin(raw)
 	if !ok {
-		return "", invalid("来源必须是 http(s)://主机[:端口]，不能带路径、查询参数或账号：%q", raw)
+		return "", invalid("来源必须是 http(s)://主机[:端口]（不能带路径、查询参数或账号），或 App 的 app://包名：%q", raw)
 	}
 	return n, nil
 }

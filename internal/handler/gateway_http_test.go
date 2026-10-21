@@ -31,7 +31,7 @@ func (apps) AppByKey(_ context.Context, k string) (*domain.App, error) {
 	if k != "app_public" {
 		return nil, domain.ErrNotFound
 	}
-	return &domain.App{ID: 1, AppKey: k, Enabled: true, Origins: []string{"https://a.example"},
+	return &domain.App{ID: 1, AppKey: k, Enabled: true, Origins: []string{"https://a.example", "app://com.example.shop"},
 		Actions: map[string]domain.ActionPolicy{"login": {Enabled: true, Mode: domain.ModeInvisible, Puzzles: 2, Difficulty: 8}}}, nil
 }
 
@@ -187,5 +187,68 @@ func TestErrorEnvelopes(t *testing.T) {
 	w, env = call(t, h, http.MethodPost, "/v1/verify", "application/json", "", "s3cret", body)
 	if w.Code != 429 || env.Code != "RATE_LIMITED" || w.Header().Get("Retry-After") == "" {
 		t.Fatalf("rate limited: %d %+v %v", w.Code, env, w.Header())
+	}
+}
+
+// A native client (a uni-app App sending through its logic layer) has no
+// Origin header and names its app origin in X-BotGuard-Origin instead.
+func TestAppOriginFlow(t *testing.T) {
+	h := newServer(t, 100)
+	const app = "app://com.example.shop"
+	post := func(path, origin, appOrigin, body string) (*httptest.ResponseRecorder, envelope) {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.RemoteAddr = "192.0.2.1:5000"
+		req.Header.Set("Content-Type", "text/plain")
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		if appOrigin != "" {
+			req.Header.Set(HeaderAppOrigin, appOrigin)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		var env envelope
+		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+			t.Fatalf("%s: %d %q", path, w.Code, w.Body.String())
+		}
+		return w, env
+	}
+	const issue = `{"app_key":"app_public","action":"login"}`
+
+	// Browsers always send Origin, "null" included: they cannot claim an app.
+	for _, origin := range []string{"null", "https://evil.example"} {
+		if w, env := post("/v1/challenges", origin, app, issue); w.Code != 403 || env.Code != "ORIGIN_NOT_ALLOWED" {
+			t.Fatalf("Origin %s with app header: %d %+v", origin, w.Code, env)
+		}
+	}
+	for _, other := range []string{"app://com.example.other", "app://bad..id", ""} {
+		if w, env := post("/v1/challenges", "", other, issue); w.Code != 403 || env.Code != "ORIGIN_NOT_ALLOWED" {
+			t.Fatalf("app origin %q: %d %+v", other, w.Code, env)
+		}
+	}
+
+	w, env := post("/v1/challenges", "", app, issue)
+	if w.Code != 200 || w.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("app challenge: %d %+v %v", w.Code, env, w.Header())
+	}
+	var ch logic.IssueOutput
+	_ = json.Unmarshal(env.Data, &ch)
+	nonces, _ := pow.Solve(ch.Algorithm, ch.ChallengeID, ch.Params)
+	solveBody, _ := json.Marshal(map[string]any{"app_key": "app_public", "challenge": ch.Challenge, "nonces": nonces})
+
+	// The challenge stays bound to the origin it was issued to.
+	if w, env := post("/v1/solutions", "https://a.example", "", string(solveBody)); w.Code != 403 || env.Code != "ORIGIN_NOT_ALLOWED" {
+		t.Fatalf("solve from the web origin: %d %+v", w.Code, env)
+	}
+	w, env = post("/v1/solutions", "", app, string(solveBody))
+	if w.Code != 200 || w.Header().Get("Access-Control-Allow-Origin") != "" {
+		t.Fatalf("app solve: %d %+v %v", w.Code, env, w.Header())
+	}
+	var sol logic.SolveOutput
+	_ = json.Unmarshal(env.Data, &sol)
+	b, _ := json.Marshal(map[string]string{"app_key": "app_public", "token": sol.Token, "action": "login", "request_id": "app1"})
+	if w, env := call(t, h, http.MethodPost, "/v1/verify", "application/json", "", "s3cret", string(b)); w.Code != 200 || !strings.Contains(string(env.Data), `"success":true`) {
+		t.Fatalf("verify app token: %d %+v", w.Code, env)
 	}
 }

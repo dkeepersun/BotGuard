@@ -128,11 +128,25 @@ func (k *SecretPair) Usable(now time.Time) bool {
 	return k.Enabled && len(k.SecretKey) > 0 && (k.ExpiresAt == nil || now.Before(*k.ExpiresAt))
 }
 
+// appID is an app's package name or bundle id: dot, dash or underscore
+// separated lower-case words, e.g. com.example.shop.
+var appID = regexp.MustCompile(`^[a-z0-9]+([._-][a-z0-9]+)*$`)
+
 // NormalizeOrigin returns scheme://host[:port] in lower case with default
-// ports removed. Anything that is not a bare http(s) origin is rejected.
+// ports removed. Anything that is not a bare http(s) origin is rejected,
+// except app://<package name>: the origin a native app (or the logic layer
+// of a uni-app App) claims, since its WebView has no usable origin of its
+// own. Browsers never send such an Origin, so web pages cannot claim it.
 func NormalizeOrigin(raw string) (string, bool) {
 	if raw == "" || raw == "null" || len(raw) > 255 {
 		return "", false
+	}
+	if id, ok := strings.CutPrefix(strings.ToLower(raw), "app://"); ok {
+		id = strings.TrimSuffix(id, "/")
+		if !appID.MatchString(id) {
+			return "", false
+		}
+		return "app://" + id, true
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Opaque != "" {

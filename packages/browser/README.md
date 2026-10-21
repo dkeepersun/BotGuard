@@ -165,6 +165,70 @@ botguard-widget { --botguard-width: 100%; --botguard-image-height: 120px; --botg
   - 图片高度不超过屏幕高度的 38%，横屏手机上也放得下。
 - **实测**：在 375×812（竖屏手机）、375×560（App WebView）、812×375（横屏手机）三种视口下都完整显示、不溢出。紧凑模式下，图形点选的面板高度从 313px 降到 229px。
 
+## uni-app App 端（renderjs）
+
+uni-app App 的页面逻辑跑在没有 DOM 的逻辑层，组件只能放进 renderjs（页面 WebView）里。但这个 WebView 是 `file://` 页面，请求带的是 `Origin: null`，gateway 一律拒绝（放行 `null` 等于允许任何网页的沙箱 iframe 冒用 app_key）。做法是：
+
+1. 应用的允许来源里登记 `app://包名`，如 `app://com.example.shop`（与 manifest 里的 Android 包名 / iOS Bundle ID 一致）；
+2. 组件照常在 renderjs 里显示和计算，但用 `transport` 把网络请求交回逻辑层，由 `uni.request` 发出。原生请求没有 Origin，加上请求头 `X-BotGuard-Origin: app://包名`。只有不带 Origin 的请求才读这个头，浏览器里的网页无法冒充。
+
+`transport` 是 `init()` 的选项，也是元素上的属性：`({ url, body }) => Promise<{ status, data }>`，`data` 为响应体（对象或 JSON 字符串都可以）。设置后组件不再调用 `fetch`。
+
+```vue
+<template>
+	<view>
+		<view :task="task" :change:task="bg.onTask"></view>
+		<view :reply="reply" :change:reply="bg.onReply"></view>
+	</view>
+</template>
+
+<script module="bg" lang="renderjs">
+import { init } from '@botguard/browser'
+export default {
+	mounted() { this.waiting = {}; this.nextId = 0 },
+	methods: {
+		onTask(task) {
+			if (!task) return
+			this.ins = this.ins || init({ mode: 'popup', endpoint: task.endpoint, appKey: task.appKey, action: task.action,
+				transport: ({ url, body }) => new Promise((resolve, reject) => {
+					const id = ++this.nextId
+					this.waiting[id] = { resolve, reject }
+					this.$ownerInstance.callMethod('bgRequest', { id, url, body })
+				}) })
+			this.ins.verify().then((token) => { this.ins.reset(); this.$ownerInstance.callMethod('bgDone', { token }) },
+				(err) => this.$ownerInstance.callMethod('bgDone', { error: { code: err.code, message: err.message } }))
+		},
+		onReply(r) {
+			const w = r && this.waiting[r.id]
+			if (!w) return
+			delete this.waiting[r.id]
+			r.error ? w.reject(new Error(r.error)) : w.resolve({ status: r.status, data: r.data })
+		},
+	},
+}
+</script>
+
+<script>
+export default {
+	data() { return { task: null, reply: null } },
+	methods: {
+		verify(opts) { // 页面调用：this.$refs.botguard.verify({ endpoint, appKey, action })
+			return new Promise((resolve, reject) => { this.done = { resolve, reject }; this.task = { ...opts, seq: Date.now() } })
+		},
+		bgRequest({ id, url, body }) {
+			uni.request({ url, method: 'POST', data: body,
+				header: { 'Content-Type': 'text/plain', 'X-BotGuard-Origin': 'app://com.example.shop' },
+				success: (res) => { this.reply = { id, status: res.statusCode, data: res.data } },
+				fail: (err) => { this.reply = { id, error: err.errMsg } } })
+		},
+		bgDone({ token, error }) { error ? this.done.reject(Object.assign(new Error(error.message), error)) : this.done.resolve(token) },
+	},
+}
+</script>
+```
+
+完整的组件（取消、重复调用、多个 action）见 yihui-h5 接入模拟里的 `components/botguard-app`（`docs/validation.md`）。`X-BotGuard-Origin` 只在 App 端加：H5 端的 `uni.request` 是浏览器请求，自定义请求头会触发 CORS 预检。webpack 4（HBuilderX 的 Vue 2 编译器）编译 renderjs 时同样会用上文的 legacy 构建。
+
 ## 滑块与风险信号
 
 - 拼图面板支持鼠标、触屏（Pointer Events）和键盘：Tab 聚焦滑块，方向键移动（Shift 加速），回车确认。

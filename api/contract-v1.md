@@ -67,7 +67,7 @@ gateway 托管浏览器组件：`load.js`（经典脚本，提供 `initBotGuard`
 
 ## POST /v1/challenges（浏览器）
 
-请求：`app_key`、`action`，可选 `signals`（风险信号对象，字段见 `docs/challenge-types.md` §5，缺失计为 `NO_SIGNALS`）和 `fallback`（布尔，选择无障碍备用路径）。服务端从请求读取 Origin，校验精确应用白名单；缺失/`null` Origin 默认拒绝。仅为允许来源返回 CORS，`Vary: Origin`，不用跨站 cookie。预检请求不带 body、无法得知应用，因此对任何 Origin 都返回允许（`Access-Control-Max-Age: 600`）；真正的请求仍按应用白名单校验，且只对允许来源返回 CORS 头。
+请求：`app_key`、`action`，可选 `signals`（风险信号对象，字段见 `docs/challenge-types.md` §5，缺失计为 `NO_SIGNALS`）和 `fallback`（布尔，选择无障碍备用路径）。服务端从请求读取 Origin，校验精确应用白名单；缺失/`null` Origin 默认拒绝。原生 App（包括 uni-app App 端从逻辑层发出的请求）没有 Origin，可改用请求头 `X-BotGuard-Origin: app://包名`，白名单里登记同样的 `app://包名`；只有请求不带 Origin 时才读这个头，所以浏览器里的网页（POST 一定带 Origin，`null` 也算）无法冒充 App。App 来源的响应不带 CORS 头。和 Origin 一样，这个头能被脚本伪造，只用于区分应用的使用场景，不构成身份。仅为允许来源返回 CORS，`Vary: Origin`，不用跨站 cookie。预检请求不带 body、无法得知应用，因此对任何 Origin 都返回允许（`Access-Control-Max-Age: 600`）；真正的请求仍按应用白名单校验，且只对允许来源返回 CORS 头。
 
 签发前校验应用/action 启用并完成签发限流。签发是无状态的：不写入任何 per-challenge 的 Redis 记录，只更新有界的限流计数。
 

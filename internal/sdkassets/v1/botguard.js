@@ -212,18 +212,32 @@ function expectedAttempts(targetHex) {
   return lead === 0 ? Infinity : Math.max(1, Math.round(2 ** 48 / lead));
 }
 
-async function postJSON(url, body) {
-  let resp;
+// transport, when set, sends the request instead of fetch: ({ url, body })
+// => Promise<{ status, data }>, data being the response body, parsed or not.
+// A uni-app App uses it to send from its logic layer, because its WebView
+// has no usable origin (see README, "uni-app App 端").
+async function postJSON(url, body, transport) {
+  let status = 0;
+  let json = null;
   try {
-    // text/plain keeps this a CORS "simple request": no preflight round trip.
-    resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body), credentials: 'omit' });
+    if (transport) {
+      const res = await transport({ url, body: JSON.stringify(body) });
+      status = Number(res && res.status) || 0;
+      json = res && res.data;
+      if (typeof json === 'string') {
+        try { json = JSON.parse(json); } catch { json = null; }
+      }
+    } else {
+      // text/plain keeps this a CORS "simple request": no preflight round trip.
+      const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify(body), credentials: 'omit' });
+      status = resp.status;
+      try { json = await resp.json(); } catch { /* handled below */ }
+    }
   } catch {
     throw Object.assign(new Error('无法连接验证服务（网络错误，或当前来源未被允许）'), { code: 'NETWORK' });
   }
-  let json = null;
-  try { json = await resp.json(); } catch { /* handled below */ }
-  if (!resp.ok || !json || json.code !== 'OK') {
-    throw Object.assign(new Error((json && json.message) || `验证服务返回 HTTP ${resp.status}`), { code: (json && json.code) || `HTTP_${resp.status}`, status: resp.status });
+  if (!(status >= 200 && status < 300) || !json || json.code !== 'OK') {
+    throw Object.assign(new Error((json && json.message) || `验证服务返回 HTTP ${status}`), { code: (json && json.code) || `HTTP_${status}`, status });
   }
   return json.data;
 }
@@ -316,6 +330,9 @@ const ElementBase = globalThis.HTMLElement ?? class {};
 
 export class BotGuardWidget extends ElementBase {
   static observedAttributes = ['width', 'image-height', 'accent', 'endpoint', 'app-key', 'action', 'field-name'];
+
+  /** Optional replacement for fetch, see postJSON. */
+  transport = null;
 
   attributeChangedCallback(name, old, value) {
     const prop = { width: '--botguard-width', 'image-height': '--botguard-image-height', accent: '--botguard-accent' }[name];
@@ -484,7 +501,7 @@ export class BotGuardWidget extends ElementBase {
       if (!round.live) return;
       const signals = { ...(env || {}), ...(interaction ? interaction.snapshot(trigger) : {}) };
       const t0 = performance.now();
-      const ch = await postJSON(`${endpoint}/v1/challenges`, { app_key: appKey, action, signals, fallback });
+      const ch = await postJSON(`${endpoint}/v1/challenges`, { app_key: appKey, action, signals, fallback }, this.transport);
       if (!round.live) return;
       const perPuzzle = expectedAttempts(ch.params.target);
       this.#emit('botguard:challenge', { kind: ch.kind });
@@ -530,7 +547,7 @@ export class BotGuardWidget extends ElementBase {
       const t2 = performance.now();
       const sol = await postJSON(`${endpoint}/v1/solutions`, {
         app_key: appKey, challenge: ch.challenge, nonces, answer, signals: { ...signals, ...drag },
-      });
+      }, this.transport);
       if (!round.live) return;
       this.#trace('solution', { ms: Math.round(performance.now() - t2), token: sol.token, expires_at: sol.expires_at, expires_in: sol.expires_in });
 
@@ -1279,6 +1296,7 @@ export function init(config) {
   if (config.size) w.setAttribute('size', config.size);
   if (config.accent) w.setAttribute('accent', config.accent);
   if (config.nonce) w.setAttribute('nonce', config.nonce);
+  if (typeof config.transport === 'function') w.transport = config.transport;
   host.appendChild(w);
 
   w.addEventListener('botguard:verified', (e) => config.onVerify?.(null, { token: e.detail.token, kind: e.detail.kind }));

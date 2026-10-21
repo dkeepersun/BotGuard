@@ -330,3 +330,33 @@
 - 经局域网 HTTPS 入口（8443）又做了一轮四种新题型（17:44–17:45），四题都通过，服务端核验也都通过。记录显示这一轮用的是 Mac 上的 Chrome 和鼠标，不是手机：代理日志里这段时间只有 Mac Chrome 的 User-Agent，iPhone 最后一次访问是 17:05。推理拼图先有两次选错了要交换的两块（`PAIR`），第三次通过，拖动都是真人操作。
 - **iPhone（iOS 27）+ Chrome，真实触屏**（17:47–17:48）：推理拼图、语序点选、图标点选、空间推理都一次通过，四次提交服务端核验都通过，事件记录的输入方式是 `touch`，设备「iPhone · Chrome」，风险原因带 `TOUCH_INPUT`。
   - 发现并修复：推理拼图那次核验多了一条 `CLICK_WITHOUT_MOVE`（点击前无鼠标移动）。原因是 iOS WebKit 在轻触后合成的 click 事件，pointerType 是空的或写成 mouse，组件就把「点击进行人机验证」当成了鼠标点击。现在组件同时记录最近一次可信 pointerdown 的类型，1 秒内是 touch 或 pen 就以它为准；脚本派发的事件不算。已补测试，浏览器组件测试 53 项通过。
+
+## 2026-10-21：uni-app App 端（renderjs）接入模拟
+
+接着 yihuipay + yihui-h5 的模拟，补上 App 端。
+
+**问题**：App 的页面逻辑在没有 DOM 的逻辑层，组件只能放进 renderjs（页面 WebView）。WebView 是 `file://` 页面，请求带 `Origin: null`，gateway 拒绝；放行 `null` 又等于允许任何网页的沙箱 iframe 冒用 app_key。
+
+**方案**
+- gateway：允许来源可以登记 `app://包名`。只有请求不带 Origin 时才读 `X-BotGuard-Origin` 头；App 来源的响应不带 CORS 头。浏览器 POST 一定带 Origin（`null` 也算），所以网页无法冒充 App。
+- 组件：新增 `transport` 选项（元素属性同名），设置后用它代替 `fetch` 发请求。
+- yihui-h5：新增 `components/botguard-app`。组件在 renderjs 里显示和计算，请求经 `callMethod` 交回逻辑层，用 `uni.request` 发出并加上 `X-BotGuard-Origin: app://com.ehuipay.app`，结果再通过 prop 送回 renderjs。服务端切到 BotGuard 后，App 端不再弹易盾。
+
+**验证**（单独起了一个 gateway 实例：本机 MySQL 的 `botguard_appsim` 库 + 独立 Redis 容器，端口 18090，不影响演示环境）
+- 单元测试：
+  - `NormalizeOrigin` 接受 `app://包名`，拒绝空 id、带路径、带端口、连续点号、带账号的写法；
+  - handler 测试覆盖：`Origin: null` 或第三方 Origin 加 `X-BotGuard-Origin`、未登记的包名、两个头都没有，都会被拒；challenge 仍绑定签发时的来源；App 来源能完成 issue → solve → verify，且响应不带 CORS 头；
+  - 组件的 `transport` 新增 4 项测试。浏览器 57 项通过，`go test ./...` 通过。
+- 用 Node 模拟 App 逻辑层（不带 Origin，只带 `X-BotGuard-Origin`）：签发和求解通过，用拿到的 token 登录 yihuipay 成功；`Origin: null`、`null` 或第三方 Origin 加该头、未登记的包名、两个头都没有，都返回 403 `ORIGIN_NOT_ALLOWED`。
+- 用 webpack 4 构建 `app-plus`，检查两层的分工：组件、blob Worker、renderjs 部分只在视图层 `app-view.js`，且没有 `import.meta`；`X-BotGuard-Origin` 和包名只在逻辑层 `app-service.js`。Node 26 移除了 `util.isRegExp`，构建时用预加载脚本补回（HBuilderX 自带旧版 Node，不受影响）。
+- renderjs 中转链路在浏览器里跑通（H5 同样支持 renderjs；只在构建外壳里让 H5 也渲染 botguard-app）：
+  - 拦截记录显示，gateway 的两个请求都由 `uni.request`（XHR）发出，组件自己的 `fetch` 一次没用；
+  - 无感通过后登录成功；
+  - 改为滑块后，弹出层在 renderjs 中完整显示；点 × 关闭后静默返回，不发登录请求。
+
+**仍未验证**
+- 真机 App。本机没有 HBuilderX，离线 SDK 需要 DCloud 账号申请的 AppKey，所以没有在模拟器上跑。需要在真机上确认三点：
+  - `file://` WebView 里的 `crypto.subtle`：Android WebView 视为安全上下文，iOS 需确认；
+  - blob Worker 能否启动：不能时退回主线程计算，较慢但能完成；
+  - `uni.request` 确实不带 Origin。
+- 真人在 App 里拖动滑块。
