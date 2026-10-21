@@ -1,0 +1,80 @@
+# 发版：在 Actions 页面手动运行（或用 API 触发），给指定提交打 vX.Y.Z 标签并发布。
+# 和在本机推送标签的效果相同，见 docs/release.md「发一个版本」。
+#
+# 用 GITHUB_TOKEN 推送的标签不会再触发 release.yml，所以打完标签后在这里直接
+# 调用它；repo.yml 监听本工作流的完成事件来更新软件源。
+name: publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 版本号，vX.Y.Z 或 vX.Y.Z-rc.1（带 - 的是预发布）
+        required: true
+        type: string
+      ref:
+        description: 打标签的分支或提交，默认 main
+        required: false
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the tag
+      actions: read # check the commit's CI
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - id: tag
+        name: Check and create the tag
+        env:
+          VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="v${VERSION#v}"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::版本号格式应为 vX.Y.Z 或 vX.Y.Z-rc.1: $VERSION"
+            exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+            echo "::error::标签 $tag 已存在。标签推送后不要移动或复用，请换下一个版本号"
+            exit 1
+          fi
+          sha="$(git rev-parse HEAD)"
+          # 只给 CI 已经通过的提交发版。
+          ci="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$sha" --limit 1 --json status,conclusion --jq '.[0] | "\(.status) \(.conclusion)"')"
+          if [ "$ci" != "completed success" ]; then
+            echo "::error::提交 ${sha:0:7} 的 CI 状态为「${ci:-没有运行记录}」，等 CI 通过后再发版"
+            exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$tag" -m "BotGuard $tag" "$sha"
+          git push origin "refs/tags/$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "### 已创建标签 $tag（${sha:0:7}）" >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    needs: tag
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      packages: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.tag.outputs.tag }}
+    secrets: inherit
