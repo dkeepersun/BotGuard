@@ -1,0 +1,64 @@
+# Packagist only reads composer.json at a repository root, so each PHP
+# package is split out of this monorepo into a read-only mirror:
+#   packages/php     -> dkeepersun/botguard-php-sdk   (botguard/php-sdk)
+#   packages/laravel -> dkeepersun/botguard-laravel   (botguard/laravel)
+# Branch main is mirrored on every push; tags php-vX.Y.Z / laravel-vX.Y.Z
+# become vX.Y.Z on the matching mirror. Never commit to the mirrors.
+# Needs deploy keys (write access) stored as PHP_SDK_DEPLOY_KEY and
+# LARAVEL_DEPLOY_KEY; until they exist the job skips instead of failing.
+name: split-php
+
+on:
+  push:
+    branches: [main]
+    tags: ["php-v*", "laravel-v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  split:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - prefix: packages/php
+            mirror: git@github.com:dkeepersun/botguard-php-sdk.git
+            tag_prefix: php-v
+            key: PHP_SDK_DEPLOY_KEY
+          - prefix: packages/laravel
+            mirror: git@github.com:dkeepersun/botguard-laravel.git
+            tag_prefix: laravel-v
+            key: LARAVEL_DEPLOY_KEY
+    env:
+      HAS_KEY: ${{ secrets[matrix.key] != '' }}
+      # A tag only concerns the matching package; branches update both.
+      RELEVANT: ${{ github.ref_type == 'branch' || startsWith(github.ref_name, matrix.tag_prefix) }}
+    steps:
+      - name: Skip until the mirror's deploy key is configured
+        if: env.HAS_KEY != 'true' && env.RELEVANT == 'true'
+        run: echo "::notice::${{ matrix.key }} is not set; skipping ${{ matrix.prefix }}"
+      - uses: actions/checkout@v4
+        if: env.HAS_KEY == 'true' && env.RELEVANT == 'true'
+        with:
+          fetch-depth: 0
+      - uses: webfactory/ssh-agent@v0.9.0
+        if: env.HAS_KEY == 'true' && env.RELEVANT == 'true'
+        with:
+          ssh-private-key: ${{ secrets[matrix.key] }}
+      - name: Split and push
+        if: env.HAS_KEY == 'true' && env.RELEVANT == 'true'
+        run: |
+          git subtree split --prefix "${{ matrix.prefix }}" -b split
+          if [ "${GITHUB_REF_TYPE}" = "branch" ]; then
+            git push "${{ matrix.mirror }}" split:main --force
+          else
+            version="v${GITHUB_REF_NAME#${{ matrix.tag_prefix }}}"
+            # Re-running a tag job must not fail on the tag it already pushed.
+            if git ls-remote --exit-code --tags "${{ matrix.mirror }}" "refs/tags/$version" >/dev/null; then
+              echo "$version already on the mirror"
+              exit 0
+            fi
+            git tag "$version" split
+            git push "${{ matrix.mirror }}" "$version"
+          fi

@@ -1,0 +1,59 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: botguard_test
+        ports: ["3306:3306"]
+        options: --health-cmd "mysqladmin ping -h 127.0.0.1 -proot" --health-interval 3s --health-retries 30
+      redis:
+        image: redis:7.4
+        ports: ["6379:6379"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: make check
+      - run: make test-integration
+        env:
+          BOTGUARD_TEST_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/botguard_test
+          BOTGUARD_TEST_REDIS_ADDR: 127.0.0.1:6379
+      - run: make test-sdk
+      - run: composer validate --strict --no-check-publish packages/php/composer.json
+      - run: composer validate --strict --no-check-publish packages/laravel/composer.json
+      - run: cd packages/browser && npm publish --dry-run
+
+  # The PHP SDK promises PHP >= 8.1; the main job runs 8.2 only.
+  php:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: ["8.1", "8.4"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl
+      - run: php packages/php/tests/run.php
+      - run: find packages/php packages/laravel -name '*.php' -print0 | xargs -0 -n1 php -l
