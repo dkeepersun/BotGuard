@@ -4,6 +4,7 @@ package svc
 import (
 	"context"
 	"crypto/sha256"
+	"runtime"
 	"sync/atomic"
 	"time"
 
@@ -67,7 +68,7 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Gateway{
+	gw := &Gateway{
 		Logic: &logic.Gateway{
 			Apps:    apps,
 			State:   repository.NewState(rds),
@@ -86,11 +87,13 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 				VerifyPerKeyPerMinute:      c.RateLimit.VerifyPerKeyPerMinute,
 				FallbackPerIPPerMinute:     c.RateLimit.FallbackPerIPPerMinute,
 				AuthFailuresPerIPPerMinute: c.RateLimit.AuthFailuresPerIPPerMinute,
+				InteractivePerAppPerMinute: c.RateLimit.InteractivePerAppPerMinute,
 
 				RiskMedium:               c.Risk.MediumThreshold,
 				RiskHigh:                 c.Risk.HighThreshold,
 				HighDifficultyFactor:     uint64(c.Risk.HighDifficultyFactor),
 				FallbackDifficultyFactor: uint64(c.Risk.FallbackDifficultyFactor),
+				DegradedDifficultyFactor: uint64(c.Risk.DegradedDifficultyFactor),
 				FailureWindow:            config.Seconds(c.Risk.FailureWindowSeconds),
 				SliderTolerance:          c.Slider.Tolerance,
 				RotateToleranceDegrees:   c.Rotate.ToleranceDegrees,
@@ -102,7 +105,15 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 		rds:    rds,
 		db:     db,
 		schema: schema,
-	}, nil
+	}
+	workers := c.PuzzlePool.Workers
+	if workers == 0 {
+		// Leave the other half of the generation slots to requests that
+		// find the pool empty.
+		workers = max(1, runtime.NumCPU()/2)
+	}
+	gw.Logic.StartPuzzlePool(context.Background(), c.PuzzlePool.PerKind, workers)
+	return gw, nil
 }
 
 // ipHashKey salts the IP tags in console events. It is derived from the

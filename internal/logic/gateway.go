@@ -54,12 +54,19 @@ type Settings struct {
 	// beyond it the IP gets 429 before any secret lookup.
 	AuthFailuresPerIPPerMinute int
 	FallbackPerIPPerMinute     int
+	// InteractivePerAppPerMinute bounds image challenges per app across all
+	// addresses; beyond it the app's challenges degrade to harder PoW. Zero
+	// disables it.
+	InteractivePerAppPerMinute int
 
 	// Risk thresholds and the PoW multipliers they trigger.
 	RiskMedium               int
 	RiskHigh                 int
 	HighDifficultyFactor     uint64
 	FallbackDifficultyFactor uint64
+	// DegradedDifficultyFactor multiplies PoW work when an interactive
+	// challenge degrades for lack of image capacity.
+	DegradedDifficultyFactor uint64
 	FailureWindow            time.Duration
 
 	SliderTolerance int
@@ -86,6 +93,8 @@ type Gateway struct {
 	// puzzleSlots bounds concurrent image generation; created lazily.
 	puzzleSlots chan struct{}
 	slotsOnce   sync.Once
+	// pool holds pre-generated puzzles; nil generates every one on demand.
+	pool *puzzlePool
 }
 
 func (g *Gateway) limit(ctx context.Context, dim, subject string, quota int) error {
