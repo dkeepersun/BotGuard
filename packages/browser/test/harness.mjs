@@ -19,6 +19,15 @@ Object.defineProperty(win.HTMLElement.prototype, 'clientWidth', {
   get() { return this.classList.contains('stage') ? layout.stageWidth : 0; },
 });
 
+// The jigsaw and click stages measure themselves with getBoundingClientRect.
+const realRect = win.HTMLElement.prototype.getBoundingClientRect;
+win.HTMLElement.prototype.getBoundingClientRect = function () {
+  if (this.classList.contains('jstage') || this.classList.contains('cstage')) {
+    return { left: 0, top: 0, x: 0, y: 0, width: layout.stageWidth, height: layout.stageWidth * 0.625, right: layout.stageWidth, bottom: layout.stageWidth * 0.625 };
+  }
+  return realRect.call(this);
+};
+
 export const workers = [];
 globalThis.Worker = class FakeWorker {
   static silent = false; // a worker that never loads: no message, no error
@@ -56,6 +65,8 @@ export const gateway = {
       params: { puzzles: 2, target: 'f'.repeat(64) }, expires_at: Math.floor(Date.now() / 1000) + 120,
       slider: { width: 320, height: 160, background: 'data:,', piece: 'data:,', piece_y: 10, piece_size: 60 },
       rotate: { width: 320, height: 200, background: 'data:,', disc: 'data:,', cx: 160, cy: 100, radius: 68, track: 280 },
+      jigsaw: { width: 320, height: 200, image: 'data:,', rows: 2, cols: 4 },
+      click: { width: 320, height: 200, image: 'data:,', prompt: '请依次点击下列图标', prompt_image: 'data:image/png;base64,AA==', targets: 2 },
     };
   },
   solution() {
@@ -117,4 +128,6 @@ export function teardown() {
 
 export const tick = (ms) => mock.timers.tick(ms);
 
-export const { BotGuardWidget, init } = await import('../src/botguard.js');
+// legacy.test.mjs points this at the legacy build to run the same flows on it.
+export const entry = globalThis.BOTGUARD_TEST_ENTRY || '../src/botguard.js';
+export const { BotGuardWidget, init } = await import(entry);

@@ -192,16 +192,21 @@ func TestConsoleEndToEnd(t *testing.T) {
 		}
 	}
 
-	// Create an app; it starts with the login action.
+	// Create an app; it starts with the login action. The list comes back
+	// and opens the new app in a tab of its own.
 	token = b.csrf("/apps")
 	resp, _ = b.post("/apps/create", url.Values{"_csrf": {token}, "name": {"商城"}, "remark": {"主站"}})
 	loc := resp.Header.Get("Location")
-	if !strings.HasPrefix(loc, "/apps/app_") {
+	if !strings.HasPrefix(loc, "/apps?open=app_") {
 		t.Fatalf("create: %d %s", resp.StatusCode, loc)
 	}
-	key := strings.TrimPrefix(loc, "/apps/")
-	_, body = b.get(loc)
-	for _, want := range []string{"商城", key, "https://gw.example/sdk/v1/load.js", "还没有允许来源", "login"} {
+	key := strings.TrimPrefix(loc, "/apps?open=")
+	if _, body := b.get(loc); !strings.Contains(body, `data-auto-open href="/apps/`+key+`" data-tab-open="app-`+key+`"`) {
+		t.Fatal("new app not opened")
+	}
+	b.post("/apps/create", url.Values{"_csrf": {token}, "name": {"论坛"}})
+	_, body = b.get("/apps/" + key)
+	for _, want := range []string{"商城", key, "https://gw.example/sdk/v1/load.js", "还没有允许来源", "login", "data-app-switch", "论坛"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("app page missing %q", want)
 		}
@@ -225,11 +230,11 @@ func TestConsoleEndToEnd(t *testing.T) {
 	if !strings.Contains(body, "https://shop.example") || !strings.Contains(body, "旋转对齐") || !strings.Contains(body, "4,000") {
 		t.Fatalf("origin/action not shown")
 	}
-	// The secret key is shown once, on the response page.
+	// The secret key is shown once, in a dialog over the app's secrets tab.
 	resp, body = b.post("/apps/"+key+"/secrets/create", url.Values{"_csrf": {token}, "ttl_days": {"0"}})
 	m := regexp.MustCompile(`id="skey">([A-Za-z0-9_-]{20,})<`).FindStringSubmatch(body)
-	if resp.StatusCode != 200 || m == nil {
-		t.Fatalf("secret page: %d", resp.StatusCode)
+	if resp.StatusCode != 200 || m == nil || !strings.Contains(body, `id="dlg-reveal" data-autoshow data-locked`) || !strings.Contains(body, "密钥对已创建") {
+		t.Fatalf("secret dialog: %d", resp.StatusCode)
 	}
 	_, detail := b.get("/apps/" + key + "?tab=secrets")
 	if strings.Contains(detail, m[1]) {
@@ -265,7 +270,7 @@ func TestConsoleEndToEnd(t *testing.T) {
 	token = b.csrf("/admins")
 	resp, body = b.post("/admins/create", url.Values{"_csrf": {token}, "username": {"viewer1"}, "role": {"viewer"}})
 	vp := regexp.MustCompile(`id="pw">([^<]+)<`).FindStringSubmatch(body)
-	if resp.StatusCode != 200 || vp == nil {
+	if resp.StatusCode != 200 || vp == nil || !strings.Contains(body, `id="dlg-reveal"`) || !strings.Contains(body, `data-form-action="/admins/`) {
 		t.Fatalf("create viewer: %d", resp.StatusCode)
 	}
 	vp[1] = html.UnescapeString(vp[1])

@@ -82,3 +82,35 @@ func BenchmarkGenerate(b *testing.B) {
 		}
 	}
 }
+
+func TestIdiomsAreDrawable(t *testing.T) {
+	set := map[rune]bool{}
+	for _, c := range Chars {
+		set[c] = true
+	}
+	for _, idiom := range Idioms {
+		if len([]rune(idiom)) != 4 {
+			t.Errorf("%q is not four characters", idiom)
+		}
+		for _, c := range idiom {
+			if !set[c] {
+				t.Errorf("%q of %q missing from Chars", c, idiom)
+			}
+		}
+	}
+	if len(Idioms) < 50 {
+		t.Fatalf("only %d idioms", len(Idioms))
+	}
+}
+
+func TestGenerateOrder(t *testing.T) {
+	for seed := uint64(1); seed <= 30; seed++ {
+		p, err := GenerateOrder(seeded(seed))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(p.Targets) != 4 || !strings.Contains(p.Prompt, "成语") || strings.ContainsAny(p.Prompt, Idioms[0]) {
+			t.Fatalf("%+v", p.Prompt)
+		}
+	}
+}

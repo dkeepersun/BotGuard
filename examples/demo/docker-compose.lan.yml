@@ -1,0 +1,27 @@
+# Overlay for H5 testing on a phone: ./lan.sh starts it on top of
+# docker-compose.yml. Exposes HTTPS on the local network only.
+services:
+  https:
+    image: caddy:2.10
+    environment:
+      LAN_HOST: ${LAN_HOST:?run ./lan.sh}
+    volumes:
+      - ./lan/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    ports: ["8443:8443", "8444:8444"]
+    depends_on:
+      gateway: { condition: service_started }
+      php: { condition: service_started }
+      admin: { condition: service_started }
+
+  seed:
+    environment:
+      BG_EXTRA_ORIGIN: https://${LAN_HOST}:8443
+
+  php:
+    environment:
+      # Only requests arriving through the HTTPS proxy use this endpoint.
+      BG_LAN_ORIGIN: https://${LAN_HOST}:8443
+
+volumes:
+  caddy-data:

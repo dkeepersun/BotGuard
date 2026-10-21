@@ -28,6 +28,7 @@
 
 import { collectEnvironment, trackInteraction } from './signals.js';
 import { solvePuzzle } from './solver.js';
+import { spawnWorker } from './spawn.js';
 
 const SOLVE_TIMEOUT_MS = 60_000;
 const WORKER_SILENCE_MS = 5_000; // a worker that says nothing this long is not coming
@@ -37,6 +38,8 @@ const MAX_TTL_S = 600;
 const MAX_FAILURES = 3;
 const COOLDOWN_MS = 10_000;
 const MAX_POINTS = 400; // the gateway's slider.MaxPoints
+// Kinds answered with ordered clicks on the picture.
+const CLICK_KINDS = ['click_text', 'click_order', 'click_icon', 'click_shape', 'spatial'];
 const SAMPLE_MS = 8; // minimum spacing of trajectory samples
 const PROGRESS_MS = 100; // minimum spacing of progress repaints
 
@@ -58,7 +61,7 @@ const STYLE = `
   display: block; width: 100%; max-width: var(--botguard-width, 360px); box-sizing: border-box;
   font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
 *, *::before, *::after { box-sizing: border-box; }
-.box { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid #d0d7de;
+.box { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border: 1px solid #d0d7de;
   border-radius: 8px; background: #f6f8fa; cursor: pointer; user-select: none; min-height: 44px; }
 .box[data-state="solving"], .box[data-state="loading"] { cursor: progress; }
 .box[data-state="puzzle"], .box[data-state="cooldown"] { cursor: default; }
@@ -73,12 +76,12 @@ const STYLE = `
 [data-state="error"] .mark::after, [data-state="cooldown"] .mark::after { content: "!"; font-weight: 700; }
 .text { flex: 1; min-width: 0; }
 .title { color: #1f2328; }
-.sub { color: #656d76; font-size: 12px; }
+.sub { color: #656d76; font-size: 12px; line-height: 1.4; }
 .bar { height: 4px; margin-top: 6px; border-radius: 2px; background: #d0d7de; overflow: hidden; display: none; }
 [data-state="solving"] .bar { display: block; }
 .bar > i { display: block; height: 100%; width: 0; background: var(--bg-accent); transition: width .15s; }
 .brand { font-size: 11px; color: #8c959f; flex: none; }
-.panel { position: relative; margin-top: 8px; padding: 10px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; }
+.panel { position: relative; margin-top: 6px; padding: 8px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; }
 .panel:focus { outline: none; }
 .panel.shake { animation: shake .4s; }
 /* The panel header repeats the status line; only popup mode, which hides the box, shows it. */
@@ -98,17 +101,19 @@ const STYLE = `
 .stage[data-kind="rotate"], .track[data-kind="rotate"] { width: min(100%, calc(var(--bg-img-h) * 1.6)); }
 .stage[data-kind="rotate"] { aspect-ratio: 8 / 5; }
 .stage .disc { border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 3px 10px rgba(0,0,0,.35); will-change: transform; }
-.track { position: relative; height: 40px; margin-top: 10px; border-radius: 20px; background: #eaeef2; touch-action: none; }
-.track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 20px; background: var(--bg-accent); opacity: .15; }
+.track { position: relative; height: 34px; margin-top: 8px; border-radius: 17px; background: #eaeef2; touch-action: none; }
+.track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 17px; background: var(--bg-accent); opacity: .15; }
 .track .hint { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: grid; place-items: center; color: #656d76; font-size: 13px;
   pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 36px; }
-.track .handle { position: absolute; top: 0; left: 0; height: 100%; min-width: 36px; border-radius: 20px; background: var(--bg-accent); color: #fff;
+.track .handle { position: absolute; top: 0; left: 0; height: 100%; min-width: 36px; border-radius: 17px; background: var(--bg-accent); color: #fff;
   display: grid; place-items: center; cursor: grab; touch-action: none; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
 .track .handle:focus-visible { outline: 3px solid var(--bg-accent); outline-offset: 2px; }
 .track .handle.dragging { cursor: grabbing; }
-.foot { display: flex; justify-content: space-between; align-items: center; margin-top: 8px; font-size: 12px; }
-.foot button { border: 0; background: none; color: var(--bg-accent); cursor: pointer; padding: 4px 0; font: inherit; }
-.msg { min-height: 18px; font-size: 12px; color: #cf222e; margin-top: 4px; }
+.foot { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; font-size: 12px; }
+.foot button { border: 0; background: none; color: var(--bg-accent); cursor: pointer; padding: 3px 0; font: inherit; }
+/* No reserved line: an error appears with a shake, so the shift is expected. */
+.msg { font-size: 12px; line-height: 1.4; color: #cf222e; margin-top: 4px; }
+.msg:empty { display: none; }
 .prompt { font-size: 14px; color: #1f2328; margin-bottom: 8px; font-weight: 600; }
 .cstage { position: relative; width: min(100%, calc(var(--bg-img-h) * 1.6)); margin: 0 auto; aspect-ratio: 8 / 5; overflow: hidden;
   border-radius: 4px; background: #eaeef2; cursor: crosshair; touch-action: manipulation; }
@@ -116,6 +121,13 @@ const STYLE = `
 .cstage .mark-dot { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%; background: var(--bg-accent);
   color: #fff; font: 600 13px/24px sans-serif; text-align: center; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
 .foot .left button { margin-right: 12px; }
+.prompt-img { display: block; height: 30px; margin: -2px 0 8px; border-radius: 6px; }
+/* Jigsaw: tiles cut from one image; the dragged one follows the pointer. */
+.jstage { position: relative; width: min(100%, calc(var(--bg-img-h) * 1.6)); margin: 0 auto; aspect-ratio: 8 / 5; overflow: hidden;
+  border-radius: 4px; background: #eaeef2; touch-action: none; user-select: none; display: grid; }
+.jstage .tile { background-repeat: no-repeat; cursor: grab; box-shadow: inset 0 0 0 .5px rgba(255,255,255,.55); touch-action: none; }
+.jstage .tile.lifted { position: relative; z-index: 2; cursor: grabbing; box-shadow: 0 6px 18px rgba(0,0,0,.35), 0 0 0 2px #fff; transition: none; }
+.jstage .tile.over { box-shadow: inset 0 0 0 3px var(--bg-accent); }
 [hidden] { display: none !important; }
 
 /* Older Safari: no aspect-ratio before 15, no color-mix() before 16.2. */
@@ -124,6 +136,7 @@ const STYLE = `
   .stage::before { padding-top: 50%; }
   .stage[data-kind="rotate"]::before { padding-top: 62.5%; }
   .cstage::before { padding-top: 62.5%; }
+  .jstage { height: calc(min(100vw, var(--bg-img-h) * 1.6) * .625); }
 }
 @supports (background: color-mix(in srgb, red 50%, white)) {
   .track .fill { background: color-mix(in srgb, var(--bg-accent) 15%, white); opacity: 1; }
@@ -136,10 +149,10 @@ const STYLE = `
 :host([size="compact"]) .mark { width: 18px; height: 18px; }
 :host([size="compact"]) .sub, :host([size="compact"]) .brand { display: none; }
 :host([size="compact"]) .panel { padding: 8px; margin-top: 6px; }
-:host([size="compact"]) .track { height: 32px; margin-top: 6px; }
+:host([size="compact"]) .track { height: 30px; margin-top: 6px; }
 :host([size="compact"]) .prompt { font-size: 13px; margin-bottom: 6px; }
-:host([size="compact"]) .foot { margin-top: 4px; }
-:host([size="compact"]) .msg { min-height: 14px; margin-top: 2px; }
+:host([size="compact"]) .foot { margin-top: 2px; }
+:host([size="compact"]) .msg { margin-top: 2px; }
 
 /* Popup: centred without transforms (the shake animation owns transform),
    inside the safe area, never taller than the viewport; images shrink on
@@ -180,7 +193,11 @@ const TEMPLATE = `
       </div>
       <div class="click-ui" hidden>
         <div class="prompt" aria-live="polite"></div>
+        <img class="prompt-img" alt="按顺序要点击的图标" hidden>
         <div class="cstage"><img class="cimg" alt="点选图片"><div class="marks"></div></div>
+      </div>
+      <div class="jigsaw-ui" hidden>
+        <div class="jstage" role="application" aria-label="拖动一块拼图到另一块上交换位置"></div>
       </div>
       <div class="msg" aria-live="polite"></div>
       <div class="foot"><span class="left"><button type="button" class="clear" hidden>重置</button><button type="button" class="refresh">换一张</button></span>
@@ -478,9 +495,10 @@ export class BotGuardWidget extends ElementBase {
       const t1 = performance.now();
       // Rotate is answered like the slider: a drag distance plus its path.
       const slider = ch.kind === 'slider' || ch.kind === 'rotate';
-      const clicking = ch.kind === 'click_text' || ch.kind === 'click_shape';
-      if (!slider && !clicking) this.#view = null;
-      const work = this.#solve(round, ch, perPuzzle, slider || clicking);
+      const clicking = CLICK_KINDS.includes(ch.kind);
+      const swapping = ch.kind === 'jigsaw';
+      if (!slider && !clicking && !swapping) this.#view = null;
+      const work = this.#solve(round, ch, perPuzzle, slider || clicking || swapping);
       work.catch(() => {});
       let answer;
       let drag = {};
@@ -489,6 +507,12 @@ export class BotGuardWidget extends ElementBase {
         if (!result || !round.live) return;
         ({ answer, drag } = result);
         this.#trace('drag', { points: answer.trajectory.length, ms: Math.round(answer.trajectory.at(-1)[0]), x: answer.x, pointer_type: drag.pointer_type });
+        this.#show('loading', '正在校验…', '');
+      } else if (swapping) {
+        const result = await this.#jigsaw(round, ch.jigsaw);
+        if (!result || !round.live) return;
+        ({ answer, drag } = result);
+        this.#trace('drag', { points: answer.trajectory.length, ms: Math.round(answer.trajectory.at(-1)[0]), swap: answer.swap, pointer_type: drag.pointer_type });
         this.#show('loading', '正在校验…', '');
       } else if (clicking) {
         const result = await this.#clicks(round, ch.click);
@@ -515,8 +539,8 @@ export class BotGuardWidget extends ElementBase {
       this.#view = null;
       this.#dialogOpen = false;
       this.#setToken(sol.token, tokenTTL(sol));
-      const how = ch.kind === 'rotate' ? '旋转对齐完成' : slider ? '拼图完成' : clicking ? '点选完成' : ch.kind === 'fallback' ? '无障碍验证完成' : `本机计算 ${attempts.toLocaleString()} 次`;
-      const took = slider || clicking ? performance.now() - t1 : solveMs;
+      const how = ch.kind === 'rotate' ? '旋转对齐完成' : swapping ? '拼图复原完成' : slider ? '拼图完成' : clicking ? '点选完成' : ch.kind === 'fallback' ? '无障碍验证完成' : `本机计算 ${attempts.toLocaleString()} 次`;
+      const took = slider || clicking || swapping ? performance.now() - t1 : solveMs;
       this.#show('verified', '验证通过', `${how}，用时 ${(took / 1000).toFixed(2)} 秒`);
       this.#emit('botguard:verified', { token: sol.token, expiresAt: sol.expires_at, expiresIn: sol.expires_in, kind: ch.kind, attempts, solveMs });
       this.#settle(null, sol.token);
@@ -544,7 +568,8 @@ export class BotGuardWidget extends ElementBase {
       this.#settle(tooMany);
       return;
     }
-    this.#root.querySelector('.msg').textContent = this.#root.querySelector('.click-ui').hidden ? '没有对准，请再试一次' : '点击位置或顺序不正确，请再试一次';
+    this.#root.querySelector('.msg').textContent = !this.#root.querySelector('.jigsaw-ui').hidden ? '交换的两块不对，请再试一次'
+      : this.#root.querySelector('.click-ui').hidden ? '没有对准，请再试一次' : '点击位置或顺序不正确，请再试一次';
     // The next puzzle replaces this one in place; the panel stays up meanwhile.
     round.after(900, () => this.#begin({}));
   }
@@ -593,6 +618,7 @@ export class BotGuardWidget extends ElementBase {
       : '拖动滑块完成拼图，也可以用左右方向键移动、回车确认');
     this.#root.querySelector('.slider-ui').hidden = false;
     this.#root.querySelector('.click-ui').hidden = true;
+    this.#root.querySelector('.jigsaw-ui').hidden = true;
     this.#root.querySelector('.clear').hidden = true;
     this.#view = 'puzzle';
     if (turning) this.#show('puzzle', '请转正中间的圆盘', '拖动滑块，让圆盘里的线条和外圈接上');
@@ -765,8 +791,12 @@ export class BotGuardWidget extends ElementBase {
     const marks = this.#root.querySelector('.marks');
     const clear = this.#root.querySelector('.clear');
     this.#root.querySelector('.slider-ui').hidden = true;
+    this.#root.querySelector('.jigsaw-ui').hidden = true;
     this.#root.querySelector('.click-ui').hidden = false;
     this.#root.querySelector('.prompt').textContent = c.prompt;
+    const promptImg = this.#root.querySelector('.prompt-img');
+    promptImg.hidden = !c.prompt_image;
+    if (c.prompt_image) promptImg.src = c.prompt_image;
     this.#root.querySelector('.msg').textContent = '';
     clear.hidden = false;
     img.src = c.image;
@@ -829,6 +859,150 @@ export class BotGuardWidget extends ElementBase {
       clear.addEventListener('click', reset);
       round.defer(() => {
         cleanup();
+        resolve(null);
+      });
+    });
+  }
+
+  // Shows the jigsaw and resolves when one tile is dropped on another: the
+  // two tiles swap on screen and the answer is the pair plus the drag path
+  // in image coordinates. Resolves null if the round ends first.
+  #jigsaw(round, s) {
+    const stage = this.#root.querySelector('.jstage');
+    const msg = this.#root.querySelector('.msg');
+    this.#root.querySelector('.slider-ui').hidden = true;
+    this.#root.querySelector('.click-ui').hidden = true;
+    this.#root.querySelector('.jigsaw-ui').hidden = false;
+    this.#root.querySelector('.clear').hidden = true;
+    msg.textContent = '';
+    this.#view = 'puzzle';
+    this.#show('puzzle', '请把错位的两块交换回来', '拖动其中一块，放到另一块上');
+    stage.style.gridTemplateColumns = `repeat(${s.cols}, 1fr)`;
+    stage.style.gridTemplateRows = `repeat(${s.rows}, 1fr)`;
+    const tiles = [];
+    const paint = (el, index) => {
+      const c = index % s.cols, r = Math.floor(index / s.cols);
+      el.style.backgroundImage = `url("${s.image}")`;
+      el.style.backgroundSize = `${s.cols * 100}% ${s.rows * 100}%`;
+      el.style.backgroundPosition = `${s.cols > 1 ? (c / (s.cols - 1)) * 100 : 0}% ${s.rows > 1 ? (r / (s.rows - 1)) * 100 : 0}%`;
+    };
+    stage.replaceChildren();
+    for (let i = 0; i < s.rows * s.cols; i++) {
+      const el = document.createElement('div');
+      el.className = 'tile';
+      paint(el, i);
+      tiles.push(el);
+      stage.appendChild(el);
+    }
+
+    return new Promise((resolve) => {
+      let drag = null;
+      let points = [];
+      let gap = SAMPLE_MS;
+      let untrusted = false;
+      // Image coordinates of a client point, and the tile under it.
+      const locate = (e) => {
+        const rect = stage.getBoundingClientRect();
+        const scale = rect.width / s.width;
+        if (!(scale > 0)) return null;
+        const x = (e.clientX - rect.left) / scale, y = (e.clientY - rect.top) / scale;
+        const inside = x >= 0 && y >= 0 && x < s.width && y < s.height;
+        const tile = inside ? Math.floor(y / (s.height / s.rows)) * s.cols + Math.floor(x / (s.width / s.cols)) : -1;
+        return { x, y, tile };
+      };
+      const record = (t, p, final = false) => {
+        const pt = [round1(t), round1(p.x), round1(p.y)];
+        const last = points.at(-1);
+        if (last && pt[0] - last[0] < gap) {
+          if (!final) return;
+          if (points.length > 1) {
+            points[points.length - 1] = pt;
+            return;
+          }
+        }
+        if (points.length >= MAX_POINTS) {
+          points = points.filter((_, i) => i % 2 === 0);
+          gap *= 2;
+        }
+        points.push(pt);
+      };
+      let over = -1;
+      const hover = (tile) => {
+        if (over === tile) return;
+        if (over >= 0) tiles[over].classList.remove('over');
+        over = tile !== drag?.from ? tile : -1;
+        if (over >= 0) tiles[over].classList.add('over');
+      };
+      const settle = () => {
+        if (drag) {
+          const el = tiles[drag.from];
+          el.classList.remove('lifted');
+          el.style.transform = '';
+        }
+        hover(-1);
+        drag = null;
+      };
+      const down = (e) => {
+        if (drag || e.button > 0 || e.isPrimary === false) return;
+        const p = locate(e);
+        if (!p || p.tile < 0) return;
+        e.preventDefault();
+        try { stage.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
+        untrusted ||= !e.isTrusted;
+        msg.textContent = '';
+        points = [];
+        gap = SAMPLE_MS;
+        drag = { id: e.pointerId, from: p.tile, x0: e.clientX, y0: e.clientY, t0: e.timeStamp, type: e.pointerType || 'mouse' };
+        tiles[p.tile].classList.add('lifted');
+        record(0, p);
+      };
+      const move = (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        untrusted ||= !e.isTrusted;
+        const samples = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+        let p = null;
+        for (const sample of samples.length ? samples : [e]) {
+          p = locate(sample);
+          if (p) record(sample.timeStamp - drag.t0, p);
+        }
+        tiles[drag.from].style.transform = `translate(${e.clientX - drag.x0}px, ${e.clientY - drag.y0}px)`;
+        if (p) hover(p.tile);
+      };
+      const up = (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        untrusted ||= !e.isTrusted;
+        const p = locate(e);
+        const from = drag.from, type = drag.type;
+        if (p) record(e.timeStamp - drag.t0, p, true);
+        settle();
+        if (!p || p.tile < 0 || p.tile === from) {
+          msg.textContent = '请把这一块拖到另一块上';
+          return;
+        }
+        // Show the swap before checking, like the real puzzle would.
+        paint(tiles[from], p.tile);
+        paint(tiles[p.tile], from);
+        cleanup();
+        resolve({ answer: { swap: [from, p.tile], trajectory: points }, drag: { pointer_type: type, untrusted_event: untrusted } });
+      };
+      const cancel = (e) => {
+        if (!drag || e.pointerId !== drag.id) return;
+        settle();
+        msg.textContent = '拖动被打断，请重新拖动';
+      };
+      const cleanup = () => {
+        stage.removeEventListener('pointerdown', down);
+        stage.removeEventListener('pointermove', move);
+        stage.removeEventListener('pointerup', up);
+        stage.removeEventListener('pointercancel', cancel);
+      };
+      stage.addEventListener('pointerdown', down);
+      stage.addEventListener('pointermove', move);
+      stage.addEventListener('pointerup', up);
+      stage.addEventListener('pointercancel', cancel);
+      round.defer(() => {
+        cleanup();
+        settle();
         resolve(null);
       });
     });
@@ -1046,40 +1220,6 @@ export class BotGuardWidget extends ElementBase {
 
   #trace(step, detail) {
     this.#emit('botguard:trace', { step, ...detail });
-  }
-}
-
-// Same origin (or rewritten by a bundler, which turns import.meta.url into a
-// file: URL or keeps it on the page's origin): the worker can load directly.
-function workerLoadsDirectly() {
-  const here = new URL(import.meta.url);
-  return !/^https?:$/.test(here.protocol) || here.origin === globalThis.location?.origin;
-}
-
-// Returns { worker, revoke } or null when workers are not allowed (e.g. CSP
-// without blob:), in which case the caller solves on the main thread.
-function spawnWorker() {
-  try {
-    if (workerLoadsDirectly()) {
-      // Written out literally so bundlers (Vite, webpack 5, Parcel) see the
-      // worker and emit it with its imports.
-      return { worker: new Worker(new URL('./worker.js', import.meta.url), { type: 'module' }), revoke() {} };
-    }
-    // Browsers refuse cross-origin worker URLs, so when this script is
-    // served by the gateway (like Yidun's hosted load.min.js) a same-origin
-    // blob worker imports the CORS-enabled worker module instead. The name
-    // is a variable so bundlers leave this branch alone.
-    const name = './worker.js';
-    const href = new URL(name, import.meta.url).href;
-    const url = URL.createObjectURL(new Blob([`import ${JSON.stringify(href)};`], { type: 'text/javascript' }));
-    try {
-      return { worker: new Worker(url, { type: 'module' }), revoke: () => URL.revokeObjectURL(url) };
-    } catch (err) {
-      URL.revokeObjectURL(url);
-      throw err;
-    }
-  } catch {
-    return null;
   }
 }
 

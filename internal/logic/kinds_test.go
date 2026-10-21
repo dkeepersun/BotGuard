@@ -11,6 +11,7 @@ import (
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
 	"github.com/dkeepersun/BotGuard/internal/service/click"
+	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
 	"github.com/dkeepersun/BotGuard/internal/service/risk"
 	"github.com/dkeepersun/BotGuard/internal/service/rotate"
@@ -49,7 +50,14 @@ func withPuzzle(h *harness) {
 		return rotate.Puzzle{Background: "data:image/jpeg;base64,AA==", Disc: "data:image/png;base64,AA==", CX: 160, CY: 100, Radius: 68, Angle: rotateAngle}, nil
 	}
 	h.g.Clicks = func(kind string) (click.Puzzle, error) {
-		return click.Puzzle{Image: "data:image/jpeg;base64,AA==", Prompt: "请依次点击：" + kind, Width: 320, Height: 200, Targets: clickTargets}, nil
+		p := click.Puzzle{Image: "data:image/jpeg;base64,AA==", Prompt: "请依次点击：" + kind, Width: 320, Height: 200, Targets: clickTargets}
+		if kind == domain.KindClickIcon {
+			p.PromptImage = "data:image/png;base64,AA=="
+		}
+		return p, nil
+	}
+	h.g.Jigsaws = func() (jigsaw.Puzzle, error) {
+		return jigsaw.Puzzle{Image: "data:image/jpeg;base64,AA==", A: 1, B: 6}, nil
 	}
 }
 
@@ -226,7 +234,7 @@ func TestChooseKind(t *testing.T) {
 	}
 	adaptive := all
 	adaptive.Mode = domain.ModeAdaptive
-	if kind, f := g.chooseKind(adaptive, risk.LevelHigh, false, func(int) int { return 0 }); kind != domain.KindClickShape || f != 4 {
+	if kind, f := g.chooseKind(adaptive, risk.LevelHigh, false, func(int) int { return 0 }); kind != domain.KindSpatial || f != 4 {
 		t.Fatalf("high risk: %s ×%d", kind, f)
 	}
 	if kind, _ := g.chooseKind(adaptive, risk.LevelLow, false, nil); kind != domain.KindInvisible {
@@ -328,5 +336,67 @@ func TestRotateSolve(t *testing.T) {
 	v, _ = h.verify(out.Token, "turn", "r-rotate-keys")
 	if !slices.Contains(v.RiskReasons, risk.ReasonKeyboardInput) {
 		t.Fatalf("%+v", v)
+	}
+}
+
+// jigsawDrag drags from the middle of tile from to the middle of tile to,
+// eased and wobbly, in image coordinates.
+func jigsawDrag(from, to int) [][3]float64 {
+	x0, y0 := float64(from%jigsaw.Cols*jigsaw.TileW+40), float64(from/jigsaw.Cols*jigsaw.TileH+50)
+	x1, y1 := float64(to%jigsaw.Cols*jigsaw.TileW+40), float64(to/jigsaw.Cols*jigsaw.TileH+50)
+	var out [][3]float64
+	t := 0.0
+	for i := 0; i <= 30; i++ {
+		p := float64(i) / 30
+		e := p * p * (3 - 2*p)
+		out = append(out, [3]float64{t, x0 + (x1-x0)*e + math.Sin(p*5)*3, y0 + (y1-y0)*e + math.Cos(p*4)*2})
+		t += 12 + float64(i%4)*3
+	}
+	return out
+}
+
+func TestPhaseThreeKinds(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+
+	c := h.issueFor(t, "swap", clean(), false)
+	if c.Kind != domain.KindJigsaw || c.Jigsaw == nil || c.Jigsaw.Rows != 2 || c.Jigsaw.Cols != 4 {
+		t.Fatalf("jigsaw issue: %+v", c)
+	}
+	body, _ := base64.RawURLEncoding.DecodeString(strings.Split(c.Challenge, ".")[2])
+	if strings.Contains(string(body), `"w"`) {
+		t.Fatalf("swap visible: %s", body)
+	}
+	if _, err := h.solveWith(c, &SliderAnswer{Swap: []int{1, 5}, Trajectory: jigsawDrag(1, 5)}, clean()); code(err) != "ANSWER_INVALID" {
+		t.Fatalf("wrong pair: %v", err)
+	}
+	if _, err := h.solveWith(h.issueFor(t, "swap", clean(), false), &SliderAnswer{Swap: []int{1}}, clean()); code(err) != "INVALID_REQUEST" {
+		t.Fatalf("one tile: %v", err)
+	}
+	c = h.issueFor(t, "swap", clean(), false)
+	out, err := h.solveWith(c, &SliderAnswer{Swap: []int{6, 1}, Trajectory: jigsawDrag(6, 1)}, clean())
+	if err != nil {
+		t.Fatalf("jigsaw solve: %v", err)
+	}
+	if v, _ := h.verify(out.Token, "swap", "r-swap"); !v.Success || v.ChallengeKind != domain.KindJigsaw {
+		t.Fatalf("%+v", v)
+	}
+
+	human := &SliderAnswer{Clicks: [][3]float64{{1700, 62, 48}, {2600, 224, 83}, {3350, 137, 158}}, MovesBetween: []int{3, 12, 9}}
+	for action, kind := range map[string]string{"icons": domain.KindClickIcon, "order": domain.KindClickOrder, "where": domain.KindSpatial} {
+		c := h.issueFor(t, action, clean(), false)
+		if c.Kind != kind || c.Click == nil || c.Click.Targets != 3 {
+			t.Fatalf("%s issue: %+v", kind, c)
+		}
+		if (kind == domain.KindClickIcon) != (c.Click.PromptImage != "") {
+			t.Fatalf("%s prompt image %q", kind, c.Click.PromptImage)
+		}
+		out, err := h.solveWith(c, human, clean())
+		if err != nil {
+			t.Fatalf("%s solve: %v", kind, err)
+		}
+		if v, _ := h.verify(out.Token, action, "r-"+action); !v.Success || v.ChallengeKind != kind {
+			t.Fatalf("%s verify: %+v", kind, v)
+		}
 	}
 }

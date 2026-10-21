@@ -122,7 +122,8 @@
   // the same wherever it appears.
   const codeColors = {
     low: '#16a34a', medium: '#f59e0b', high: '#dc2626',
-    invisible: '#94a3b8', slider: '#2563eb', rotate: '#7c3aed', click_text: '#0891b2', click_shape: '#db2777', fallback: '#64748b',
+    invisible: '#94a3b8', slider: '#2563eb', rotate: '#7c3aed', jigsaw: '#0d9488', click_text: '#0891b2', click_order: '#ca8a04',
+    click_icon: '#ea580c', click_shape: '#db2777', spatial: '#4f46e5', fallback: '#64748b',
   };
   const colorOf = (it, i) => codeColors[it.Code] || palette[i % palette.length];
   function donut(box) {
@@ -152,6 +153,16 @@
   $$('[data-chart="line"]').forEach(lineChart);
   $$('[data-chart="donut"]').forEach(donut);
 
+  // ---------- Shell tabs ----------
+  // Inside the PearAdmin shell, each page lives in a tab whose iframe id is
+  // the tab id: switch to (or open) that tab; when this frame is already that
+  // tab, or there is no shell, just navigate.
+  const shell = window.parent !== window ? window.parent.layui?.admin : null;
+  const openTab = (id, title, href) => {
+    if (!shell || window.frameElement?.id === id) location.href = href;
+    else shell.jump(id, title, href);
+  };
+
   // ---------- Dialogs and confirmation ----------
   document.addEventListener('click', (e) => {
     const open = e.target.closest('[data-open]');
@@ -168,6 +179,8 @@
             f.dispatchEvent(new Event('change', { bubbles: true }));
           });
         }
+        // One dialog serves every row: the opener names the row's endpoint.
+        if (open.dataset.formAction) $('form', d).action = open.dataset.formAction;
         d.showModal();
         $('input:not([type=hidden]):not([readonly]), select, textarea', d)?.focus();
       }
@@ -185,10 +198,37 @@
       });
     }
     const tab = e.target.closest('a[data-tab-open]');
-    if (tab && window.parent !== window && window.parent.layui?.admin) {
+    if (tab && shell && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
       e.preventDefault();
-      window.parent.layui.admin.jump(tab.dataset.tabOpen, tab.dataset.title || tab.textContent.trim(), tab.getAttribute('href'));
+      openTab(tab.dataset.tabOpen, tab.dataset.title || tab.textContent.trim(), tab.getAttribute('href'));
     }
+  });
+
+  // App switcher: every app opens in a tab of its own.
+  $$('select[data-app-switch]').forEach((sel) => {
+    const current = sel.value;
+    sel.addEventListener('change', () => {
+      const opt = sel.selectedOptions[0];
+      sel.value = current;
+      openTab('app-' + opt.value, opt.dataset.title || opt.textContent, '/apps/' + encodeURIComponent(opt.value));
+    });
+  });
+
+  // A just-created app opens in its own tab; drop ?open= so a reload of the
+  // list does not open it again.
+  const auto = $('a[data-auto-open]');
+  if (auto) {
+    const u = new URL(location.href);
+    u.searchParams.delete('open');
+    history.replaceState(null, '', u);
+    openTab(auto.dataset.tabOpen, auto.dataset.title, auto.getAttribute('href'));
+  }
+
+  // One-time secrets show in a dialog on load. A locked one ignores Esc and
+  // the backdrop, so it is only closed on purpose ("I have saved it").
+  $$('dialog[data-autoshow]').forEach((d) => {
+    if (d.dataset.locked !== undefined) d.addEventListener('cancel', (e) => e.preventDefault());
+    d.showModal();
   });
 
   const confirmDlg = document.createElement('dialog');
@@ -277,8 +317,9 @@
         <td><span class="badge ${r.pass ? 'ok' : 'bad'}">${esc(r.label)}</span></td>
         <td>${r.level ? `<span class="badge ${r.level === '高' ? 'bad' : r.level === '中' ? 'warn' : 'ok'} plain">${esc(r.level)}</span>` : '—'}</td>
         <td class="cell-sub">${(r.reasons || []).map((x) => `<span class="tag">${esc(x)}</span>`).join('') || '—'}</td>
+        <td class="cell-sub nowrap">${esc(r.device || '—')}${r.pointer ? `<div>${esc(r.pointer)}</div>` : ''}</td>
         <td class="mono cell-sub">${esc(r.ip || r.request || '—')}</td></tr>`).join('')
-        : '<tr><td colspan="9"><div class="empty"><div class="big">◎</div>暂无事件。完成一次验证后，这里会实时出现记录。</div></td></tr>';
+        : '<tr><td colspan="10"><div class="empty"><div class="big">◎</div>暂无事件。完成一次验证后，这里会实时出现记录。</div></td></tr>';
     };
     const poll = async () => {
       try {
@@ -295,7 +336,8 @@
   // ---------- Challenge preview ----------
   const pv = $('[data-preview]');
   if (pv) {
-    const kinds = [['slider', '滑块拼图'], ['rotate', '旋转对齐'], ['click_text', '文字点选'], ['click_shape', '图形点选']];
+    const kinds = [['slider', '滑块拼图'], ['rotate', '旋转对齐'], ['jigsaw', '推理拼图'], ['click_text', '文字点选'],
+      ['click_order', '语序点选'], ['click_icon', '图标点选'], ['click_shape', '图形点选'], ['spatial', '空间推理']];
     const showAnswer = $('#pv-answer');
     pv.innerHTML = kinds.map(([k, n]) => `<div class="card"><div class="card-head"><h2>${n}<span class="hint mono">${k}</span></h2>
       <button class="btn sm" data-regen="${k}">换一张</button></div><div class="card-body" id="pv-${k}"><div class="empty">生成中…</div></div></div>`).join('');
@@ -338,6 +380,14 @@
         meta.innerHTML = `<span>答案：旋转 ${s.angle.toFixed(1)}°（拖动 ${((s.angle / 360) * s.track).toFixed(1)}px，容差 ±7°）</span><span>服务端生成 ${ms}ms</span>`;
         box.replaceChildren(stage, range, meta);
         return;
+      } else if (d.jigsaw) {
+        const s = d.jigsaw;
+        stage.style.aspectRatio = `${s.width} / ${s.height}`;
+        const tw = 100 / s.cols, th = 100 / s.rows;
+        const tile = (i) => `left:${(i % s.cols) * tw}%;top:${Math.floor(i / s.cols) * th}%;width:${tw}%;height:${th}%`;
+        stage.innerHTML = `<img class="bg" src="${s.image}" alt="">` + s.swap.map((i, n) =>
+          `<div class="target" style="${tile(i)};border-radius:4px">${n === 0 ? 'A' : 'B'}</div>`).join('');
+        meta.innerHTML = `<span>答案：交换 ${s.swap[0] + 1} 号与 ${s.swap[1] + 1} 号图块（从左上角起按行编号）</span><span>服务端生成 ${ms}ms</span>`;
       } else if (d.click) {
         const s = d.click;
         stage.style.aspectRatio = `${s.width} / ${s.height}`;
@@ -346,6 +396,13 @@
         const prompt = document.createElement('div');
         prompt.className = 'pv-prompt';
         prompt.textContent = s.prompt;
+        if (s.prompt_image) {
+          const strip = document.createElement('img');
+          strip.src = s.prompt_image;
+          strip.alt = '提示图标';
+          strip.style.cssText = 'display:block;height:30px;margin-top:6px;border-radius:6px';
+          prompt.appendChild(strip);
+        }
         meta.innerHTML = `<span>答案：按编号依次点击绿色圈内（半径 +4px 容差）</span><span>服务端生成 ${ms}ms</span>`;
         box.replaceChildren(prompt, stage, meta);
         return;

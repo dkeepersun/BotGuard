@@ -17,6 +17,7 @@ type runner struct {
 	app *App
 	out *bytes.Buffer
 	kek string
+	pw  string
 }
 
 func newRunner(t *testing.T, dsn string) *runner {
@@ -27,6 +28,8 @@ func newRunner(t *testing.T, dsn string) *runner {
 			return dsn
 		case KEKEnv:
 			return r.kek
+		case AdminPasswordEnv:
+			return r.pw
 		}
 		return ""
 	}, r.out, r.out)
@@ -93,7 +96,7 @@ func TestOperatorWorkflow(t *testing.T) {
 		t.Fatalf("unspecified mode must be kept: %s", out)
 	}
 	r.run(1, "action", "set", "-app", app, "-action", "login", "-mode", "puzzle")
-	r.run(1, "action", "set", "-app", app, "-action", "login", "-kinds", "jigsaw")
+	r.run(1, "action", "set", "-app", app, "-action", "login", "-kinds", "no_such_kind")
 	r.run(1, "action", "set", "-app", app, "-action", "login", "-kinds", "")
 	if out := r.run(0, "action", "set", "-app", app, "-action", "post", "-mode", "interactive", "-kinds", "click_text, click_shape"); !strings.Contains(out, "题型 click_text,click_shape") {
 		t.Fatalf("kinds: %s", out)
@@ -194,6 +197,15 @@ func TestAdminCommands(t *testing.T) {
 	reset := r.run(0, "admin", "reset-password", "-username", "root")
 	if field(t, reset, "password") == pw {
 		t.Fatal("reset kept the password")
+	}
+	// set-password: from the environment only, policy unless -allow-weak.
+	r.run(2, "admin", "set-password", "-username", "root")
+	r.pw = "123456"
+	if out := r.run(1, "admin", "set-password", "-username", "root"); !strings.Contains(out, "10–128") {
+		t.Fatalf("weak password accepted: %s", out)
+	}
+	if out := r.run(0, "admin", "set-password", "-username", "root", "-allow-weak"); !strings.Contains(out, "警告") {
+		t.Fatalf("no warning: %s", out)
 	}
 	list := strings.Join(strings.Fields(r.run(0, "admin", "list")), " ")
 	for _, want := range []string{"root 运维负责人 超级管理员 启用 未开启 从未", "ops 只读 停用"} {

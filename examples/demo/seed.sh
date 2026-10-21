@@ -14,21 +14,32 @@ field() { sed -n "s/^$1: //p"; }
 # clicks and the rotate disc.
 # Re-applied on every start so an existing demo database picks up changes.
 set_modes() {
-  botguard-ctl action set -app "$1" -action login -mode adaptive -kinds slider,rotate,click_text,click_shape -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action login -mode adaptive -kinds slider,rotate,jigsaw,click_text,click_order,click_icon,click_shape,spatial -puzzles 8 -difficulty 3000 >/dev/null
   botguard-ctl action set -app "$1" -action register -mode interactive -kinds slider -puzzles 8 -difficulty 3000 >/dev/null
   botguard-ctl action set -app "$1" -action post -mode interactive -kinds click_text -puzzles 8 -difficulty 3000 >/dev/null
   botguard-ctl action set -app "$1" -action pay -mode interactive -kinds click_shape -puzzles 8 -difficulty 3000 >/dev/null
   botguard-ctl action set -app "$1" -action comment -mode interactive -kinds rotate -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action share -mode interactive -kinds jigsaw -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action checkin -mode interactive -kinds click_order -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action coupon -mode interactive -kinds click_icon -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action vote -mode interactive -kinds spatial -puzzles 8 -difficulty 3000 >/dev/null
 }
 
-# The console's first owner. Its generated password is kept in the shared
-# volume for start.sh to print; the console asks to change it at first login.
+# The console's first owner. For this local demo its password is a fixed,
+# weak default (BG_DEMO_ADMIN_PASSWORD, 123456) so testing is easy; never do
+# this for a console reachable by others.
 if ! botguard-ctl admin list 2>/dev/null | grep -q '^admin '; then
-  umask 077
-  botguard-ctl admin create -username admin -name 演示管理员 -role owner | sed -n 's/^password: //p' > /shared/admin-password
-  chmod 644 /shared/admin-password
-  echo "已创建管理后台账号 admin"
+  botguard-ctl admin create -username admin -name 演示管理员 -role owner >/dev/null
+  BOTGUARD_ADMIN_PASSWORD=${BG_DEMO_ADMIN_PASSWORD:-123456} botguard-ctl admin set-password -username admin -allow-weak >/dev/null 2>&1
+  echo "已创建管理后台账号 admin（演示默认密码）"
 fi
+
+# lan.sh: also allow the HTTPS origin a phone uses on the local network.
+allow_extra_origin() {
+  if [ -n "${BG_EXTRA_ORIGIN:-}" ]; then
+    botguard-ctl origin add -app "$1" -origin "$BG_EXTRA_ORIGIN" >/dev/null 2>&1 || true
+  fi
+}
 
 if [ -f "$out" ]; then
   . "$out"
@@ -37,6 +48,8 @@ if [ -f "$out" ]; then
   if err=$(botguard-ctl app show -app "$BG_APP_KEY" 2>&1 >/dev/null); then
     set_modes "$BG_APP_KEY"
     set_modes "$BG_APP2_KEY"
+    allow_extra_origin "$BG_APP_KEY"
+    allow_extra_origin "$BG_APP2_KEY"
     echo "演示数据已存在，已同步 action 模式"
     exit 0
   fi
@@ -58,6 +71,7 @@ new_app() {
   botguard-ctl origin add -app "$app" -origin http://localhost:8080 >/dev/null
   botguard-ctl origin add -app "$app" -origin http://127.0.0.1:8080 >/dev/null
   set_modes "$app"
+  allow_extra_origin "$app"
   echo "$app"
 }
 

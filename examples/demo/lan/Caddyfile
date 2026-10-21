@@ -1,0 +1,39 @@
+# H5 testing from a phone on the same network (examples/demo/lan.sh).
+# Browsers only run the widget's crypto in a secure context, so the demo is
+# served over HTTPS with Caddy's local CA. The site and the gateway share one
+# origin (8443), so the phone accepts one certificate for both.
+{
+	local_certs
+	skip_install_trust
+	# Browsers send no SNI when connecting to an IP address.
+	default_sni {$LAN_HOST}
+}
+
+(access_log) {
+	# Method, path, status and User-Agent only, for debugging phone tests;
+	# request bodies (tokens, answers) are never logged.
+	log {
+		output stdout
+		format filter {
+			request>headers>Cookie delete
+			request>headers>Authorization delete
+			request>remote_ip delete
+			request>client_ip delete
+			resp_headers delete
+		}
+	}
+}
+
+https://{$LAN_HOST}:8443 {
+	import access_log
+	tls internal
+	@gateway path /v1/* /sdk/*
+	reverse_proxy @gateway gateway:8090
+	reverse_proxy php:8080
+}
+
+https://{$LAN_HOST}:8444 {
+	import access_log
+	tls internal
+	reverse_proxy admin:8091
+}

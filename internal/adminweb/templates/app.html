@@ -1,6 +1,10 @@
 {{template "head" .}}{{$d := .Data}}{{$a := $d.App}}{{$manage := can .Me "apps.manage"}}{{$secrets := can .Me "secrets.manage"}}
 <div class="wrap">
-  <div class="crumb"><a href="/apps">应用管理</a> / {{$a.Name}}</div>
+  <div class="app-bar">
+    <a class="btn sm" href="/apps" data-tab-open="apps" data-title="应用管理">← 应用列表</a>
+    {{if gt (len $d.Apps) 1}}<label class="app-switch"><span class="muted">切换应用</span>
+      <select class="input sm" data-app-switch aria-label="切换到其他应用">{{range $d.Apps}}<option value="{{.AppKey}}" data-title="{{.Name}}" {{if eq .AppKey $a.AppKey}}selected{{end}}>{{.Name}}{{if not .Enabled}}（已停用）{{end}}</option>{{end}}</select></label>{{end}}
+  </div>
   <div class="page-head">
     <div><h1>{{$a.Name}} {{if $a.Enabled}}<span class="badge ok">启用</span>{{else}}<span class="badge">已停用</span>{{end}}</h1>
       <div class="sub">app_key <span class="mono">{{$a.AppKey}}</span> <button class="btn ghost sm" data-copy="{{$a.AppKey}}">复制</button> · 策略版本 {{$a.PolicyVersion}} · 创建于 {{time $a.CreatedAt}}</div></div>
@@ -12,8 +16,8 @@
     </div>
   </div>
 
-  {{if not $a.Origins}}<div class="alert warn"><b>还没有允许来源。</b>浏览器组件只能在允许的来源（协议 + 域名 + 端口）下获取验证，请先在「允许来源」中添加网站地址。</div>{{end}}
-  {{if not $d.Secrets}}<div class="alert warn"><b>还没有密钥对。</b>业务服务器调用核验接口需要 secret_id 和 secret_key，请在「密钥对」中创建。</div>{{end}}
+  {{if not $a.Origins}}<div class="alert warn alert-act"><span><b>还没有允许来源。</b>浏览器组件只能在允许的来源（协议 + 域名 + 端口）下获取验证，请先添加网站地址。</span>{{if $manage}}<button class="btn sm primary" data-open="dlg-origin">添加来源</button>{{end}}</div>{{end}}
+  {{if not $d.Secrets}}<div class="alert warn alert-act"><span><b>还没有密钥对。</b>业务服务器调用核验接口需要 secret_id 和 secret_key。</span>{{if $secrets}}<button class="btn sm primary" data-open="dlg-secret">创建密钥对</button>{{end}}</div>{{end}}
 
   <div class="tabs" role="tablist">
     <button data-tab="overview" role="tab">概览</button>
@@ -101,10 +105,8 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
   </section>
 
   <section id="tab-origins" role="tabpanel">
-    <div class="card"><div class="card-head"><h2>允许来源<span class="hint">精确匹配协议、域名和端口；不支持通配符</span></h2></div>
-      {{if $manage}}<div class="card-body" style="border-bottom:1px solid var(--line-2)"><form class="form-inline" method="post" action="/apps/{{$a.AppKey}}/origins/add">{{template "csrf" .CSRF}}
-        <input class="input" name="origin" required placeholder="https://www.example.com" style="min-width:320px"><button class="btn primary">添加来源</button>
-        <span class="muted">如 https://shop.example.com、http://localhost:8080</span></form></div>{{end}}
+    <div class="card"><div class="card-head"><h2>允许来源<span class="hint">精确匹配协议、域名和端口；不支持通配符</span></h2>
+      {{if $manage}}<button class="btn primary sm" data-open="dlg-origin">＋ 添加来源</button>{{end}}</div>
       <div class="card-body flush table-wrap"><table class="table"><thead><tr><th>来源</th><th class="actions">操作</th></tr></thead><tbody>
       {{range $a.Origins}}<tr><td class="mono">{{.}}</td><td class="actions">{{if $manage}}<form method="post" action="/apps/{{$a.AppKey}}/origins/remove" data-confirm="移除后，该来源已签发的验证和 token 也会失效。确定移除 {{.}}？" data-danger data-ok-text="移除">{{template "csrf" $.CSRF}}<input type="hidden" name="origin" value="{{.}}"><button class="btn sm danger">移除</button></form>{{end}}</td></tr>
       {{else}}<tr><td colspan="2"><div class="empty">还没有允许来源</div></td></tr>{{end}}
@@ -125,7 +127,7 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
       {{else}}<tr><td colspan="6"><div class="empty">还没有 action</div></td></tr>{{end}}
       </tbody></table></div></div>
     <div class="card mt"><div class="card-body"><b>出题方式说明：</b>
-      <span class="muted">无感——只在后台算 PoW；交互——每次从可出题型中随机选一种；自适应（推荐）——低风险无感，中风险随机出题，高风险出最难的题型（图形点选 &gt; 文字点选 &gt; 旋转对齐 &gt; 滑块）并把 PoW 提高 4 倍。</span></div></div>
+      <span class="muted">无感——只在后台算 PoW；交互——每次从可出题型中随机选一种；自适应（推荐）——低风险无感，中风险随机出题，高风险出列表中最难的题型并把 PoW 提高 4 倍。难度从低到高：滑块拼图、旋转对齐、推理拼图、文字点选、语序点选、图标点选、图形点选、空间推理。</span></div></div>
   </section>
 
   <section id="tab-secrets" role="tabpanel">
@@ -146,6 +148,12 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
 </div>
 
 {{if $manage}}
+<dialog class="modal" id="dlg-origin"><form method="post" action="/apps/{{$a.AppKey}}/origins/add">{{template "csrf" .CSRF}}
+  <div class="m-head"><h3>添加允许来源</h3><button type="button" class="x" data-close aria-label="关闭">×</button></div>
+  <div class="m-body"><div class="form-row" style="margin-bottom:0"><label for="origin">来源</label><input class="input mono" id="origin" name="origin" required placeholder="https://www.example.com">
+    <div class="help">协议 + 域名 + 端口，精确匹配、不支持通配符，如 https://shop.example.com、http://localhost:8080</div></div></div>
+  <div class="m-foot"><button type="button" class="btn" data-close>取消</button><button class="btn primary">添加</button></div></form></dialog>
+
 <dialog class="modal" id="dlg-edit"><form method="post" action="/apps/{{$a.AppKey}}/update">{{template "csrf" .CSRF}}
   <div class="m-head"><h3>编辑应用信息</h3><button type="button" class="x" data-close aria-label="关闭">×</button></div>
   <div class="m-body"><div class="form-row"><label>应用名称</label><input class="input" name="name" value="{{$a.Name}}" required maxlength="128"></div>
@@ -164,9 +172,13 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
       <label class="radio-card"><input type="radio" name="mode" value="invisible"><b>无感</b><span>只在后台计算 PoW</span></label></div></div>
     <div class="form-row kinds-row"><span class="label">可出题型</span><div class="chips">
       <label class="chip"><input type="checkbox" name="kinds" value="slider">滑块拼图<span class="k-level">易</span></label>
-      <label class="chip"><input type="checkbox" name="kinds" value="rotate">旋转对齐<span class="k-level">中</span></label>
-      <label class="chip"><input type="checkbox" name="kinds" value="click_text">文字点选<span class="k-level">较难</span></label>
-      <label class="chip"><input type="checkbox" name="kinds" value="click_shape">图形点选<span class="k-level">最难</span></label></div>
+      <label class="chip"><input type="checkbox" name="kinds" value="rotate">旋转对齐<span class="k-level">易</span></label>
+      <label class="chip"><input type="checkbox" name="kinds" value="jigsaw">推理拼图<span class="k-level">中</span></label>
+      <label class="chip"><input type="checkbox" name="kinds" value="click_text">文字点选<span class="k-level">中</span></label>
+      <label class="chip"><input type="checkbox" name="kinds" value="click_order">语序点选<span class="k-level">较难</span></label>
+      <label class="chip"><input type="checkbox" name="kinds" value="click_icon">图标点选<span class="k-level">较难</span></label>
+      <label class="chip"><input type="checkbox" name="kinds" value="click_shape">图形点选<span class="k-level">难</span></label>
+      <label class="chip"><input type="checkbox" name="kinds" value="spatial">空间推理<span class="k-level">最难</span></label></div>
       <div class="help">至少选一种。<a href="/preview" data-tab-open="preview" data-title="题型预览">预览各题型 →</a></div></div>
     <div class="grid g-2"><div class="form-row"><label>PoW 子题数</label><input class="input" type="number" name="puzzles" min="1" max="32" required></div>
       <div class="form-row"><label>每题难度（期望尝试次数）</label><input class="input" type="number" name="difficulty" min="1" max="100000000" required></div></div>
@@ -186,6 +198,24 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
     <div class="form-row"><label>旧密钥对宽限期</label><select class="input" name="grace_hours"><option value="1">1 小时</option><option value="24" selected>24 小时</option><option value="72">3 天</option><option value="168">7 天</option><option value="0">立即失效</option></select></div></div>
   <div class="m-foot"><button type="button" class="btn" data-close>取消</button><button class="btn primary">轮换</button></div></form></dialog>
 {{end}}
+{{with $d.Reveal}}
+<dialog class="modal" id="dlg-reveal" data-autoshow data-locked>
+  <div class="m-head"><h3>{{if .Rotated}}密钥对已轮换{{else}}密钥对已创建{{end}}</h3></div>
+  <div class="m-body">
+    {{if .Rotated}}<p class="muted" style="margin-top:0">旧密钥对 <span class="mono">{{.Rotated}}</span> 将在 {{time .OldUntil}} 失效，请在此之前把业务服务器切换到新密钥对。</p>{{end}}
+    <div class="alert bad"><b>secret_key 只显示这一次。</b>关闭后无法再次查看（数据库只保存加密后的密文），丢失只能轮换或重新创建。不要提交到代码仓库，不要放进前端代码。</div>
+    <div class="form-row"><span class="label">secret_id</span><div class="secret-box"><span id="sid">{{.SecretID}}</span><button class="btn sm" data-copy="#sid">复制</button></div></div>
+    <div class="form-row"><span class="label">secret_key</span><div class="secret-box"><span id="skey">{{.SecretKey}}</span><button class="btn sm" data-copy="#skey">复制</button></div></div>
+    {{with .ExpiresAt}}<p class="muted">过期时间：{{time .}}</p>{{end}}
+    <span class="label">写入业务服务器环境变量（示例）</span>
+    <div class="snippet-wrap"><button class="btn copy sm" data-copy="#env">复制</button>
+<pre class="snippet" id="env">BOTGUARD_ENDPOINT={{$d.Endpoint}}
+BOTGUARD_APP_KEY={{$a.AppKey}}
+BOTGUARD_SECRET_ID={{.SecretID}}
+BOTGUARD_SECRET_KEY={{.SecretKey}}</pre></div>
+  </div>
+  <div class="m-foot"><button type="button" class="btn primary" data-close>我已保存，关闭</button></div>
+</dialog>{{end}}
 <script type="application/json" id="trend">{{json $d.Trend}}</script>
 <script type="application/json" id="kinds">{{json $d.Kinds}}</script>
 {{template "foot" .}}

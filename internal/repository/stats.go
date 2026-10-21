@@ -39,6 +39,8 @@ type Event struct {
 	IP        string   `json:"ip,omitempty"` // salted hash prefix
 	RequestID string   `json:"request_id,omitempty"`
 	Pointer   string   `json:"pointer,omitempty"`
+	// Device is the coarse platform and browser ("iPhone · Safari").
+	Device string `json:"device,omitempty"`
 }
 
 // Event types.

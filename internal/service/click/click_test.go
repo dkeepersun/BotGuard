@@ -39,3 +39,19 @@ func TestOverlaps(t *testing.T) {
 		t.Fatal("overlap")
 	}
 }
+
+// A tap 7 px outside the target counts for touch, not for a mouse.
+func TestTouchTolerance(t *testing.T) {
+	targets := []Target{{X: 50, Y: 50, R: 15}, {X: 200, Y: 120, R: 15}}
+	clicks := [][3]float64{{900, 50 + 15 + 7, 50}, {1700, 200, 120}}
+	if r := Check(targets, clicks, []int{3, 5}, "mouse"); r != ReasonPosition {
+		t.Fatalf("mouse: %q", r)
+	}
+	if r := Check(targets, clicks, nil, "touch"); r != "" {
+		t.Fatalf("touch: %q", r)
+	}
+	far := [][3]float64{{900, 50 + 15 + 10, 50}, {1700, 200, 120}}
+	if r := Check(targets, far, nil, "touch"); r != ReasonPosition {
+		t.Fatalf("touch 10 px out: %q", r)
+	}
+}

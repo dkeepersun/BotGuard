@@ -16,13 +16,16 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/challenge"
 	"github.com/dkeepersun/BotGuard/internal/service/click"
+	"github.com/dkeepersun/BotGuard/internal/service/clickicon"
 	"github.com/dkeepersun/BotGuard/internal/service/clickshape"
 	"github.com/dkeepersun/BotGuard/internal/service/clicktext"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
 	"github.com/dkeepersun/BotGuard/internal/service/risk"
 	"github.com/dkeepersun/BotGuard/internal/service/rotate"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
+	"github.com/dkeepersun/BotGuard/internal/service/spatial"
 	"github.com/zeromicro/go-zero/core/logx"
 )
 
@@ -33,8 +36,10 @@ const dimFallback = "fallback"
 type sealedState struct {
 	X       int            `json:"x,omitempty"`
 	Targets []click.Target `json:"t,omitempty"`
-	Score   int            `json:"s"`
-	Reasons []string       `json:"r,omitempty"`
+	// Swap is the jigsaw answer: the two swapped tiles.
+	Swap    []int    `json:"w,omitempty"`
+	Score   int      `json:"s"`
+	Reasons []string `json:"r,omitempty"`
 }
 
 type IssueInput struct {
@@ -69,11 +74,13 @@ type RotateRender struct {
 }
 
 type ClickRender struct {
-	Width   int    `json:"width"`
-	Height  int    `json:"height"`
-	Image   string `json:"image"`
-	Prompt  string `json:"prompt"`
-	Targets int    `json:"targets"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Image  string `json:"image"`
+	Prompt string `json:"prompt"`
+	// PromptImage shows the targets as pictures (click_icon).
+	PromptImage string `json:"prompt_image,omitempty"`
+	Targets     int    `json:"targets"`
 }
 
 type IssueOutput struct {
@@ -86,6 +93,16 @@ type IssueOutput struct {
 	Slider      *SliderRender `json:"slider,omitempty"`
 	Click       *ClickRender  `json:"click,omitempty"`
 	Rotate      *RotateRender `json:"rotate,omitempty"`
+	Jigsaw      *JigsawRender `json:"jigsaw,omitempty"`
+}
+
+// JigsawRender is the swapped picture and its tile grid.
+type JigsawRender struct {
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Image  string `json:"image"`
+	Rows   int    `json:"rows"`
+	Cols   int    `json:"cols"`
 }
 
 // chooseKind applies the action policy to the risk level. Interactive mode
@@ -151,10 +168,34 @@ func (g *Gateway) newClickPuzzle(kind string) (click.Puzzle, error) {
 	if err != nil {
 		return click.Puzzle{}, err
 	}
-	if kind == domain.KindClickText {
+	switch kind {
+	case domain.KindClickText:
 		return clicktext.Generate(r)
+	case domain.KindClickOrder:
+		return clicktext.GenerateOrder(r)
+	case domain.KindClickIcon:
+		return clickicon.Generate(r)
+	case domain.KindSpatial:
+		return spatial.Generate(r)
+	default:
+		return clickshape.Generate(r)
 	}
-	return clickshape.Generate(r)
+}
+
+func (g *Gateway) newJigsaw() (jigsaw.Puzzle, error) {
+	release, ok := g.reserveSlot()
+	if !ok {
+		return jigsaw.Puzzle{}, errors.New("jigsaw generation saturated")
+	}
+	defer release()
+	if g.Jigsaws != nil {
+		return g.Jigsaws()
+	}
+	r, err := cryptoRand()
+	if err != nil {
+		return jigsaw.Puzzle{}, err
+	}
+	return jigsaw.Generate(r)
 }
 
 func (g *Gateway) newRotate() (rotate.Puzzle, error) {
@@ -297,8 +338,18 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		rotateRender = &RotateRender{Width: rotate.Width, Height: rotate.Height, Background: puzzle.Background,
 			Disc: puzzle.Disc, CX: puzzle.CX, CY: puzzle.CY, Radius: puzzle.Radius, Track: rotate.Track}
 	}
+	var jigsawRender *JigsawRender
+	if kind == domain.KindJigsaw {
+		puzzle, err := g.newJigsaw()
+		if err != nil {
+			logx.WithContext(ctx).Errorf("jigsaw: %v", err)
+			return nil, origin, errx.ErrUnavailable
+		}
+		state.Swap = []int{puzzle.A, puzzle.B}
+		jigsawRender = &JigsawRender{Width: jigsaw.Width, Height: jigsaw.Height, Image: puzzle.Image, Rows: jigsaw.Rows, Cols: jigsaw.Cols}
+	}
 	var clickRender *ClickRender
-	if kind == domain.KindClickText || kind == domain.KindClickShape {
+	if domain.ClickKind(kind) {
 		puzzle, err := g.newClickPuzzle(kind)
 		if err != nil {
 			logx.WithContext(ctx).Errorf("%s: %v", kind, err)
@@ -306,7 +357,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		}
 		state.Targets = puzzle.Targets
 		clickRender = &ClickRender{Width: puzzle.Width, Height: puzzle.Height, Image: puzzle.Image,
-			Prompt: puzzle.Prompt, Targets: len(puzzle.Targets)}
+			Prompt: puzzle.Prompt, PromptImage: puzzle.PromptImage, Targets: len(puzzle.Targets)}
 	}
 	private, err := json.Marshal(state)
 	if err != nil {
@@ -331,7 +382,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		return nil, origin, errx.ErrUnavailable
 	}
 	return &IssueOutput{Kind: kind, Challenge: signed, ChallengeID: id, Algorithm: p.Algorithm, Params: params,
-		ExpiresAt: p.ExpiresAt, Slider: render, Click: clickRender, Rotate: rotateRender}, origin, nil
+		ExpiresAt: p.ExpiresAt, Slider: render, Click: clickRender, Rotate: rotateRender, Jigsaw: jigsawRender}, origin, nil
 }
 
 // SliderAnswer carries the interactive answer. For the slider: the final
@@ -343,9 +394,14 @@ type SliderAnswer struct {
 	Trajectory   [][3]float64 `json:"trajectory"`
 	Clicks       [][3]float64 `json:"clicks"`
 	MovesBetween []int        `json:"moves_between"`
+	// Swap is the jigsaw answer: the dragged tile and the one it was dropped
+	// on; Trajectory then holds the drag in image coordinates.
+	Swap []int `json:"swap"`
 }
 
 type SolveInput struct {
+	// HeaderUA is the request's User-Agent header, for the event list only.
+	HeaderUA  string
 	AppKey    string
 	Challenge string
 	Nonces    []string
@@ -385,7 +441,7 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 			return
 		}
 		ev := &repository.Event{Type: repository.EventSolve, Action: st.action, Kind: st.kind, Level: st.level,
-			Pointer: st.pointer, IP: g.ipTag(in.ClientIP), Result: "pass"}
+			Pointer: st.pointer, IP: g.ipTag(in.ClientIP), Result: "pass", Device: risk.Device(risk.CleanUA(in.HeaderUA))}
 		fields := []string{"solve"}
 		if err != nil {
 			ev.Result = errCode(err)
@@ -451,7 +507,11 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		return nil, origin, errx.InvalidRequest("nonces 数量或格式错误")
 	}
 	var points []slider.Point
-	isClick := p.Kind == domain.KindClickText || p.Kind == domain.KindClickShape
+	isClick := domain.ClickKind(p.Kind)
+	isJigsaw := p.Kind == domain.KindJigsaw
+	if isJigsaw && (in.Answer == nil || len(in.Answer.Swap) != 2 || len(in.Answer.Trajectory) > jigsaw.MaxPoints) {
+		return nil, origin, errx.InvalidRequest("拼图题需要 answer.swap，且轨迹不超过 400 个点")
+	}
 	if isClick && (in.Answer == nil || len(in.Answer.Clicks) > click.MaxClicks || len(in.Answer.MovesBetween) > click.MaxClicks) {
 		return nil, origin, errx.InvalidRequest("点选题需要 answer.clicks，且不超过 8 次点击")
 	}
@@ -484,8 +544,21 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if in.Signals != nil {
 		input = risk.NormalizePointer(in.Signals.PointerType)
 	}
-	if domain.DragKind(p.Kind) || isClick {
+	if domain.DragKind(p.Kind) || isClick || isJigsaw {
 		st.pointer = input
+	}
+	if isJigsaw {
+		// No keyboard path: such a claim gets the mouse rules.
+		if input == risk.PointerKeyboard {
+			input = risk.PointerMouse
+		}
+		if len(state.Swap) != 2 {
+			return nil, origin, errx.ErrChallengeInvalid
+		}
+		if reason := jigsaw.Check(state.Swap[0], state.Swap[1], in.Answer.Swap, in.Answer.Trajectory, input); reason != "" {
+			logx.WithContext(ctx).Infof("%s rejected: %s (app %d, %s)", p.Kind, reason, app.ID, input)
+			return nil, origin, g.fail(ctx, ipBucket, errx.ErrAnswerInvalid)
+		}
 	}
 	if domain.DragKind(p.Kind) {
 		// Rotate reuses the slider drag: the drag distance maps to the angle.
@@ -517,7 +590,7 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if in.Signals != nil && in.Signals.UntrustedEvent {
 		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonUntrustedEvent], Reasons: []string{risk.ReasonUntrustedEvent}})
 	}
-	interactive := domain.DragKind(p.Kind) || isClick
+	interactive := domain.DragKind(p.Kind) || isClick || isJigsaw
 	if domain.DragKind(p.Kind) && input == risk.PointerKeyboard {
 		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonKeyboardInput], Reasons: []string{risk.ReasonKeyboardInput}})
 	}

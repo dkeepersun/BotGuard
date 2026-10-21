@@ -20,17 +20,23 @@ type Target struct {
 
 // Puzzle is one generated challenge.
 type Puzzle struct {
-	Image   string // data URL
-	Prompt  string
-	Width   int
-	Height  int
-	Targets []Target
+	Image  string // data URL
+	Prompt string
+	// PromptImage, when set, shows the targets as pictures (icon kinds).
+	PromptImage string
+	Width       int
+	Height      int
+	Targets     []Target
 }
 
 const (
-	// Slack added to every target radius for imprecise fingers.
+	// Slack added to every target radius (image pixels).
 	Tolerance = 4.0
-	MaxClicks = 8
+	// TouchTolerance is wider: a fingertip covers far more than a cursor,
+	// and compact H5 layouts show the image at about 0.6×. Touch answers
+	// carry TOUCH_INPUT, so this relaxed path stays visible.
+	TouchTolerance = 9.0
+	MaxClicks      = 8
 
 	minFirstMs    = 400.0
 	minGapMs      = 150.0
@@ -59,9 +65,13 @@ func Check(targets []Target, clicks [][3]float64, movesBetween []int, input stri
 	if len(targets) == 0 || len(clicks) != len(targets) {
 		return ReasonCount
 	}
+	slack := Tolerance
+	if input == "touch" {
+		slack = TouchTolerance
+	}
 	for i, c := range clicks {
 		t := targets[i]
-		if math.Hypot(c[1]-t.X, c[2]-t.Y) > t.R+Tolerance {
+		if math.Hypot(c[1]-t.X, c[2]-t.Y) > t.R+slack {
 			return ReasonPosition
 		}
 	}

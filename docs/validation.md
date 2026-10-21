@@ -258,3 +258,65 @@
 - **回归**：`make check` 通过；`go test -race -p 1 ./...` 全部通过；PHP 97 项、浏览器 46 项通过。
 
 **仍未验证**：真人在真机上的操作（真实触屏拖动和点选、真实手机上的身份验证器 App）。
+
+## 2026-10-21：yihuipay + yihui-h5 接入模拟
+
+目的：在真正对接前，用 yihuipay（Laravel 9 / PHP 8.2 后端）和 yihui-h5（uni-app Vue 2，HBuilderX 工程）按正式安装方式跑通一次，连接自己搭建的 gateway。两个仓库各用 git worktree 新开 `sim/botguard` 分支修改，数据库用 `yihuipay` 的副本，不影响原项目。
+
+**安装方式**
+- Composer：把 `packages/php`、`packages/laravel` 打成带版本号的 zip，放进本地 artifact 仓库，`composer require botguard/laravel:^0.1`。按 Packagist 的 dist 包安装，lock 只新增这两个包，原有依赖不变。
+- npm：在本地 Verdaccio 发布 `@botguard/browser@0.1.0`，yihui-h5 用 `npm install @botguard/browser` 安装。
+- H5 构建：本机没有 HBuilderX，改用 uni-app 官方 Vue 2 CLI（vue-cli 4.5 / webpack 4.47，与 HBuilderX 的 Vue 2 编译器同代）构建生产包；构建前把 `config.service.js` 的域名全部替换成本地地址，确保请求不会打到生产环境。
+
+**发现并修复的问题**
+- webpack 4 找不到 `@botguard/browser`：包只在 `exports` 里声明入口，webpack 4 不认这个字段。
+- 改用完整路径引入后，webpack 4 又解析不了 `import.meta.url`（用于定位 Worker）。
+- 修复：Worker 的启动逻辑移到 `src/spawn.js`；发布时用 esbuild 额外生成 `dist/botguard.legacy.js`（ES2017，Worker 代码以 blob 方式内联），`main` / `module` 字段指向它。Vite、webpack 5 和 gateway 托管仍使用原来的源码，行为不变。新增 4 项测试，其中一项在 Node 的 vm 里运行内联的 Worker 代码，结果与 Go 共用的 PoW 用例一致。
+
+**结果（真实浏览器，375×812 模拟手机）**
+- adaptive 模式：正常浏览器无感通过，登录成功进入首页；gateway 事件记录 issue → solve → verify pass。
+- 改为 interactive（滑块）：弹出层在 uni-app 页面中完整显示；点 × 关闭后静默返回，不提示错误，也不发登录请求。
+- Worker：legacy 版在真实浏览器中以 blob Worker 运行（8 个 Worker，约 1.6 万次哈希用时 56 ms）；从 gateway 跨域加载 `load.js` 的方式在新增 `spawn.js` 后同样正常。
+- 后端用真实 token 直接调用 `/api/login`：
+  - 密码错误时 token 也会被消耗（验证码先于密码校验，和易盾一致；前端每次提交前都重新验证）；
+  - 重放同一个 token 被拒，gateway 记为 TOKEN_CONSUMED；
+  - 用 register 的 token 登录被拒，记为 ACTION_MISMATCH；
+  - 篡改的 token 被拒，记为 TOKEN_INVALID；
+  - 新 token 加正确密码，登录成功。
+- 切换开关：易盾 / BotGuard / 迁移期两者均可，三种模式按预期分流（由 gateway 事件确认是否真的调用了 BotGuard）；gateway 不可达时拒绝登录，并写 `UnknownResultException` 错误日志。
+- 回归：浏览器 50 项、PHP 97 项、`go test ./...` 通过。
+
+**仍未验证**
+- HBuilderX 本身的编译（本机没有安装），以及 HBuilderX 内置的 uView 样式；CLI 构建里部分 uView 样式和 HBuilderX 不一致，与 BotGuard 无关。
+- App 端（APP-PLUS）：仍使用易盾原生插件。组件依赖 DOM，不能在 uni-app App 的逻辑层运行，需要另行方案（renderjs 或 web-view 页面）。
+- 真人在真机上拖动滑块：本次弹出层只验证到显示和关闭。
+
+### 真机 H5 测试（同日）
+
+- **局域网 HTTPS 测试模式**：新增 `examples/demo/lan.sh`，用 Caddy 本机自签证书把演示站（与 gateway 同源，8443）和管理后台（8444）开放到局域网，并把 HTTPS 来源加入演示应用。
+  - 修复：开启后，电脑上 localhost 页面的验证也会被导到局域网入口。现在只有经 HTTPS 代理访问的请求才使用局域网地址。
+  - 新增：代理的访问日志（只记录路径、状态码和 User-Agent）。
+- **实时事件新增「设备 / 输入」**：从请求头的 User-Agent 归纳出粗粒度的平台和浏览器，例如「iPhone · Chrome」，不记录版本号和完整 UA。
+- **iPhone（iOS 27）+ Chrome，真实触屏**，事件记录的输入方式都是 `touch`：
+  - 滑块、旋转对齐、文字点选、图形点选、无感验证都通过；
+  - 旋转对齐、图形点选提交到业务后端后，服务端核验通过，风险原因带 `TOUCH_INPUT`；
+  - 文字点选前两次 `POSITION` 未通过：手指点偏，紧凑布局下目标只有约 12 CSS 像素。已把触摸输入的命中容差从 +4 放宽到 +9 图像像素，并补了测试。
+- **后台动态码（局域网 HTTPS 入口）**：
+  - iPhone 用 admin 登录成功，并打开了绑定页（17:04–17:05）。
+  - 绑定确认和用动态码登录是在 Mac 浏览器里完成的（17:07），动态码由身份验证器扫码生成，服务端校验通过。记录里看不出是哪个 App 生成的动态码。
+  - 发现并修复：审计的脱敏规则把「是否使用了动态码」字段也过滤掉了，登录记录的详情只剩 `{}`。现在改为记录 `mfa` 字段；详情为空时不再写 `{}`。
+- **演示便利**：新增 `botguard-ctl admin set-password`，新密码从环境变量读取，用弱密码必须加 `-allow-weak`。演示环境的 admin 默认密码为 123456，`reset-admin.sh` 可以恢复成这个值。正式环境的密码强度要求不变。
+
+## 2026-10-21：第三期题型（推理拼图、语序点选、图标点选、空间推理）
+
+- 调研与选型见 `docs/challenge-catalog.md`：整理了国内外常见题型和 Open CaptchaWorld（NeurIPS 2025）的结论，选出 4 种可以完全程序生成的题型。
+- **实现**：
+  - 推理拼图 `internal/service/jigsaw`：图片切成 2×4 块，其中两块被交换；校验交换的两块、轨迹的起止块，以及与滑块相同的轨迹规则。
+  - 语序点选 `clicktext.GenerateOrder`：内置 78 个成语，补入 137 个字，字形图集扩到 473 字，仍然排除形近字和旋转后会认错的字。
+  - 图标点选 `internal/service/clickicon`：14 种程序绘制的图标，测试保证它们的剪影两两不相似；提示是一条图标小图。
+  - 空间推理 `internal/service/spatial`：图形摆在 4×3 网格里，测试保证被描述的图形唯一、所指方向上紧挨着的格子里只有一个图形。
+  - 迁移 0006 把题型列表字段放宽到 255 字符。
+- **测试**：
+  - Go 新增生成与校验测试，`-race` 下 27 个包全部通过；浏览器组件测试 52 项通过（新增拖动交换、图标提示条）。
+  - 后台题型预览打开「显示答案」后，逐一核对了 8 种题型的答案位置。
+  - 演示站「分享 · 推理拼图」：页面脚本按“接缝色差最小”找出被交换的两块，拖动交换后验证通过，服务端核验也通过。这同时说明这类题能被接缝分析解出，与选型文档写的局限一致。

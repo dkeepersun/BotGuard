@@ -81,6 +81,8 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, p *logic.Prin
 type appListView struct {
 	Rows  []AppRow
 	Query string
+	// Open is a just-created app, opened in its own shell tab on load.
+	Open *repository.AppSummary
 }
 
 func (s *Server) appList(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
@@ -90,8 +92,15 @@ func (s *Server) appList(w http.ResponseWriter, r *http.Request, p *logic.Princi
 		s.serverError(w, r, err)
 		return
 	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	if q != "" {
+	v := appListView{Query: strings.TrimSpace(r.URL.Query().Get("q"))}
+	if key := r.URL.Query().Get("open"); key != "" {
+		for i := range apps {
+			if apps[i].AppKey == key {
+				v.Open = &apps[i]
+			}
+		}
+	}
+	if q := v.Query; q != "" {
 		var hit []repository.AppSummary
 		for _, a := range apps {
 			if strings.Contains(strings.ToLower(a.Name+" "+a.AppKey+" "+a.Remark), strings.ToLower(q)) {
@@ -105,11 +114,11 @@ func (s *Server) appList(w http.ResponseWriter, r *http.Request, p *logic.Princi
 		s.serverError(w, r, err)
 		return
 	}
-	rows := make([]AppRow, 0, len(apps))
+	v.Rows = make([]AppRow, 0, len(apps))
 	for _, a := range apps {
-		rows = append(rows, AppRow{App: a, Counts: perApp[a.ID]})
+		v.Rows = append(v.Rows, AppRow{App: a, Counts: perApp[a.ID]})
 	}
-	s.render(w, r, "apps.html", View{Title: "应用管理", Active: "apps", Me: p, Data: appListView{Rows: rows, Query: q}})
+	s.render(w, r, "apps.html", View{Title: "应用管理", Active: "apps", Me: p, Data: v})
 }
 
 func (s *Server) appCreate(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error) {
@@ -122,8 +131,10 @@ func (s *Server) appCreate(w http.ResponseWriter, r *http.Request, p *logic.Prin
 	// as soon as an origin and a secret pair are added.
 	_ = s.Apps.SetAction(ctx, key, "login", domain.ActionPolicy{Enabled: true, Mode: domain.ModeAdaptive, Kinds: domain.InteractiveKinds,
 		Puzzles: logic.DefaultPuzzles, Difficulty: logic.DefaultDifficulty})
-	s.setFlash(w, "ok", "应用已创建，已默认添加 action「login」。下一步：添加允许来源、创建密钥对。")
-	return "", errRedirect{"/apps/" + key}
+	// Back to the list, which opens the new app in its own tab: every app
+	// lives in a tab of its own and the list stays where it was.
+	s.setFlash(w, "ok", "应用已创建，已默认添加 action「login」。下一步：在应用页添加允许来源、创建密钥对。")
+	return "", errRedirect{"/apps?open=" + key}
 }
 
 // actor attaches the signed-in admin and IP for the audit log.
@@ -154,6 +165,10 @@ type appDetailView struct {
 	Endpoint string
 	Tab      string
 	Kinds    []Ranked
+	// Apps feeds the app switcher.
+	Apps []repository.AppSummary
+	// Reveal is a secret pair just created or rotated, shown once in a dialog.
+	Reveal *secretOnceView
 }
 
 func estimate(puzzles int, difficulty uint64) (uint64, string) {
@@ -170,9 +185,7 @@ func estimate(puzzles int, difficulty uint64) (uint64, string) {
 }
 
 func (s *Server) appDetail(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
-	ctx := r.Context()
-	key := pathvar.Vars(r)["key"]
-	d, err := s.Apps.AppDetail(ctx, key)
+	v, err := s.loadAppDetail(r.Context(), pathvar.Vars(r)["key"])
 	if errors.Is(err, domain.ErrNotFound) {
 		http.NotFound(w, r)
 		return
@@ -181,12 +194,24 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request, p *logic.Prin
 		s.serverError(w, r, err)
 		return
 	}
+	v.Tab = r.URL.Query().Get("tab")
+	s.render(w, r, "app.html", View{Title: v.App.Name, Active: "apps", Me: p, Data: v})
+}
+
+func (s *Server) loadAppDetail(ctx context.Context, key string) (appDetailView, error) {
+	d, err := s.Apps.AppDetail(ctx, key)
+	if err != nil {
+		return appDetailView{}, err
+	}
+	apps, err := s.Repo.ListApps(ctx)
+	if err != nil {
+		return appDetailView{}, err
+	}
 	perApp, _, trend, err := s.collect(ctx, []repository.AppSummary{d.AppSummary}, s.Now().Add(-23*time.Hour), s.Now(), false)
 	if err != nil {
-		s.serverError(w, r, err)
-		return
+		return appDetailView{}, err
 	}
-	v := appDetailView{App: d, Counts: perApp[d.ID], Trend: trend, Endpoint: s.PublicEndpoint, Tab: r.URL.Query().Get("tab")}
+	v := appDetailView{App: d, Counts: perApp[d.ID], Trend: trend, Endpoint: s.PublicEndpoint, Apps: apps}
 	v.Kinds = v.Counts.Prefixed("issue", 0)
 	if v.Endpoint == "" {
 		v.Endpoint = "https://你的-gateway-地址"
@@ -208,7 +233,7 @@ func (s *Server) appDetail(w http.ResponseWriter, r *http.Request, p *logic.Prin
 		}
 		v.Secrets = append(v.Secrets, row)
 	}
-	s.render(w, r, "app.html", View{Title: d.Name, Active: "apps", Me: p, Data: v})
+	return v, nil
 }
 
 func appBack(key, tab string) string { return "/apps/" + key + "?tab=" + tab }
@@ -277,15 +302,25 @@ func (s *Server) actionDelete(w http.ResponseWriter, r *http.Request, p *logic.P
 }
 
 type secretOnceView struct {
-	AppKey, AppName, SecretID, SecretKey string
-	ExpiresAt                            *time.Time
-	Rotated                              string
-	OldUntil                             time.Time
-	Endpoint                             string
+	SecretID, SecretKey string
+	ExpiresAt           *time.Time
+	Rotated             string
+	OldUntil            time.Time
 }
 
-// The secret key is shown on the response page itself, never stored in a
-// flash cookie or a redirect.
+// revealSecret answers a create or rotate with the app page and the new pair
+// in a dialog over its secrets tab. The secret key lives only in this
+// response, never in a flash cookie or a redirect.
+func (s *Server) revealSecret(w http.ResponseWriter, r *http.Request, p *logic.Principal, key string, once secretOnceView) error {
+	v, err := s.loadAppDetail(r.Context(), key)
+	if err != nil {
+		return err
+	}
+	v.Tab, v.Reveal = "secrets", &once
+	s.render(w, r, "app.html", View{Title: v.App.Name, Active: "apps", Me: p, Data: v})
+	return errRendered
+}
+
 func (s *Server) secretCreate(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error) {
 	key := pathvar.Vars(r)["key"]
 	ttlDays, _ := strconv.Atoi(r.PostFormValue("ttl_days"))
@@ -300,13 +335,7 @@ func (s *Server) secretCreate(w http.ResponseWriter, r *http.Request, p *logic.P
 	if err != nil {
 		return "", err
 	}
-	d, _ := s.Apps.AppDetail(ctx, key)
-	v := secretOnceView{AppKey: key, SecretID: pair.SecretID, SecretKey: pair.SecretKey, ExpiresAt: exp, Endpoint: s.PublicEndpoint}
-	if d != nil {
-		v.AppName = d.Name
-	}
-	s.render(w, r, "secret.html", View{Title: "密钥对已创建", Active: "apps", Me: p, Data: v})
-	return "", errRendered
+	return "", s.revealSecret(w, r, p, key, secretOnceView{SecretID: pair.SecretID, SecretKey: pair.SecretKey, ExpiresAt: exp})
 }
 
 func (s *Server) secretRotate(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error) {
@@ -324,9 +353,7 @@ func (s *Server) secretRotate(w http.ResponseWriter, r *http.Request, p *logic.P
 	if err != nil {
 		return "", err
 	}
-	v := secretOnceView{AppKey: key, SecretID: pair.SecretID, SecretKey: pair.SecretKey, Rotated: old, OldUntil: until, Endpoint: s.PublicEndpoint}
-	s.render(w, r, "secret.html", View{Title: "密钥对已轮换", Active: "apps", Me: p, Data: v})
-	return "", errRendered
+	return "", s.revealSecret(w, r, p, key, secretOnceView{SecretID: pair.SecretID, SecretKey: pair.SecretKey, Rotated: old, OldUntil: until})
 }
 
 func (s *Server) secretRevoke(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error) {
@@ -467,6 +494,7 @@ func (s *Server) eventsAPI(w http.ResponseWriter, r *http.Request, p *logic.Prin
 		Level   string   `json:"level"`
 		Reasons []string `json:"reasons"`
 		Pointer string   `json:"pointer"`
+		Device  string   `json:"device"`
 		IP      string   `json:"ip"`
 		Request string   `json:"request"`
 	}
@@ -478,7 +506,7 @@ func (s *Server) eventsAPI(w http.ResponseWriter, r *http.Request, p *logic.Prin
 		}
 		out = append(out, row{At: time.UnixMilli(e.At).In(cst).Format("01-02 15:04:05"), App: e.AppName, Type: e.Type, Action: e.Action,
 			Kind: kindNames[e.Kind], Result: e.Result, Label: reasonText(e.Result), Pass: e.Result == "pass", Level: levelNames[e.Level],
-			Reasons: reasons, Pointer: e.Pointer, IP: e.IP, Request: e.RequestID})
+			Reasons: reasons, Pointer: pointerNames[e.Pointer], Device: e.Device, IP: e.IP, Request: e.RequestID})
 	}
 	s.json(w, map[string]any{"events": out})
 }
@@ -510,17 +538,40 @@ func (s *Server) auditPage(w http.ResponseWriter, r *http.Request, p *logic.Prin
 
 // Admins.
 
+type adminsView struct {
+	Admins []repository.Admin
+	// Reveal is a password just generated, shown once in a dialog.
+	Reveal *passwordOnceView
+}
+
 func (s *Server) adminList(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
+	if err := s.renderAdmins(w, r, p, nil); err != nil {
+		s.serverError(w, r, err)
+	}
+}
+
+func (s *Server) renderAdmins(w http.ResponseWriter, r *http.Request, p *logic.Principal, reveal *passwordOnceView) error {
 	list, err := s.Console.Admins.List(r.Context())
 	if err != nil {
-		s.serverError(w, r, err)
-		return
+		return err
 	}
-	s.render(w, r, "admins.html", View{Title: "管理员", Active: "admins", Me: p, Data: list})
+	s.render(w, r, "admins.html", View{Title: "管理员", Active: "admins", Me: p, Data: adminsView{Admins: list, Reveal: reveal}})
+	return nil
 }
 
 type passwordOnceView struct {
-	Username, Password, Note string
+	Title, Username, Password, Note string
+	// SignedOut: the admin reset their own password and this session ended.
+	SignedOut bool
+}
+
+// revealPassword answers with the admin list and the new password in a
+// dialog; like secret keys, it is never stored in a cookie or redirect.
+func (s *Server) revealPassword(w http.ResponseWriter, r *http.Request, p *logic.Principal, once passwordOnceView) error {
+	if err := s.renderAdmins(w, r, p, &once); err != nil {
+		return err
+	}
+	return errRendered
 }
 
 func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error) {
@@ -529,9 +580,8 @@ func (s *Server) adminCreate(w http.ResponseWriter, r *http.Request, p *logic.Pr
 	if err != nil {
 		return "", err
 	}
-	s.render(w, r, "password.html", View{Title: "管理员已创建", Active: "admins", Me: p,
-		Data: passwordOnceView{Username: username, Password: pw, Note: "新管理员首次登录时必须修改这个密码。"}})
-	return "", errRendered
+	return "", s.revealPassword(w, r, p, passwordOnceView{Title: "管理员已创建", Username: username, Password: pw,
+		Note: "新管理员首次登录时必须修改这个密码。"})
 }
 
 func adminID(r *http.Request) int64 {
@@ -566,14 +616,13 @@ func (s *Server) adminReset(w http.ResponseWriter, r *http.Request, p *logic.Pri
 	if err != nil {
 		return "", err
 	}
-	note := "该管理员所有已登录的会话已失效，下次登录时必须修改密码。"
+	once := passwordOnceView{Title: "密码已重置", Username: target.Username, Password: pw,
+		Note: "该管理员所有已登录的会话已失效，下次登录时必须修改密码。"}
 	if target.ID == p.Admin.ID {
 		s.setSessionCookie(w, "", -1)
-		note = "你重置了自己的密码，当前会话已失效，请用新密码重新登录。"
+		once.Note, once.SignedOut = "你重置了自己的密码，当前会话已失效，请用新密码重新登录。", true
 	}
-	s.render(w, r, "password.html", View{Title: "密码已重置", Active: "admins", Me: p,
-		Data: passwordOnceView{Username: target.Username, Password: pw, Note: note}})
-	return "", errRendered
+	return "", s.revealPassword(w, r, p, once)
 }
 
 // Profile.

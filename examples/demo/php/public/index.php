@@ -41,6 +41,10 @@ $ready = demo_ready();
       <button type="button" class="tab" data-action="post" data-endpoint="/post.php" data-submit="发帖">发帖 · 文字点选</button>
       <button type="button" class="tab" data-action="pay" data-endpoint="/pay.php" data-submit="支付">支付 · 图形点选</button>
       <button type="button" class="tab" data-action="comment" data-endpoint="/comment.php" data-submit="评论">评论 · 旋转对齐</button>
+      <button type="button" class="tab" data-action="share" data-endpoint="/share.php" data-submit="分享">分享 · 推理拼图</button>
+      <button type="button" class="tab" data-action="checkin" data-endpoint="/checkin.php" data-submit="签到">签到 · 语序点选</button>
+      <button type="button" class="tab" data-action="coupon" data-endpoint="/coupon.php" data-submit="领取">领券 · 图标点选</button>
+      <button type="button" class="tab" data-action="vote" data-endpoint="/vote.php" data-submit="投票">投票 · 空间推理</button>
     </div>
     <p class="hint" id="mode-hint">登录用 adaptive 模式：正常浏览器通常无感通过；风险中等时随机出滑块、旋转、文字点选或图形点选，风险高时出最难的图形点选。演示站不校验密码。</p>
     <label class="size-pick">显示方式

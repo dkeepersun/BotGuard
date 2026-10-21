@@ -113,6 +113,18 @@ func TestConsoleLoginSessionsAndTOTP(t *testing.T) {
 		t.Fatal("login code reused", err)
 	}
 
+	// The audit says whether the second factor was used.
+	recent, _, _ := c.Audit.Audit(ctx, repository.AuditQuery{Operation: "auth.login", Limit: 20})
+	var last *repository.AuditRecord
+	for i := range recent {
+		if recent[i].Operation == "auth.login" {
+			last = &recent[i]
+			break
+		}
+	}
+	if last == nil || last.Detail != `{"mfa":true}` {
+		t.Fatalf("login audit: %+v", last)
+	}
 	// Sessions expire after idle and absolute limits.
 	*clock = clock.Add(9 * time.Hour)
 	if got, _ := c.Authenticate(ctx, p.Session.ID); got != nil {

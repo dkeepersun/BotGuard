@@ -59,6 +59,8 @@ const usage = `用法：botguard-ctl <命令> [参数]
                                                     输出随机初始密码，只显示一次，首次登录必须修改
   admin list                                        列出管理后台账号
   admin reset-password -username 用户名             重新生成密码，并让该账号所有已登录会话失效
+  admin set-password -username 用户名 [-allow-weak] 把密码设为环境变量 BOTGUARD_ADMIN_PASSWORD 的值（不经命令行参数）；
+                                                    -allow-weak 跳过强度要求，只用于本地测试环境
   admin enable  -username 用户名                    启用账号
   admin disable -username 用户名                    停用账号（不能停用最后一个启用的超级管理员）
 
@@ -185,6 +187,8 @@ func (a *App) run(ctx context.Context, args []string) error {
 		return a.adminList(ctx, rest)
 	case "admin reset-password":
 		return a.adminReset(ctx, rest)
+	case "admin set-password":
+		return a.adminSetPassword(ctx, rest)
 	case "admin enable", "admin disable":
 		return a.adminStatus(ctx, args[1] == "enable", rest)
 	case "secret rotate":
@@ -687,5 +691,36 @@ func (a *App) adminStatus(ctx context.Context, enable bool, args []string) error
 		return err
 	}
 	fmt.Fprintf(a.Out, "管理员 %s 已%s\n", ad.Username, enabledText(enable))
+	return nil
+}
+
+const AdminPasswordEnv = "BOTGUARD_ADMIN_PASSWORD"
+
+func (a *App) adminSetPassword(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("admin set-password", flag.ContinueOnError)
+	username := fs.String("username", "", "")
+	weak := fs.Bool("allow-weak", false, "")
+	if err := parse(fs, args, "username"); err != nil {
+		return err
+	}
+	pw := a.Env(AdminPasswordEnv)
+	if pw == "" {
+		return usageError("请通过环境变量 " + AdminPasswordEnv + " 提供新密码")
+	}
+	c, err := a.console()
+	if err != nil {
+		return err
+	}
+	ad, err := a.adminByName(ctx, c, *username)
+	if err != nil {
+		return err
+	}
+	if err := c.SetPassword(ctx, ad.ID, pw, *weak); err != nil {
+		return err
+	}
+	fmt.Fprintf(a.Out, "管理员 %s 的密码已设置，该账号所有已登录的会话已失效\n", ad.Username)
+	if *weak {
+		fmt.Fprintln(a.Err, "警告：已跳过密码强度要求。弱密码只能用于本地测试环境，不要用于对外开放的管理后台。")
+	}
 	return nil
 }

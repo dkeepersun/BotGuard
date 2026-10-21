@@ -76,6 +76,8 @@ init({ element: '#captcha', endpoint, appKey, action: 'login', onVerify(err, ret
 
 组件用打包工具能识别的写法 `new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })` 创建 Worker，Vite、webpack 5、Parcel 会自动把 `worker.js` 及其依赖 `solver.js` 打进产物，不需要手工复制。Vite 开发模式下依赖预构建会破坏这种写法，请把本包加入 `optimizeDeps.exclude: ['@botguard/browser']`。万一 Worker 加载失败或 5 秒内没有任何响应，组件会自动改在主线程计算（较慢，但不会卡死）。
 
+**webpack 4 / HBuilderX（uni-app Vue 2）**：webpack 4 不认 `package.json` 的 `exports`，也解析不了 `import.meta`。本包为它准备了 `dist/botguard.legacy.js`（ES2017，Worker 代码内联），`main` / `module` 字段指向这个文件，webpack 4 会自动选用，写法和上面一样 `import { init } from '@botguard/browser'`，不需要额外配置。读 `exports` 的打包工具（Vite、webpack 5 等）仍然使用 `src/` 下的源码。legacy 版的 Worker 从 blob URL 启动，页面有 CSP 时需要 `worker-src blob:`，否则退回主线程计算。uni-app 里请只在 H5 条件编译（`// #ifdef H5`）中引入：App 端的逻辑层没有 DOM，组件不能在那里运行。
+
 也可以直接把 `node_modules/@botguard/browser/src/` 整个目录复制到静态资源目录，用 `<script type="module">` 引入。
 
 服务端渲染（Next.js、Nuxt 等）时可以直接在服务端 import 本包，模块顶层不访问 `document`、`HTMLElement`、`customElements`；组件只在浏览器里注册，`init()` 只能在浏览器里调用。

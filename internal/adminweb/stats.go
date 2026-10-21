@@ -229,11 +229,11 @@ type DetailItem struct{ Label, Value string }
 var detailLabels = map[string]string{
 	"action": "action", "enabled": "状态", "mode": "出题方式", "kinds": "题型", "puzzles": "PoW 子题数", "difficulty": "每题难度",
 	"origin": "来源", "name": "名称", "remark": "备注", "role": "角色", "username": "用户名", "new_secret_id": "新密钥对",
-	"grace": "宽限期", "expires_at": "过期时间", "totp": "动态码", "reason": "原因", "display_name": "显示名称", "app_key": "应用",
+	"grace": "宽限期", "expires_at": "过期时间", "totp": "动态码", "mfa": "动态码", "reason": "原因", "display_name": "显示名称", "app_key": "应用",
 }
 
 var detailOrder = []string{"username", "name", "action", "origin", "enabled", "mode", "kinds", "puzzles", "difficulty", "role",
-	"display_name", "remark", "app_key", "new_secret_id", "grace", "expires_at", "totp", "reason"}
+	"display_name", "remark", "app_key", "new_secret_id", "grace", "expires_at", "totp", "mfa", "reason"}
 
 var detailReasons = map[string]string{"unknown_user": "用户不存在", "bad_password": "密码错误", "disabled": "账号已停用",
 	"bad_otp": "动态码错误", "otp_reused": "动态码重复使用"}
@@ -276,8 +276,11 @@ func auditDetail(raw string) []DetailItem {
 		switch v := m[k].(type) {
 		case bool:
 			val = map[bool]string{true: "启用", false: "停用"}[v]
-			if k == "totp" {
+			switch k {
+			case "totp":
 				val = map[bool]string{true: "已开启", false: "未开启"}[v]
+			case "mfa":
+				val = map[bool]string{true: "已验证", false: "未使用"}[v]
 			}
 		case float64:
 			val = formatNum(v)
@@ -314,3 +317,5 @@ func auditDetail(raw string) []DetailItem {
 	}
 	return out
 }
+
+var pointerNames = map[string]string{"mouse": "鼠标", "touch": "触摸", "pen": "触控笔", "keyboard": "键盘"}

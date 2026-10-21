@@ -34,7 +34,9 @@ const KIND = { invisible: '无感', slider: '滑块', click_text: '文字点选'
 
 const TRACE = {
   challenge: (d) => `获取 challenge（${d.ms} ms）：服务端决定出「${KIND[d.kind] || d.kind}」题，PoW ${d.puzzles} 道子题，预计约 ${Math.round(d.expected_attempts).toLocaleString()} 次哈希`,
-  drag: (d) => `用户拖动滑块：${d.points} 个采样点，用时 ${d.ms} ms，停在 x=${d.x}（${d.pointer_type}）`,
+  drag: (d) => d.swap
+    ? `用户拖动拼图：把 ${d.swap[0] + 1} 号图块拖到 ${d.swap[1] + 1} 号上交换，${d.points} 个采样点，用时 ${d.ms} ms（${d.pointer_type}）`
+    : `用户拖动滑块：${d.points} 个采样点，用时 ${d.ms} ms，停在 x=${d.x}（${d.pointer_type}）`,
   clicks: (d) => `用户点选 ${d.count} 处，用时 ${d.ms} ms，点击间的指针移动次数 ${d.moves_between.join(' / ')}（${d.pointer_type}）`,
   solve: (d) => `浏览器完成 PoW：${d.workers} 个 Worker 并行，实际 ${d.attempts.toLocaleString()} 次哈希，用时 ${d.ms} ms`,
   solution: (d) => `提交答案换取 token（${d.ms} ms）：${short(d.token)}，${Math.max(0, d.expires_at - Math.floor(Date.now() / 1000))} 秒内有效、只能用一次`,
@@ -140,6 +142,10 @@ const HINTS = {
   post: '发帖固定出文字点选：按提示的顺序点击图中的汉字，点错了可以「重置」。',
   pay: '支付固定出图形点选：要数清骰子的点数、多边形的边数，再按顺序点击。这类题对多模态大模型最难。',
   comment: '评论固定出旋转对齐：拖动滑块转动中间的圆盘，让圆盘里的线条和外圈接上再松手。',
+  share: '分享固定出推理拼图：图中有两块位置被交换了，把其中一块拖到另一块上换回来。',
+  checkin: '签到固定出语序点选：图中有一个四字成语被打乱了，按成语的正确顺序依次点击。',
+  coupon: '领券固定出图标点选：按提示条里图标的顺序，点击大图中对应的图标（大图里的图标会旋转、变色）。',
+  vote: '投票固定出空间推理：读懂提示，点击被描述图形旁边紧挨着的那个图形，而不是被描述的图形本身。',
 };
 for (const tab of document.querySelectorAll('.tab')) {
   tab.addEventListener('click', () => {

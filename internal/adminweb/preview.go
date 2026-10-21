@@ -9,11 +9,14 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/domain"
 	"github.com/dkeepersun/BotGuard/internal/logic"
 	"github.com/dkeepersun/BotGuard/internal/service/click"
+	"github.com/dkeepersun/BotGuard/internal/service/clickicon"
 	"github.com/dkeepersun/BotGuard/internal/service/clickshape"
 	"github.com/dkeepersun/BotGuard/internal/service/clicktext"
+	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/qrcode"
 	"github.com/dkeepersun/BotGuard/internal/service/rotate"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
+	"github.com/dkeepersun/BotGuard/internal/service/spatial"
 )
 
 // qrSVG renders an otpauth URI for authenticator apps; empty if it does not
@@ -59,19 +62,26 @@ func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Pri
 		}
 		out["rotate"] = map[string]any{"width": rotate.Width, "height": rotate.Height, "background": pz.Background, "disc": pz.Disc,
 			"cx": pz.CX, "cy": pz.CY, "radius": pz.Radius, "track": rotate.Track, "angle": pz.Angle}
-	case domain.KindClickText, domain.KindClickShape:
-		var pz click.Puzzle
-		var err error
-		if kind == domain.KindClickText {
-			pz, err = clicktext.Generate(rnd)
-		} else {
-			pz, err = clickshape.Generate(rnd)
-		}
+	case domain.KindJigsaw:
+		pz, err := jigsaw.Generate(rnd)
 		if err != nil {
 			s.serverError(w, r, err)
 			return
 		}
-		out["click"] = map[string]any{"width": pz.Width, "height": pz.Height, "image": pz.Image, "prompt": pz.Prompt, "targets": pz.Targets}
+		out["jigsaw"] = map[string]any{"width": jigsaw.Width, "height": jigsaw.Height, "image": pz.Image, "rows": jigsaw.Rows, "cols": jigsaw.Cols,
+			"swap": []int{pz.A, pz.B}}
+	case domain.KindClickText, domain.KindClickOrder, domain.KindClickIcon, domain.KindClickShape, domain.KindSpatial:
+		generate := map[string]func(*rand.Rand) (click.Puzzle, error){
+			domain.KindClickText: clicktext.Generate, domain.KindClickOrder: clicktext.GenerateOrder, domain.KindClickIcon: clickicon.Generate,
+			domain.KindClickShape: clickshape.Generate, domain.KindSpatial: spatial.Generate,
+		}[kind]
+		pz, err := generate(rnd)
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		out["click"] = map[string]any{"width": pz.Width, "height": pz.Height, "image": pz.Image, "prompt": pz.Prompt,
+			"prompt_image": pz.PromptImage, "targets": pz.Targets}
 	default:
 		http.Error(w, "unknown kind", http.StatusBadRequest)
 		return

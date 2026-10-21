@@ -21,28 +21,36 @@
   "bugs": {
     "url": "https://github.com/dkeepersun/BotGuard/issues"
   },
+  "main": "./dist/botguard.legacy.js",
+  "module": "./dist/botguard.legacy.js",
   "exports": {
     ".": "./src/botguard.js",
     "./signals": "./src/signals.js",
     "./solver": "./src/solver.js",
     "./worker": "./src/worker.js",
-    "./load": "./src/load.js"
+    "./load": "./src/load.js",
+    "./legacy": "./dist/botguard.legacy.js"
   },
   "files": [
     "src/",
+    "dist/",
     "README.md"
   ],
   "sideEffects": [
     "./src/botguard.js",
-    "./src/load.js"
+    "./src/load.js",
+    "./dist/botguard.legacy.js"
   ],
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
+    "build": "node scripts/build-legacy.mjs",
+    "prepack": "npm run build",
     "test": "node --test test/*.test.mjs"
   },
   "devDependencies": {
+    "esbuild": "0.27.7",
     "jsdom": "^27.4.0"
   }
 }

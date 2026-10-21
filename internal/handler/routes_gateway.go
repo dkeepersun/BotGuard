@@ -184,6 +184,7 @@ func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {
 	out, origin, err := g.Logic.Solve(r.Context(), logic.SolveInput{
 		AppKey: body.AppKey, Challenge: body.Challenge, Nonces: body.Nonces,
 		Origin: r.Header.Get("Origin"), ClientIP: g.IPs.Resolve(r), Answer: body.Answer, Signals: body.Signals,
+		HeaderUA: r.UserAgent(),
 	})
 	cors(w, origin)
 	if err != nil {

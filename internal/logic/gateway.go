@@ -20,6 +20,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/challenge"
 	"github.com/dkeepersun/BotGuard/internal/service/click"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/rotate"
 	"github.com/dkeepersun/BotGuard/internal/service/signature"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
@@ -81,6 +82,7 @@ type Gateway struct {
 	Puzzles func() (slider.Puzzle, error)
 	Clicks  func(kind string) (click.Puzzle, error)
 	Rotates func() (rotate.Puzzle, error)
+	Jigsaws func() (jigsaw.Puzzle, error)
 	// puzzleSlots bounds concurrent image generation; created lazily.
 	puzzleSlots chan struct{}
 	slotsOnce   sync.Once

@@ -58,8 +58,9 @@ type Check struct {
 func itoa(n int) string { return strconv.Itoa(n) }
 
 var kindNames = map[string]string{
-	domain.KindInvisible: "无感", domain.KindSlider: "滑块拼图", domain.KindRotate: "旋转对齐",
-	domain.KindClickText: "文字点选", domain.KindClickShape: "图形点选", domain.KindFallback: "无障碍备用",
+	domain.KindInvisible: "无感", domain.KindSlider: "滑块拼图", domain.KindRotate: "旋转对齐", domain.KindJigsaw: "推理拼图",
+	domain.KindClickText: "文字点选", domain.KindClickOrder: "语序点选", domain.KindClickIcon: "图标点选",
+	domain.KindClickShape: "图形点选", domain.KindSpatial: "空间推理", domain.KindFallback: "无障碍备用",
 }
 
 var modeNames = map[string]string{
@@ -96,15 +97,16 @@ func (s *Server) funcs() template.FuncMap {
 		"ms": func(ms int64) string {
 			return time.UnixMilli(ms).In(cst).Format("01-02 15:04:05")
 		},
-		"num":    formatNum,
-		"pct":    formatPct,
-		"json":   func(v any) template.JS { b, _ := json.Marshal(v); return template.JS(b) },
-		"join":   strings.Join,
-		"has":    func(list []string, v string) bool { return contains(list, v) },
-		"kinds":  func() []string { return domain.InteractiveKinds },
-		"add":    func(a, b int) int { return a + b },
-		"sub64":  func(a, b int64) int64 { return a - b },
-		"opName": opName,
+		"num":     formatNum,
+		"pct":     formatPct,
+		"json":    func(v any) template.JS { b, _ := json.Marshal(v); return template.JS(b) },
+		"join":    strings.Join,
+		"has":     func(list []string, v string) bool { return contains(list, v) },
+		"kinds":   func() []string { return domain.InteractiveKinds },
+		"add":     func(a, b int) int { return a + b },
+		"sub64":   func(a, b int64) int64 { return a - b },
+		"opName":  opName,
+		"pointer": func(p string) string { return pointerNames[p] },
 		// asset appends a content hash so a new release is never served
 		// from a stale browser cache.
 		"asset": func(path string) string {

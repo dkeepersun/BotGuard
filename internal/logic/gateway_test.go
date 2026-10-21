@@ -68,6 +68,10 @@ func newHarness(t *testing.T) *harness {
 		"slide":    {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindSlider}, Puzzles: 2, Difficulty: 16},
 		"clicks":   {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindClickShape}, Puzzles: 2, Difficulty: 16},
 		"turn":     {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindRotate}, Puzzles: 2, Difficulty: 16},
+		"swap":     {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindJigsaw}, Puzzles: 2, Difficulty: 16},
+		"icons":    {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindClickIcon}, Puzzles: 2, Difficulty: 16},
+		"order":    {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindClickOrder}, Puzzles: 2, Difficulty: 16},
+		"where":    {Enabled: true, Mode: domain.ModeInteractive, Kinds: []string{domain.KindSpatial}, Puzzles: 2, Difficulty: 16},
 		"mixed":    {Enabled: true, Mode: domain.ModeAdaptive, Kinds: domain.InteractiveKinds, Puzzles: 2, Difficulty: 16},
 	}
 	apps := &fakeApps{

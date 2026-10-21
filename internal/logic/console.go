@@ -314,7 +314,7 @@ func (c *Console) startSession(ctx context.Context, admin *repository.Admin, ip 
 		return nil, err
 	}
 	_ = c.Admins.RecordLogin(ctx, admin.ID, ip, c.Now())
-	c.auditLogin(ctx, admin.Username, "auth.login", ip, map[string]any{"totp": admin.TOTPEnabled()})
+	c.auditLogin(ctx, admin.Username, "auth.login", ip, map[string]any{"mfa": admin.TOTPEnabled()})
 	return &Principal{Admin: admin, Session: sess}, nil
 }
 
@@ -506,6 +506,31 @@ func (c *Console) ResetPassword(ctx context.Context, actor *Principal, ip string
 	}
 	ctx = repository.Audited(ctx, "admin.password_reset", "", nil)
 	return pw, c.Admins.SetPassword(ctx, id, hash, true)
+}
+
+// SetPassword sets a chosen password for an admin (botguard-ctl, for
+// recovery and test environments). The usual policy applies unless
+// allowWeak; either way every session of the admin ends, and no change is
+// forced at next sign-in.
+func (c *Console) SetPassword(ctx context.Context, id int64, pw string, allowWeak bool) error {
+	target, err := c.Admins.ByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if pw == "" || len(pw) > 128 {
+		return invalid("密码不能为空，且不能超过 128 个字符")
+	}
+	if !allowWeak {
+		if err := password.Check(pw, target.Username); err != nil {
+			return invalid("%s", strings.TrimPrefix(err.Error(), password.ErrWeak.Error()+": "))
+		}
+	}
+	hash, err := password.Hash(pw)
+	if err != nil {
+		return err
+	}
+	ctx = repository.Audited(ctx, "admin.password_set", "", map[string]any{"policy_waived": allowWeak})
+	return c.Admins.SetPassword(ctx, id, hash, false)
 }
 
 // guardOwner refuses changes that would leave no enabled owner.

@@ -11,15 +11,16 @@
     </form>
   </div>
   <div class="card" data-live-events><div class="card-body flush table-wrap"><table class="table">
-    <thead><tr><th>时间</th><th>应用</th><th>阶段</th><th>action</th><th>题型</th><th>结果</th><th>风险</th><th>原因</th><th>客户端 / 请求</th></tr></thead><tbody>
+    <thead><tr><th>时间</th><th>应用</th><th>阶段</th><th>action</th><th>题型</th><th>结果</th><th>风险</th><th>原因</th><th>设备 / 输入</th><th>客户端 / 请求</th></tr></thead><tbody>
     {{range $d.Events}}<tr><td class="nowrap mono">{{ms .At}}</td><td class="nowrap">{{.AppName}}</td>
       <td class="nowrap">{{if eq .Type "verify"}}<span class="badge plain violet">服务端核验</span>{{else}}<span class="badge plain blue">浏览器提交</span>{{end}}</td>
       <td class="mono">{{.Action}}</td><td class="nowrap">{{if .Kind}}{{kind .Kind}}{{else}}—{{end}}</td>
       <td>{{if eq .Result "pass"}}<span class="badge ok">通过</span>{{else}}<span class="badge bad">{{reason .Result}}</span>{{end}}</td>
       <td>{{with .Level}}<span class="badge plain {{if eq . "high"}}bad{{else if eq . "medium"}}warn{{else}}ok{{end}}">{{level .}}</span>{{else}}—{{end}}</td>
       <td class="cell-sub">{{range .Reasons}}<span class="tag">{{reason .}}</span>{{else}}—{{end}}</td>
+      <td class="cell-sub nowrap">{{if .Device}}{{.Device}}{{else}}—{{end}}{{with .Pointer}}<div>{{pointer .}}</div>{{end}}</td>
       <td class="mono cell-sub">{{if .IP}}{{.IP}}{{else if .RequestID}}{{.RequestID}}{{else}}—{{end}}</td></tr>
-    {{else}}<tr><td colspan="9"><div class="empty"><div class="big">◎</div>暂无事件。完成一次验证后，这里会实时出现记录。</div></td></tr>{{end}}
+    {{else}}<tr><td colspan="10"><div class="empty"><div class="big">◎</div>暂无事件。完成一次验证后，这里会实时出现记录。</div></td></tr>{{end}}
     </tbody></table></div></div>
 </div>
 {{template "foot" .}}

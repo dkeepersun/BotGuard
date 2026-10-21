@@ -1,12 +1,12 @@
 #!/bin/sh
-# Forgot the demo console password? Generates a new one for "admin", ends
-# its sessions and prints it (the console asks to change it at next login).
+# Forgot the demo console password? Puts "admin" back to the demo default
+# (BG_DEMO_ADMIN_PASSWORD, 123456) and ends its sessions. Local demo only.
 set -eu
 cd "$(dirname "$0")"
-pw=$(docker compose run --rm -T seed sh -c \
-  'botguard-ctl admin reset-password -username admin | sed -n "s/^password: //p" | tee /shared/admin-password')
-if [ -z "$pw" ]; then
+pw=${BG_DEMO_ADMIN_PASSWORD:-123456}
+docker compose run --rm -T -e BOTGUARD_ADMIN_PASSWORD="$pw" seed \
+  botguard-ctl admin set-password -username admin -allow-weak >/dev/null 2>&1 || {
   echo "重置失败，请查看：docker compose -f $(pwd)/docker-compose.yml logs seed" >&2
   exit 1
-fi
-echo "管理后台 http://localhost:8091  账号 admin  新的临时密码 $pw（登录后需修改）"
+}
+echo "管理后台 admin 的密码已恢复为演示默认密码 $pw（动态码如已开启会保留）"

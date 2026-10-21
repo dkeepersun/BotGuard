@@ -64,7 +64,9 @@ func redact(detail map[string]any) map[string]any {
 	out := map[string]any{}
 	for k, v := range detail {
 		l := strings.ToLower(k)
-		if strings.Contains(l, "secret_key") || strings.Contains(l, "password") || strings.Contains(l, "totp") || strings.Contains(l, "token") {
+		// "mfa" (was a second factor used) is a fact, not a secret, and stays.
+		if strings.Contains(l, "secret_key") || strings.Contains(l, "password") || strings.Contains(l, "totp") ||
+			strings.Contains(l, "token") || strings.Contains(l, "otp_code") {
 			continue
 		}
 		out[k] = v
@@ -84,8 +86,8 @@ func writeAudit(ctx context.Context, s sqlx.Session, target string) error {
 		target = e.Target
 	}
 	var detail any
-	if len(e.Detail) > 0 {
-		b, err := json.Marshal(redact(e.Detail))
+	if clean := redact(e.Detail); len(clean) > 0 {
+		b, err := json.Marshal(clean)
 		if err != nil {
 			return err
 		}

@@ -1,4 +1,4 @@
-{{template "head" .}}
+{{template "head" .}}{{$d := .Data}}
 <div class="wrap">
   <div class="page-head">
     <div><h1>管理员</h1><div class="sub">超级管理员可以管理所有内容；运维可以管理应用、策略和密钥对；只读只能查看。修改角色、停用、重置密码会让该账号重新登录。</div></div>
@@ -6,16 +6,15 @@
   </div>
   <div class="card"><div class="card-body flush table-wrap"><table class="table">
     <thead><tr><th>账号</th><th>角色</th><th>状态</th><th>动态码</th><th>最近登录</th><th>创建时间</th><th class="actions">操作</th></tr></thead><tbody>
-    {{range .Data}}{{$self := eq .ID $.Me.Admin.ID}}<tr>
+    {{range $d.Admins}}{{$self := eq .ID $.Me.Admin.ID}}<tr>
       <td><span class="cell-title">{{.Username}}</span>{{if $self}} <span class="badge plain blue">我</span>{{end}}{{if .DisplayName}}<div class="cell-sub">{{.DisplayName}}</div>{{end}}</td>
-      <td>{{if $self}}{{role .Role}}{{else}}<form class="inline" method="post" action="/admins/{{.ID}}/role">{{template "csrf" $.CSRF}}
-        <select class="input sm" name="role">{{$r := .Role}}{{range $k := split "owner,operator,viewer"}}<option value="{{$k}}" {{if eq $k $r}}selected{{end}}>{{role $k}}</option>{{end}}</select>
-        <button class="btn sm">修改</button></form>{{end}}</td>
+      <td>{{role .Role}}</td>
       <td>{{if .Enabled}}<span class="badge ok">启用</span>{{else}}<span class="badge">停用</span>{{end}}{{if .MustChangePassword}} <span class="badge warn plain">待改密码</span>{{end}}</td>
       <td>{{if .TOTPEnabled}}<span class="badge ok plain">已开启</span>{{else}}<span class="muted">未开启</span>{{end}}</td>
       <td class="cell-sub nowrap">{{if .LastLoginAt.Valid}}{{time .LastLoginAt.Time}}<div class="mono">{{.LastLoginIP.String}}</div>{{else}}从未登录{{end}}</td>
       <td class="cell-sub nowrap">{{time .CreatedAt}}</td>
       <td class="actions">
+        {{if not $self}}<button class="btn sm" data-open="dlg-role" data-form-action="/admins/{{.ID}}/role" data-fill-who="{{.Username}}" data-fill-role="{{.Role}}">修改角色</button>{{end}}
         <form method="post" action="/admins/{{.ID}}/reset" data-confirm="将为 {{.Username}} 生成新密码，其所有登录会话立即失效。确定重置？" data-ok-text="重置">{{template "csrf" $.CSRF}}<button class="btn sm">重置密码</button></form>
         {{if not $self}}<form method="post" action="/admins/{{.ID}}/status" {{if .Enabled}}data-confirm="停用后 {{.Username}} 将立即退出且无法登录。确定停用？" data-danger data-ok-text="停用"{{end}}>{{template "csrf" $.CSRF}}
           <input type="hidden" name="enabled" value="{{if .Enabled}}0{{else}}1{{end}}"><button class="btn sm {{if .Enabled}}danger{{end}}">{{if .Enabled}}停用{{else}}启用{{end}}</button></form>{{end}}</td></tr>
@@ -33,4 +32,26 @@
     <div class="alert info" style="margin:0">系统会生成随机初始密码（只显示一次），对方首次登录时必须修改。</div>
   </div>
   <div class="m-foot"><button type="button" class="btn" data-close>取消</button><button class="btn primary">创建</button></div></form></dialog>
+<dialog class="modal" id="dlg-role"><form method="post">{{template "csrf" .CSRF}}
+  <div class="m-head"><h3>修改角色</h3><button type="button" class="x" data-close aria-label="关闭">×</button></div>
+  <div class="m-body">
+    <div class="form-row"><label>账号</label><input class="input" name="who" readonly tabindex="-1"></div>
+    <div class="form-row"><span class="label">角色</span><div class="radio-cards">
+      <label class="radio-card"><input type="radio" name="role" value="viewer"><b>只读</b><span>查看应用与数据</span></label>
+      <label class="radio-card"><input type="radio" name="role" value="operator"><b>运维</b><span>管理应用、策略、密钥对</span></label>
+      <label class="radio-card"><input type="radio" name="role" value="owner"><b>超级管理员</b><span>全部权限，含管理员</span></label></div></div>
+    <div class="alert info" style="margin:0">修改后，该管理员的所有登录会话立即失效，需要重新登录。</div>
+  </div>
+  <div class="m-foot"><button type="button" class="btn" data-close>取消</button><button class="btn primary">保存</button></div></form></dialog>
+{{with $d.Reveal}}
+<dialog class="modal" id="dlg-reveal" data-autoshow data-locked>
+  <div class="m-head"><h3>{{.Title}}</h3></div>
+  <div class="m-body">
+    <p class="muted" style="margin-top:0">{{.Note}}</p>
+    <div class="alert warn"><b>密码只显示这一次。</b>关闭后无法再次查看。请通过安全的渠道交给对方，不要通过群聊明文发送。</div>
+    <div class="form-row"><span class="label">用户名</span><div class="secret-box"><span>{{.Username}}</span></div></div>
+    <div class="form-row" style="margin-bottom:0"><span class="label">{{if .SignedOut}}新密码{{else}}初始密码{{end}}</span><div class="secret-box"><span id="pw">{{.Password}}</span><button class="btn sm" data-copy="#pw">复制</button></div></div>
+  </div>
+  <div class="m-foot">{{if .SignedOut}}<a class="btn primary" href="/login" target="_top">我已保存，重新登录</a>{{else}}<button type="button" class="btn primary" data-close>我已保存，关闭</button>{{end}}</div>
+</dialog>{{end}}
 {{template "foot" .}}

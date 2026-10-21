@@ -19,6 +19,7 @@ import (
 	"image/png"
 	"math"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"sync"
 
@@ -127,16 +128,49 @@ func darkColor(r *rand.Rand) color.RGBA {
 
 // Generate draws 3 targets (4 a quarter of the time) and 1–2 decoys.
 func Generate(r *rand.Rand) (click.Puzzle, error) {
-	a, err := loadAtlas()
-	if err != nil {
-		return click.Puzzle{}, err
-	}
 	n := 3
 	if r.IntN(4) == 0 {
 		n = 4
 	}
 	total := n + 1 + r.IntN(2)
 	perm := r.Perm(len(runes))[:total]
+	return compose(r, perm, n, func(words []string) string { return "请依次点击：" + strings.Join(words, "、") })
+}
+
+// GenerateOrder draws a four-character idiom, shuffled, with 1–2 decoy
+// characters. The prompt does not give the order: the user has to know the
+// idiom, then find its characters.
+func GenerateOrder(r *rand.Rand) (click.Puzzle, error) {
+	idiom := []rune(Idioms[r.IntN(len(Idioms))])
+	index := make(map[rune]int, len(runes))
+	for i, c := range runes {
+		index[c] = i
+	}
+	glyphs := make([]int, 0, 6)
+	for _, c := range idiom {
+		i, ok := index[c]
+		if !ok {
+			return click.Puzzle{}, fmt.Errorf("clicktext: idiom character %q missing from the atlas", c)
+		}
+		glyphs = append(glyphs, i)
+	}
+	for decoys := 1 + r.IntN(2); decoys > 0; {
+		i := r.IntN(len(runes))
+		if !strings.ContainsRune(string(idiom), runes[i]) && !slices.Contains(glyphs, i) {
+			glyphs = append(glyphs, i)
+			decoys--
+		}
+	}
+	return compose(r, glyphs, len(idiom), func([]string) string { return "请按成语的正确顺序，依次点击图中的 4 个字" })
+}
+
+// compose places and draws glyphs; the first n are the targets, in order.
+func compose(r *rand.Rand, perm []int, n int, prompt func(words []string) string) (click.Puzzle, error) {
+	a, err := loadAtlas()
+	if err != nil {
+		return click.Puzzle{}, err
+	}
+	total := len(perm)
 
 	var placed []click.Target
 	glyphs := make([]glyph, 0, total)
@@ -193,7 +227,7 @@ func Generate(r *rand.Rand) (click.Puzzle, error) {
 		targets[i] = click.Target{X: g.x, Y: g.y, R: g.size * 0.55}
 		words[i] = string(runes[g.idx])
 	}
-	return click.Puzzle{Image: url, Prompt: "请依次点击：" + strings.Join(words, "、"), Width: Width, Height: Height, Targets: targets}, nil
+	return click.Puzzle{Image: url, Prompt: prompt(words), Width: Width, Height: Height, Targets: targets}, nil
 }
 
 func segmentDistance(px, py, x0, y0, x1, y1 float64) float64 {

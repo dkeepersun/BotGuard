@@ -28,6 +28,14 @@ function demo_config(): array
         $cfg[trim($k)] = trim($v);
     }
     $cfg['public_endpoint'] = getenv('BG_PUBLIC_ENDPOINT') ?: 'http://localhost:8090';
+    // Through lan.sh's HTTPS proxy (a phone on the local network), the
+    // gateway is served from the same HTTPS origin; local visitors keep the
+    // plain localhost gateway, whose certificate problem they never see.
+    $lan = getenv('BG_LAN_ORIGIN') ?: '';
+    if ($lan !== '' && ($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https'
+        && 'https://' . ($_SERVER['HTTP_HOST'] ?? '') === $lan) {
+        $cfg['public_endpoint'] = $lan;
+    }
     $cfg['internal_endpoint'] = getenv('BG_INTERNAL_ENDPOINT') ?: 'http://localhost:8090';
     return $cfg;
 }
@@ -131,7 +139,7 @@ function handle_form(string $action, callable $onSuccess): never
 /** @param array<string, mixed> $detail */
 function risk_note(array $detail): string
 {
-    $kinds = ['invisible' => '无感验证', 'slider' => '滑块验证', 'rotate' => '旋转对齐验证', 'click_text' => '文字点选', 'click_shape' => '图形点选', 'fallback' => '无障碍备用验证'];
+    $kinds = ['invisible' => '无感验证', 'slider' => '滑块验证', 'rotate' => '旋转对齐验证', 'jigsaw' => '推理拼图验证', 'click_order' => '语序点选', 'click_icon' => '图标点选', 'spatial' => '空间推理', 'click_text' => '文字点选', 'click_shape' => '图形点选', 'fallback' => '无障碍备用验证'];
     $kind = $kinds[$detail['challenge_kind'] ?? ''] ?? '未知方式';
     $note = "。本次通过方式：{$kind}，风险等级：" . ($detail['risk_level'] ?? '-');
     if (($detail['risk_level'] ?? '') === 'high' || ($detail['challenge_kind'] ?? '') === 'fallback') {

@@ -150,7 +150,11 @@ func TestConsoleStatistics(t *testing.T) {
 		t.Fatal("consumed token passed")
 	}
 	c := h.issueFor(t, "slide", clean(), false)
-	if _, err := h.solveWith(c, &SliderAnswer{X: 10, Trajectory: humanDrag(10)}, clean()); code(err) != "ANSWER_INVALID" {
+	nonces, _ := pow.Solve(c.Algorithm, c.ChallengeID, c.Params)
+	_, _, err := h.g.Solve(context.Background(), SolveInput{AppKey: appA, Challenge: c.Challenge, Nonces: nonces, Origin: originA, ClientIP: h.ip,
+		Answer: &SliderAnswer{X: 10, Trajectory: humanDrag(10)}, Signals: clean(),
+		HeaderUA: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1"})
+	if code(err) != "ANSWER_INVALID" {
 		t.Fatal(err)
 	}
 	hours, err := h.g.Stats.Hours(context.Background(), 1, h.clock, h.clock)
@@ -171,6 +175,9 @@ func TestConsoleStatistics(t *testing.T) {
 	if len(evs) != 4 || evs[0].Type != "solve" || evs[0].Result != "ANSWER_INVALID" || evs[0].Pointer != "mouse" ||
 		evs[1].Result != "TOKEN_CONSUMED" || evs[2].Result != "pass" || evs[2].RequestID != "r-stat" {
 		t.Fatalf("%+v", evs)
+	}
+	if evs[0].Device != "iPhone · Safari" {
+		t.Fatalf("device %q", evs[0].Device)
 	}
 	if evs[0].IP == "" || len(evs[0].IP) != 12 || strings.Contains(evs[0].IP, "192.0.2") {
 		t.Fatalf("ip tag %q", evs[0].IP)

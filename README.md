@@ -5,7 +5,7 @@
 已实现：
 
 - gateway：`/v1/challenges`、`/v1/solutions`、`/v1/verify`。包括 SHA-256 多题 PoW、无状态签名 challenge、一次性 token、verify 幂等，以及参考易盾的多应用 + 密钥对 HMAC 签名认证；
-- 验证题型与风险：每个 action 可选无感 / 交互（从题型列表随机出题）/ 按风险自适应；交互题型有滑块拼图、旋转对齐、文字点选和图形计数点选；浏览器信号与服务端信号做可解释的风险打分，并提供无障碍备用路径（见 [docs/challenge-types.md](docs/challenge-types.md)、[docs/click-challenges.md](docs/click-challenges.md)、[docs/rotate-challenge.md](docs/rotate-challenge.md)）；
+- 验证题型与风险：每个 action 可选无感 / 交互（从题型列表随机出题）/ 按风险自适应；交互题型有滑块拼图、旋转对齐、推理拼图、文字点选、语序点选、图标点选、图形计数点选和空间推理共 8 种；浏览器信号与服务端信号做可解释的风险打分，并提供无障碍备用路径（见 [docs/challenge-types.md](docs/challenge-types.md)、[docs/click-challenges.md](docs/click-challenges.md)、[docs/rotate-challenge.md](docs/rotate-challenge.md)、题型调研与选型 [docs/challenge-catalog.md](docs/challenge-catalog.md)）；
 - 管理后台 `admin-web`：管理员登录（密码 + 可选 TOTP 动态码）、三种角色、控制台与统计报表、实时事件、应用 / 来源 / 验证策略 / 密钥对管理、题型预览、审计日志（见 [docs/admin.md](docs/admin.md)）；
 - 运维命令行 `botguard-ctl`：迁移、应用配置、密钥对、管理员账号的创建与找回；
 - 浏览器组件 `packages/browser`：标签、`BotGuard.init()` / `initBotGuard()`（易盾式）、弹出与绑定提交按钮；gateway 同时在 `/sdk/v1/load.js` 托管脚本；

@@ -1,7 +1,7 @@
 {{template "head" .}}{{$d := .Data}}
 <div class="wrap">
   <div class="page-head">
-    <div><h1>应用管理</h1><div class="sub">每个接入方是一个应用：公开的 app_key 用于浏览器，密钥对用于服务端签名核验（对应易盾的 captchaId 与 secretId / secretKey）</div></div>
+    <div><h1>应用管理</h1><div class="sub">每个接入方是一个应用：公开的 app_key 用于浏览器，密钥对用于服务端签名核验（对应易盾的 captchaId 与 secretId / secretKey）。点击应用名或「管理」会在独立标签页中打开，多个应用可以同时打开、在顶部标签间切换。</div></div>
     <div class="tools">
       <form class="form-inline" method="get" action="/apps"><input class="input sm" name="q" value="{{$d.Query}}" placeholder="搜索名称、app_key、备注"><button class="btn sm">搜索</button></form>
       {{if can .Me "apps.manage"}}<button class="btn primary" data-open="dlg-create">＋ 新建应用</button>{{end}}
@@ -9,16 +9,17 @@
   </div>
   <div class="card"><div class="card-body flush table-wrap"><table class="table">
     <thead><tr><th>应用</th><th>app_key</th><th class="num">24 小时签发</th><th class="num">通过率</th><th class="num">拦截</th><th>状态</th><th>创建时间</th><th class="actions">操作</th></tr></thead><tbody>
-    {{range $d.Rows}}<tr>
-      <td><a class="cell-title" href="/apps/{{.App.AppKey}}">{{.App.Name}}</a>{{if .App.Remark}}<div class="cell-sub">{{.App.Remark}}</div>{{end}}</td>
+    {{range $d.Rows}}<tr{{if $d.Open}}{{if eq $d.Open.AppKey .App.AppKey}} class="hl"{{end}}{{end}}>
+      <td><a class="cell-title" href="/apps/{{.App.AppKey}}" data-tab-open="app-{{.App.AppKey}}" data-title="{{.App.Name}}">{{.App.Name}}</a>{{if .App.Remark}}<div class="cell-sub">{{.App.Remark}}</div>{{end}}</td>
       <td><span class="mono">{{.App.AppKey}}</span> <button class="btn ghost sm" data-copy="{{.App.AppKey}}">复制</button></td>
       <td class="num">{{num (.Counts.Get "issue")}}</td><td class="num">{{.Counts.PassRate}}</td><td class="num">{{num .Counts.Blocked}}</td>
       <td>{{if .App.Enabled}}<span class="badge ok">启用</span>{{else}}<span class="badge">停用</span>{{end}}</td>
       <td class="nowrap cell-sub">{{time .App.CreatedAt}}</td>
-      <td class="actions"><a class="btn sm" href="/apps/{{.App.AppKey}}">管理</a></td></tr>
+      <td class="actions"><a class="btn sm" href="/apps/{{.App.AppKey}}" data-tab-open="app-{{.App.AppKey}}" data-title="{{.App.Name}}">管理</a></td></tr>
     {{else}}<tr><td colspan="8"><div class="empty"><div class="big">▦</div>{{if $d.Query}}没有匹配的应用{{else}}还没有应用，点击右上角「新建应用」开始接入{{end}}</div></td></tr>{{end}}
     </tbody></table></div></div>
 </div>
+{{with $d.Open}}<a hidden data-auto-open href="/apps/{{.AppKey}}" data-tab-open="app-{{.AppKey}}" data-title="{{.Name}}"></a>{{end}}
 {{if can .Me "apps.manage"}}
 <dialog class="modal" id="dlg-create"><form method="post" action="/apps/create">{{template "csrf" .CSRF}}<input type="hidden" name="_back" value="/apps">
   <div class="m-head"><h3>新建应用</h3><button type="button" class="x" data-close aria-label="关闭">×</button></div>
