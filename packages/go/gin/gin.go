@@ -28,17 +28,19 @@ type options struct {
 	onError  func(*gin.Context, error)
 }
 
-// OnReject replaces the response for a rejected token (default: abort with
-// 403 {"code":"BOTGUARD_REJECTED","reason":...,"message":...}). It must
-// abort the context.
+// OnReject replaces the response for a rejected token (default: 403
+// {"code":"BOTGUARD_REJECTED","reason":...,"message":...}). Protect aborts
+// the chain after it returns, so the protected handler never runs, even when
+// the callback only writes a response; one that writes nothing gets the
+// default status.
 func OnReject(f func(*gin.Context, *botguard.Result)) Option {
 	return func(o *options) { o.onReject = f }
 }
 
 // OnError replaces the response for a *botguard.CallerError or
-// *botguard.UnknownError (default: log it, then abort with 500
-// BOTGUARD_MISCONFIGURED or 503 BOTGUARD_UNAVAILABLE). It must abort the
-// context.
+// *botguard.UnknownError (default: log it, then 500 BOTGUARD_MISCONFIGURED
+// or 503 BOTGUARD_UNAVAILABLE). As with OnReject, Protect aborts the chain
+// after it returns.
 func OnError(f func(*gin.Context, error)) Option {
 	return func(o *options) { o.onError = f }
 }
@@ -68,14 +70,30 @@ func Protect(g *botguard.Guard, opts ...Option) gin.HandlerFunc {
 		switch {
 		case err != nil:
 			o.onError(c, err)
+			status, _, _ := botguard.ErrorResponse(err)
+			stop(c, status)
 		case !res.Passed:
 			o.onReject(c, res)
+			status, _ := botguard.RejectResponse(res)
+			stop(c, status)
 		default:
 			c.Set(ContextKey, res)
 			c.Request = c.Request.WithContext(botguard.WithResult(c.Request.Context(), res))
 			c.Next()
 		}
 	}
+}
+
+// stop ends the chain after a rejection or failure. gin runs the next
+// handler unless the context is aborted, and gin code commonly answers with
+// c.JSON, which does not abort: leaving that to the callback would let a
+// rejected request reach the protected handler.
+func stop(c *gin.Context, status int) {
+	if c.Writer.Written() {
+		c.Abort()
+		return
+	}
+	c.AbortWithStatus(status)
 }
 
 // Result returns the passed result Protect stored.

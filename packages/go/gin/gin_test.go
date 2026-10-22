@@ -83,3 +83,34 @@ func TestCustomResponses(t *testing.T) {
 		t.Fatalf("error: %d", w.Code)
 	}
 }
+
+// gin code usually answers with c.JSON, which does not abort; the protected
+// handler must still not run.
+func TestCustomResponsesWithoutAbort(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := map[string]struct {
+		status int
+		resp   string
+		opt    Option
+		want   int
+	}{
+		"reject writes":  {200, `{"code":"OK","data":{"success":false,"reason":"TOKEN_INVALID"}}`, OnReject(func(c *gin.Context, _ *botguard.Result) { c.JSON(400, gin.H{"err": "captcha"}) }), 400},
+		"reject silent":  {200, `{"code":"OK","data":{"success":false,"reason":"TOKEN_INVALID"}}`, OnReject(func(*gin.Context, *botguard.Result) {}), 403},
+		"error writes":   {503, `{}`, OnError(func(c *gin.Context, _ error) { c.String(502, "later") }), 502},
+		"error silent":   {401, `{"code":"UNAUTHORIZED"}`, OnError(func(*gin.Context, error) {}), 500},
+		"unknown silent": {503, `{}`, OnError(func(*gin.Context, error) {}), 503},
+	}
+	for name, tc := range cases {
+		ran := false
+		r := gin.New()
+		guard := botguard.NewGuard(fakeGateway(t, tc.status, tc.resp), "login", botguard.WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+		r.POST("/login", Protect(guard, tc.opt), func(c *gin.Context) { ran = true; c.String(200, "side effect") })
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("botguard_token=tok"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if ran || w.Code != tc.want {
+			t.Errorf("%s: handler ran=%v, status %d (want %d)", name, ran, w.Code, tc.want)
+		}
+	}
+}

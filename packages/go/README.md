@@ -74,7 +74,7 @@ r.POST("/login", botguardgin.Protect(botguard.NewGuard(client, "login")), func(c
 })
 ```
 
-`botguardgin.OnReject`、`botguardgin.OnError` 可以换成自己的响应格式（回调里要 `c.Abort...`）。
+`botguardgin.OnReject`、`botguardgin.OnError` 可以换成自己的响应格式，例如 `c.JSON(400, ...)`。回调返回后 `Protect` 一定会中止后续处理器，回调里不需要、也不能靠自己调用 `c.Abort`；回调什么都没写时，返回默认的 403 / 500 / 503。
 
 ### go-zero
 
