@@ -38,7 +38,18 @@ const (
 	// dimPrefixInteractive counts interactive challenges per app and client
 	// network prefix (clientip.Prefix).
 	dimPrefixInteractive = "prefixinteractive"
+	// dimChallengePrefix counts challenges per client network prefix, across
+	// apps: many addresses from one network cost like one.
+	dimChallengePrefix = "challengeprefix"
+
+	// minHumanSolve is the least time between issuing an image challenge and
+	// its answer that a person needs to see the picture and act on it.
+	minHumanSolve = 800 * time.Millisecond
 )
+
+// failSubject is the failure-counter subject for a whole network prefix; the
+// bare IP bucket is the other one.
+func failSubject(prefix string) string { return "net:" + prefix }
 
 // sealedState travels inside the signed challenge, encrypted: the browser
 // carries it back on solve but can neither read nor change it.
@@ -52,6 +63,12 @@ type sealedState struct {
 	// Ladder is set when the page asked for a kind ladder: the solve then
 	// moves the client's rung.
 	Ladder bool `json:"l,omitempty"`
+	// What the gateway saw at issue, compared on solve: the pointer the
+	// widget was activated with, the client's network prefix and the issue
+	// time in unix milliseconds. Challenges from older gateways lack them.
+	Pointer  string `json:"p,omitempty"`
+	Prefix   string `json:"n,omitempty"`
+	IssuedMs int64  `json:"i,omitempty"`
 }
 
 type IssueInput struct {
@@ -302,6 +319,19 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	if count > int64(g.Settings.ChallengePerIPPerMinute) {
 		return nil, g.cachedOrigin(in.AppKey, origin), errx.RateLimited(retry)
 	}
+	prefix := clientip.Prefix(in.ClientIP)
+	near := count*5 >= int64(g.Settings.ChallengePerIPPerMinute)*4
+	if quota := g.Settings.ChallengePerPrefixPerMinute; quota > 0 {
+		n, retry, err := g.Limiter.Take(ctx, dimChallengePrefix, prefix, quota, rateWindow)
+		if err != nil {
+			logx.WithContext(ctx).Errorf("rate limiter %s: %v", dimChallengePrefix, err)
+			return nil, "", errx.ErrUnavailable
+		}
+		if n > int64(quota) {
+			return nil, g.cachedOrigin(in.AppKey, origin), errx.RateLimited(retry)
+		}
+		near = near || n*5 >= int64(quota)*4
+	}
 	if in.Fallback {
 		if err := g.limit(ctx, dimFallback, ipBucket, g.Settings.FallbackPerIPPerMinute); err != nil {
 			return nil, g.cachedOrigin(in.AppKey, origin), err
@@ -343,9 +373,20 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		logx.WithContext(ctx).Errorf("read failures: %v", err)
 		return nil, origin, errx.ErrUnavailable
 	}
+	prefixFailures, err := g.State.Failures(ctx, failSubject(prefix))
+	if err != nil {
+		logx.WithContext(ctx).Errorf("read failures: %v", err)
+		return nil, origin, errx.ErrUnavailable
+	}
+	// Past this many failures a new challenge is only another guess: answer
+	// 429 until the failures age out of the window.
+	if limit := g.Settings.FailureBlockThreshold; limit > 0 && failures >= limit {
+		return nil, origin, errx.RateLimited(int(rateWindow / time.Second))
+	}
 	assessment := risk.Assess(in.Signals, risk.Facts{
 		RecentFailures: failures,
-		NearRateLimit:  count*5 >= int64(g.Settings.ChallengePerIPPerMinute)*4,
+		PrefixFailures: prefixFailures,
+		NearRateLimit:  near,
 		HeaderUA:       risk.CleanUA(in.HeaderUA),
 		Fallback:       in.Fallback && policy.Mode != domain.ModeInvisible,
 	})
@@ -361,7 +402,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	degraded := false
 	if domain.ValidInteractiveKind(kind) {
 		var cause string
-		if puzzle, cause, err = g.interactivePuzzle(ctx, app.ID, clientip.Prefix(in.ClientIP), kind); err != nil {
+		if puzzle, cause, err = g.interactivePuzzle(ctx, app.ID, prefix, kind); err != nil {
 			return nil, origin, err
 		}
 		if puzzle == nil {
@@ -391,7 +432,12 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	if err != nil {
 		return nil, origin, errx.ErrUnavailable
 	}
-	state := sealedState{Score: assessment.Score, Reasons: assessment.Reasons, Ladder: ladder}
+	now := g.Now()
+	state := sealedState{Score: assessment.Score, Reasons: assessment.Reasons, Ladder: ladder,
+		Pointer: risk.PointerMouse, Prefix: prefix, IssuedMs: now.UnixMilli()}
+	if in.Signals != nil {
+		state.Pointer = in.Signals.PointerType
+	}
 	var (
 		render       *SliderRender
 		rotateRender *RotateRender
@@ -419,7 +465,6 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	if err != nil {
 		return nil, origin, errx.ErrUnavailable
 	}
-	now := g.Now()
 	p := challenge.Payload{
 		ChallengeID:   id,
 		AppKey:        app.AppKey,
@@ -475,10 +520,13 @@ type SolveOutput struct {
 	ExpiresIn int64 `json:"expires_in"`
 }
 
-// fail records a failed attempt for the IP, raising its risk next time.
-func (g *Gateway) fail(ctx context.Context, ipBucket string, e *errx.Error) error {
-	if err := g.State.RecordFailure(ctx, ipBucket, g.Settings.FailureWindow); err != nil {
-		logx.WithContext(ctx).Errorf("record failure: %v", err)
+// fail records a failed attempt for the IP and its network prefix, raising
+// their risk next time.
+func (g *Gateway) fail(ctx context.Context, ip netip.Addr, e *errx.Error) error {
+	for _, subject := range []string{clientip.Bucket(ip), failSubject(clientip.Prefix(ip))} {
+		if err := g.State.RecordFailure(ctx, subject, g.Settings.FailureWindow); err != nil {
+			logx.WithContext(ctx).Errorf("record failure: %v", err)
+		}
 	}
 	return e
 }
@@ -596,7 +644,7 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		if state.Ladder {
 			g.climb(ctx, app.ID, ipBucket, false)
 		}
-		return g.fail(ctx, ipBucket, e)
+		return g.fail(ctx, in.ClientIP, e)
 	}
 	if err := pow.Verify(p.Algorithm, p.ChallengeID, p.Params, in.Nonces); err != nil {
 		if errors.Is(err, pow.ErrProofInvalid) {
@@ -607,6 +655,14 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	input := risk.PointerMouse
 	if in.Signals != nil {
 		input = risk.NormalizePointer(in.Signals.PointerType)
+	}
+	// Touch and pen relax the mouse-only checks, so the claim counts only when
+	// the widget was activated with touch or pen as well.
+	var observed []string
+	if (input == risk.PointerTouch || input == risk.PointerPen) && state.Pointer != "" &&
+		state.Pointer != risk.PointerTouch && state.Pointer != risk.PointerPen {
+		input = risk.PointerMouse
+		observed = append(observed, risk.ReasonPointerMismatch)
 	}
 	if domain.DragKind(p.Kind) || isClick || isJigsaw {
 		st.pointer = input
@@ -659,7 +715,16 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonKeyboardInput], Reasons: []string{risk.ReasonKeyboardInput}})
 	}
 	if interactive && input == risk.PointerTouch {
-		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonTouchInput], Reasons: []string{risk.ReasonTouchInput}})
+		observed = append(observed, risk.ReasonTouchInput)
+	}
+	if state.Prefix != "" && clientip.Prefix(in.ClientIP) != state.Prefix {
+		observed = append(observed, risk.ReasonIPChanged)
+	}
+	if interactive && state.IssuedMs > 0 && now.UnixMilli()-state.IssuedMs < minHumanSolve.Milliseconds() {
+		observed = append(observed, risk.ReasonSolveTooFast)
+	}
+	for _, r := range observed {
+		final = final.Add(risk.Assessment{Score: risk.Weights[r], Reasons: []string{r}})
 	}
 
 	token, err := newToken(app.AppKey)

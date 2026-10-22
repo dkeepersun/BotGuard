@@ -153,6 +153,9 @@ type GatewayConfig struct {
 		// beyond it the network gets 429, so a few networks cannot spend the
 		// app quota for everyone. 0 disables.
 		InteractivePerPrefixPerMinute int `json:",default=300"`
+		// Challenges per client network (IPv4 /24, IPv6 /48) across apps;
+		// rotating addresses within one network does not reset it. 0 disables.
+		ChallengePerPrefixPerMinute int `json:",default=1200"`
 	}
 	Risk struct {
 		MediumThreshold          int `json:",default=30"`
@@ -164,6 +167,9 @@ type GatewayConfig struct {
 		// at the default 8 puzzles), so the degraded path is not nearly free.
 		DegradedMinDifficulty int `json:",default=60000"`
 		FailureWindowSeconds  int `json:",default=600"`
+		// Failed solves from one IP within the window before new challenges
+		// answer 429 until they age out. 0 disables.
+		FailureBlockThreshold int `json:",default=20"`
 		// Kind ladder (the page's levels): passes in a row per step down,
 		// and how long a client's rung lasts after its last solve.
 		LadderDowngradePasses int `json:",default=3"`
@@ -262,6 +268,8 @@ func (c GatewayConfig) Validate() error {
 		inRange("Risk.DegradedDifficultyFactor", c.Risk.DegradedDifficultyFactor, 1, 256),
 		inRange("Risk.DegradedMinDifficulty", c.Risk.DegradedMinDifficulty, 1, 1<<32),
 		inRange("RateLimit.InteractivePerPrefixPerMinute", c.RateLimit.InteractivePerPrefixPerMinute, 0, 10_000_000),
+		inRange("RateLimit.ChallengePerPrefixPerMinute", c.RateLimit.ChallengePerPrefixPerMinute, 0, 10_000_000),
+		inRange("Risk.FailureBlockThreshold", c.Risk.FailureBlockThreshold, 0, 100_000),
 		inRange("PuzzlePool.PerKind", c.PuzzlePool.PerKind, 0, 1024),
 		inRange("Monitor.RateLimitedPerMinute", c.Monitor.RateLimitedPerMinute, 0, 100_000_000),
 		inRange("PuzzlePool.Workers", c.PuzzlePool.Workers, 0, 256),

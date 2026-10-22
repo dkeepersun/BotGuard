@@ -39,8 +39,18 @@ func TestRulesAndCaps(t *testing.T) {
 		"ua padded":    {func(s *Signals, _ *Facts) { s.UserAgent = "  " + ua + "\n" }, 0, nil},
 		"fast click":   {func(s *Signals, _ *Facts) { s.MsToClick = 120 }, 15, []string{ReasonFastClick}},
 		"ua mismatch":  {func(_ *Signals, f *Facts) { f.HeaderUA = "curl/8" }, 30, []string{ReasonUAHeaderMismatch}},
-		"failures cap": {func(_ *Signals, f *Facts) { f.RecentFailures = 9 }, 30, []string{ReasonIPRecentFailures}},
+		"failures cap": {func(_ *Signals, f *Facts) { f.RecentFailures = 9 }, 40, []string{ReasonIPRecentFailures}},
 		"fallback":     {func(_ *Signals, f *Facts) { f.Fallback = true }, 0, []string{ReasonFallbackChosen}},
+		// The widget always reports how long the page was open.
+		"no interaction": {func(s *Signals, _ *Facts) { s.MsToClick = 0 }, 20, []string{ReasonNoInteraction}},
+		"windows touch": {func(s *Signals, f *Facts) {
+			s.PointerType, s.PointerMovesBeforeClick = "touch", 0
+			s.UserAgent, f.HeaderUA = "", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140"
+		}, 10, []string{ReasonDesktopTouch}},
+		// iPadOS Safari says Macintosh.
+		"ipad touch":          {func(s *Signals, _ *Facts) { s.PointerType, s.PointerMovesBeforeClick = "touch", 0 }, 0, nil},
+		"prefix failures":     {func(_ *Signals, f *Facts) { f.PrefixFailures = 10 }, 15, []string{ReasonPrefixFailures}},
+		"few prefix failures": {func(_ *Signals, f *Facts) { f.PrefixFailures = 9 }, 0, nil},
 		"headless stack": {func(s *Signals, _ *Facts) {
 			s.Webdriver, s.HeadlessUA, s.SoftwareGL = true, true, true
 		}, 100, []string{ReasonHeadlessUA, ReasonSoftwareGL, ReasonWebdriver}},

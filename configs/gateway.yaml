@@ -90,6 +90,11 @@ RateLimit:
   # could spend the app quota above and push everyone onto the PoW-only path.
   # Beyond it that network gets 429 (not the degraded path). 0 disables.
   InteractivePerPrefixPerMinute: 300
+  # Challenges per client network (IPv4 /24, IPv6 /48) per minute, across
+  # apps. One IPv6 /48 holds 65536 /64 buckets, so the per-IP limit alone
+  # does not hold back a tunnel or a proxy pool on one network. 80% of it
+  # also counts as IP_HIGH_RATE. Raise it for large NATs. 0 disables.
+  ChallengePerPrefixPerMinute: 1200
 
 # Risk scoring (docs/challenge-types.md). For adaptive actions, a score >=
 # MediumThreshold draws an interactive kind at random from the action's kinds;
@@ -108,6 +113,10 @@ Risk:
   # Per puzzle; 60000 x 8 puzzles is about 2 s in a browser.
   DegradedMinDifficulty: 60000
   FailureWindowSeconds: 600
+  # This many failed solves from one IP within the window and new challenges
+  # answer 429 until the failures age out: past it another challenge is only
+  # another guess. 0 disables.
+  FailureBlockThreshold: 20
   # Kind ladder a page may ask for (levels in /v1/challenges): a failed solve
   # moves the client one tier up, this many passes in a row one tier down;
   # the tier is forgotten this many seconds after the client's last solve.

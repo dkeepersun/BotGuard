@@ -92,6 +92,7 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 				AuthFailuresPerIPPerMinute:    c.RateLimit.AuthFailuresPerIPPerMinute,
 				InteractivePerAppPerMinute:    c.RateLimit.InteractivePerAppPerMinute,
 				InteractivePerPrefixPerMinute: c.RateLimit.InteractivePerPrefixPerMinute,
+				ChallengePerPrefixPerMinute:   c.RateLimit.ChallengePerPrefixPerMinute,
 
 				RiskMedium:               c.Risk.MediumThreshold,
 				RiskHigh:                 c.Risk.HighThreshold,
@@ -100,6 +101,7 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 				DegradedDifficultyFactor: uint64(c.Risk.DegradedDifficultyFactor),
 				DegradedMinDifficulty:    uint64(c.Risk.DegradedMinDifficulty),
 				FailureWindow:            config.Seconds(c.Risk.FailureWindowSeconds),
+				FailureBlockThreshold:    c.Risk.FailureBlockThreshold,
 				LadderDowngradePasses:    c.Risk.LadderDowngradePasses,
 				LadderWindow:             config.Seconds(c.Risk.LadderWindowSeconds),
 				SliderTolerance:          c.Slider.Tolerance,
