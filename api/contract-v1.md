@@ -85,7 +85,7 @@ gateway 托管浏览器组件：`load.js`（经典脚本，提供 `initBotGuard`
 
 ## POST /v1/challenges（浏览器）
 
-请求：`app_key`、`action`，可选 `signals`（风险信号对象，字段见 `docs/challenge-types.md` §5，缺失计为 `NO_SIGNALS`）、`fallback`（布尔，选择无障碍备用路径），以及 `kinds`（字符串数组）或 `levels`（字符串数组的数组），见上文“前端指定题型”。服务端从请求读取 Origin，校验精确应用白名单；缺失/`null` Origin 默认拒绝。原生 App（包括 uni-app App 端从逻辑层发出的请求）没有 Origin，可改用请求头 `X-BotGuard-Origin: app://包名`，白名单里登记同样的 `app://包名`；只有请求不带 Origin 时才读这个头，所以浏览器里的网页（POST 一定带 Origin，`null` 也算）无法冒充 App。App 来源的响应不带 CORS 头。和 Origin 一样，这个头能被脚本伪造，只用于区分应用的使用场景，不构成身份。仅为允许来源返回 CORS，`Vary: Origin`，不用跨站 cookie。预检请求不带 body、无法得知应用，因此对任何 Origin 都返回允许（`Access-Control-Max-Age: 600`）；真正的请求仍按应用白名单校验，且只对允许来源返回 CORS 头。
+请求：`app_key`、`action`，可选 `signals`（风险信号对象，字段见 `docs/challenge-types.md` §5，缺失计为 `NO_SIGNALS`）、`fallback`（布尔，选择无障碍备用路径），以及 `kinds`（字符串数组）或 `levels`（字符串数组的数组），见上文“前端指定题型”。服务端从请求读取 Origin，按应用的允许来源校验；缺失/`null` Origin 默认拒绝。允许来源有三种写法：精确来源 `https://shop.example.com`（协议、域名、端口都要一致）；子域名通配 `https://*.example.com`，匹配任意层子域名，协议和端口要一致，不含 `example.com` 本身，`*.com` 这类只有一级的写法会被拒绝；全部允许 `*`，任何来源都通过（包括 `app://`），等于放弃来源校验，任何网站都能用这个 app_key 拿到 token（例如把验证组件嵌到别的网站、诱导访客代做验证），只在域名多且经常变化时使用，并由业务端核对 verify 返回的 `origin`。原生 App（包括 uni-app App 端从逻辑层发出的请求）没有 Origin，可改用请求头 `X-BotGuard-Origin: app://包名`，白名单里登记同样的 `app://包名`；只有请求不带 Origin 时才读这个头，所以浏览器里的网页（POST 一定带 Origin，`null` 也算）无法冒充 App。App 来源的响应不带 CORS 头。和 Origin 一样，这个头能被脚本伪造，只用于区分应用的使用场景，不构成身份。仅为允许来源返回 CORS，`Vary: Origin`，不用跨站 cookie。预检请求不带 body、无法得知应用，因此对任何 Origin 都返回允许（`Access-Control-Max-Age: 600`）；真正的请求仍按应用白名单校验，且只对允许来源返回 CORS 头。
 
 签发前校验应用/action 启用并完成签发限流。签发是无状态的：不写入任何 per-challenge 的 Redis 记录，只更新有界的限流计数。
 
@@ -192,10 +192,11 @@ HTTP 状态码只描述“这次调用是否被正确处理”，`data.success` 
 通过：
 ```json
 {"code":"OK","data":{"success":true,"app_key":"...","action":"login","verified_at":1790000030,
- "challenge_kind":"click_shape","risk_level":"medium","risk_reasons":["NO_SIGNALS","IP_RECENT_FAILURES"]},"request_id":"..."}
+ "challenge_kind":"click_shape","risk_level":"medium","risk_reasons":["NO_SIGNALS","IP_RECENT_FAILURES"],
+ "origin":"https://shop.example.com"},"request_id":"..."}
 ```
 
-`challenge_kind`（invisible / slider / click_text / click_shape / fallback）、`risk_level`（low / medium / high）、`risk_reasons` 是新增字段，告诉业务方这个 token 是怎么拿到的，便于对高风险、fallback 或 `CAPACITY_DEGRADED`（容量不足降级）追加验证。它们不改变通过与否；旧版 SDK 忽略即可。
+`challenge_kind`（invisible / slider / click_text / click_shape / fallback）、`risk_level`（low / medium / high）、`risk_reasons` 是新增字段，告诉业务方这个 token 是怎么拿到的，便于对高风险、fallback 或 `CAPACITY_DEGRADED`（容量不足降级）追加验证。`origin` 是 token 签发时页面的来源（已规范化），应用使用通配或 `*` 时，业务端可以用它核对自己的域名清单。它们不改变通过与否；旧版 SDK 忽略即可。
 
 拒绝：
 ```json

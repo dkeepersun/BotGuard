@@ -87,12 +87,13 @@ func (a *AppAdmin) DeleteAction(ctx context.Context, appKey, action string) erro
 	return a.Repo.DeleteAction(repository.Audited(ctx, "action.delete", appKey, map[string]any{"action": action}), appKey, action)
 }
 
-// NormalizeOriginInput only accepts input that is already a bare origin, so
-// an operator typo such as a trailing path is rejected rather than trimmed.
+// NormalizeOriginInput only accepts input that is already a bare origin or
+// origin pattern, so an operator typo such as a trailing path is rejected
+// rather than trimmed.
 func NormalizeOriginInput(raw string) (string, error) {
-	n, ok := domain.NormalizeOrigin(raw)
+	n, ok := domain.NormalizeOriginPattern(raw)
 	if !ok {
-		return "", invalid("来源必须是 http(s)://主机[:端口]（不能带路径、查询参数或账号），或 App 的 app://包名：%q", raw)
+		return "", invalid("来源必须是 http(s)://主机[:端口]（不能带路径、查询参数或账号）、子域名通配 https://*.example.com、全部允许 *，或 App 的 app://包名：%q", raw)
 	}
 	return n, nil
 }

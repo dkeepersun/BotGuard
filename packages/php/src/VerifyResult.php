@@ -27,14 +27,16 @@ final class VerifyResult
         public readonly ?string $riskLevel = null,
         /** @var list<string> reason codes such as NO_SIGNALS, FALLBACK_CHOSEN or CAPACITY_DEGRADED */
         public readonly array $riskReasons = [],
+        /** Page origin the token was earned on, e.g. https://shop.example.com (null for older gateways). Check it when the app allows wildcard or any origin. */
+        public readonly ?string $origin = null,
     ) {
     }
 
     /** @param list<string> $riskReasons */
     public static function ofPass(string $appKey, string $action, int $verifiedAt, string $requestId,
-        ?string $challengeKind = null, ?string $riskLevel = null, array $riskReasons = []): self
+        ?string $challengeKind = null, ?string $riskLevel = null, array $riskReasons = [], ?string $origin = null): self
     {
-        return new self(true, null, $appKey, $action, $verifiedAt, $requestId, $challengeKind, $riskLevel, $riskReasons);
+        return new self(true, null, $appKey, $action, $verifiedAt, $requestId, $challengeKind, $riskLevel, $riskReasons, $origin);
     }
 
     public static function ofReject(string $reason, string $requestId): self
@@ -67,6 +69,7 @@ final class VerifyResult
             'challenge_kind' => $this->challengeKind,
             'risk_level' => $this->riskLevel,
             'risk_reasons' => $this->riskReasons,
+            'origin' => $this->origin,
         ];
     }
 }

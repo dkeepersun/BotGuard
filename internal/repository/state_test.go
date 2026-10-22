@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/dkeepersun/BotGuard/internal/domain"
 	red "github.com/redis/go-redis/v9"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 )
@@ -50,7 +52,7 @@ func TestConsumeLifecycle(t *testing.T) {
 	s, _ := newState(t)
 	put(t, s, "h1", now+60)
 
-	pass := fmt.Sprintf("PASS:%d:slider:medium:NO_SIGNALS,FAST_CLICK", now)
+	pass := fmt.Sprintf("PASS:%d:slider:medium:NO_SIGNALS,FAST_CLICK:https://a.example", now)
 	if out, replay, err := consume(s, "r1", "d1", "h1", "login"); err != nil || replay || out != pass {
 		t.Fatalf("first: %q %v %v", out, replay, err)
 	}
@@ -150,5 +152,33 @@ func TestFailureCounter(t *testing.T) {
 	}
 	if ttl := mr.TTL("bg:ipfail:192.0.2.1"); ttl != 10*time.Minute {
 		t.Fatalf("ttl %s", ttl)
+	}
+}
+
+// The verify script must match origin patterns exactly as domain.OriginMatches
+// does, which the gateway uses on issue and solve.
+func TestConsumeMatchesOriginPatternsLikeDomain(t *testing.T) {
+	s, _ := newState(t)
+	patterns := []string{"*", "https://*.example.com", "https://*.example.com:8443", "https://shop.example.com", "app://com.example.shop"}
+	origins := []string{"https://a.example.com", "https://a.b.example.com", "https://example.com", "http://a.example.com",
+		"https://a.example.com:8443", "https://aexample.com", "https://a.example.com.evil.test", "https://shop.example.com",
+		"app://com.example.shop"}
+	n := 0
+	for _, p := range patterns {
+		for _, o := range origins {
+			n++
+			hash := fmt.Sprintf("h%d", n)
+			if err := s.PutToken(context.Background(), 7, hash, TokenRecord{Action: "login", Origin: o, ExpiresAt: now + 60}, time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			out, _, err := s.Consume(context.Background(), ConsumeInput{AppID: 7, RequestID: hash, RequestDigest: hash,
+				TokenHash: hash, Action: "login", AllowedOrigins: []string{p}, Now: now, ResultTTL: time.Minute})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := strings.HasPrefix(out, PassPrefix), domain.OriginMatches(p, o); got != want {
+				t.Errorf("%s ~ %s: script %v (%s), domain %v", p, o, got, out, want)
+			}
+		}
 	}
 }

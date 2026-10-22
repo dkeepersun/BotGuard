@@ -84,6 +84,7 @@ token 来自浏览器，空值、null、数组、非法 UTF-8、超长都只是�
 $result->challengeKind;  // invisible / slider / click_text / click_shape / fallback（旧版 gateway 为 null）
 $result->riskLevel;      // low / medium / high
 $result->riskReasons;    // 例如 ['NO_SIGNALS', 'IP_RECENT_FAILURES', 'FALLBACK_CHOSEN']
+$result->origin;         // 签发 token 的页面来源，如 https://shop.example.com；应用允许来源用了通配或 * 时，在这里核对自己的域名
 
 if ($result->passed() && ($result->riskLevel === 'high' || $result->challengeKind === 'fallback')) {
     // 业务自行决定是否追加验证，例如短信验证码

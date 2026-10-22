@@ -106,12 +106,13 @@ check(json_decode($call['body'], true) === ['app_key' => 'app_demo', 'token' => 
 
 // Risk fields are surfaced when present and default when absent.
 [, $c] = $mk([ok(['success' => true, 'app_key' => 'app_demo', 'action' => 'login', 'verified_at' => 1,
-    'challenge_kind' => 'slider', 'risk_level' => 'medium', 'risk_reasons' => ['NO_SIGNALS', 7]])]);
+    'challenge_kind' => 'slider', 'risk_level' => 'medium', 'risk_reasons' => ['NO_SIGNALS', 7], 'origin' => 'https://m.shop.example'])]);
 $res = $c->verify($req);
 check($res->challengeKind === 'slider' && $res->riskLevel === 'medium' && $res->riskReasons === ['NO_SIGNALS'], 'risk fields');
+check($res->origin === 'https://m.shop.example' && $res->toArray()['origin'] === 'https://m.shop.example', 'origin field');
 [, $c] = $mk([ok(['success' => true, 'app_key' => 'app_demo', 'action' => 'login', 'verified_at' => 1])]);
 $res = $c->verify($req);
-check($res->challengeKind === null && $res->riskReasons === [], 'risk fields absent');
+check($res->challengeKind === null && $res->riskReasons === [] && $res->origin === null, 'risk fields absent');
 
 // Rejected, including reasons this SDK has never heard of.
 [, $c] = $mk([ok(['success' => false, 'reason' => 'TOKEN_CONSUMED'])]);

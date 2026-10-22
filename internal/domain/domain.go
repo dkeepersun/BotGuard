@@ -100,14 +100,16 @@ type App struct {
 	AppKey        string
 	Enabled       bool
 	PolicyVersion int64
-	// Origins are normalized with NormalizeOrigin.
+	// Origins are patterns normalized with NormalizeOriginPattern.
 	Origins []string
 	Actions map[string]ActionPolicy
 }
 
+// AllowsOrigin reports whether a normalized request origin matches one of
+// the app's origin patterns (see NormalizeOriginPattern).
 func (s *App) AllowsOrigin(origin string) bool {
-	for _, o := range s.Origins {
-		if o == origin {
+	for _, p := range s.Origins {
+		if OriginMatches(p, origin) {
 			return true
 		}
 	}
@@ -174,4 +176,55 @@ func NormalizeOrigin(raw string) (string, bool) {
 		return scheme + "://" + host + ":" + port, true
 	}
 	return scheme + "://" + host, true
+}
+
+// AnyOrigin is the pattern allowing every origin, including app:// ones.
+const AnyOrigin = "*"
+
+// wildcardHost marks a subdomain wildcard: scheme://*.example.com[:port].
+const wildcardHost = "://*."
+
+// NormalizeOriginPattern accepts an exact origin (see NormalizeOrigin), the
+// subdomain wildcard scheme://*.domain[:port], or AnyOrigin. The wildcard
+// matches any depth of subdomain but not the domain itself, with the same
+// scheme and port, like a wildcard TLS certificate covering more levels. The
+// domain must have at least two labels, so *.com is refused.
+func NormalizeOriginPattern(raw string) (string, bool) {
+	if raw == AnyOrigin {
+		return AnyOrigin, true
+	}
+	if !strings.Contains(raw, "*") {
+		return NormalizeOrigin(raw)
+	}
+	scheme, rest, ok := strings.Cut(strings.ToLower(raw), wildcardHost)
+	if !ok || strings.Contains(rest, "*") {
+		return "", false
+	}
+	// Normalize with a stand-in label, then put the wildcard back.
+	const stand = "wildcard."
+	n, ok := NormalizeOrigin(scheme + "://" + stand + rest)
+	if !ok || strings.HasPrefix(n, "app://") || !strings.HasPrefix(n, scheme+"://"+stand) {
+		return "", false
+	}
+	domain := n[len(scheme+"://"+stand):]
+	host, _, _ := strings.Cut(domain, ":")
+	if !strings.Contains(host, ".") || strings.HasPrefix(host, "[") || strings.HasPrefix(host, ".") {
+		return "", false
+	}
+	return scheme + wildcardHost + domain, true
+}
+
+// OriginMatches reports whether a normalized origin matches a normalized
+// pattern. verifyScript in the repository package mirrors this in Lua; keep
+// them in step.
+func OriginMatches(pattern, origin string) bool {
+	if pattern == AnyOrigin {
+		return true
+	}
+	i := strings.Index(pattern, wildcardHost)
+	if i < 0 {
+		return pattern == origin
+	}
+	prefix, suffix := pattern[:i+len("://")], pattern[i+len(wildcardHost)-1:]
+	return len(origin) > len(prefix)+len(suffix) && strings.HasPrefix(origin, prefix) && strings.HasSuffix(origin, suffix)
 }
