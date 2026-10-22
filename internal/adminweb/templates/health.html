@@ -1,0 +1,37 @@
+{{template "head" .}}{{$d := .Data}}
+<div class="wrap">
+  <div class="page-head"><div><h1>运行状况</h1><div class="sub">各 gateway 每分钟上报一次，保留 24 小时 · 近 60 分钟 · {{time $d.Now}}</div></div><div class="tools"><a class="btn" href="/health">刷新</a></div></div>
+
+  <div class="grid g-4">
+    <div class="card stat"><span class="icon i-blue">◎</span><div class="label">接口请求</div><div class="value">{{num $d.Requests}}</div><div class="foot">近 60 分钟，签发 + 提交 + 核验</div></div>
+    <div class="card stat"><span class="icon i-amber">⏱</span><div class="label">限流拒绝</div><div class="value">{{num $d.RateLimited}}</div><div class="foot">返回 429 的次数</div></div>
+    <div class="card stat"><span class="icon i-red">⚠</span><div class="label">服务不可用</div><div class="value">{{num $d.Unavailable}}</div><div class="foot">返回 503 的次数，正常应为 0</div></div>
+    <div class="card stat"><span class="icon i-amber">⇣</span><div class="label">容量降级</div><div class="value">{{num $d.Degraded}}</div><div class="foot">图片题改发 PoW 的次数</div></div>
+  </div>
+
+  <div class="card mt"><div class="card-head"><h2>每分钟趋势<span class="hint">所有 gateway 合计，点击图例可隐藏曲线</span></h2></div>
+    <div class="card-body"><div class="chart" data-chart="line" data-src="trend" data-height="240"
+      data-series="requests:请求:#2563eb,rate_limited:限流:#d97706,unavailable:503:#dc2626,degraded:降级:#7c3aed"></div></div></div>
+
+  <div class="card mt"><div class="card-head"><h2>gateway 实例<span class="hint">超过 3 分钟没有上报的标为失联</span></h2></div>
+    <div class="card-body flush table-wrap"><table class="table"><thead><tr><th>实例</th><th>最近上报</th><th class="num">请求</th><th class="num">限流</th><th class="num">503</th><th class="num">降级</th><th class="num">题库最少</th><th class="num">协程</th><th class="num">内存</th></tr></thead><tbody>
+    {{range $d.Instances}}<tr><td class="mono"><span class="dot {{if .Stale}}bad{{else}}ok{{end}}"></span>{{.Name}}{{if .Stale}} <span class="badge bad">失联</span>{{end}}</td><td class="nowrap">{{ago .LastSeen}}</td>
+      <td class="num">{{num .Requests}}</td><td class="num">{{num .RateLimited}}</td><td class="num {{if .Unavailable}}bad-text{{end}}">{{num .Unavailable}}</td><td class="num">{{num .Degraded}}</td>
+      <td class="num">{{if .PoolKnown}}{{.PoolMin}} / {{.PoolSize}}{{else}}<span class="muted">未开启</span>{{end}}</td><td class="num">{{.Last.Goroutines}}</td><td class="num">{{.Last.HeapMB}} MB</td></tr>
+    {{else}}<tr><td colspan="9"><div class="empty">还没有 gateway 上报。gateway 升级到带运行监控的版本、连上同一个 Redis 后，每分钟会出现一条记录。</div></td></tr>{{end}}
+    </tbody></table></div></div>
+
+  <div class="card mt"><div class="card-head"><h2>异常记录<span class="hint">只记录，不发送通知；最近 100 条</span></h2></div>
+    <div class="card-body flush table-wrap"><table class="table"><thead><tr><th>时间</th><th>实例</th><th>类型</th><th>说明</th></tr></thead><tbody>
+    {{range $d.Anomalies}}<tr><td class="mono nowrap">{{unix .At}}</td><td class="mono">{{.Instance}}</td><td>{{if eq .Kind "unavailable"}}<span class="badge bad">{{anomaly .Kind}}</span>{{else}}<span class="badge warn">{{anomaly .Kind}}</span>{{end}}</td><td>{{.Detail}}</td></tr>
+    {{else}}<tr><td colspan="4"><div class="empty">没有异常</div></td></tr>{{end}}
+    </tbody></table></div></div>
+
+  <div class="card mt"><div class="card-head"><h2>说明</h2></div><div class="card-body"><ul style="margin:0;padding-left:18px;line-height:2">
+    <li>某一分钟出现 503、出现降级，或限流拒绝达到阈值（gateway 配置 <code>Monitor.RateLimitedPerMinute</code>，默认 300）时记一条异常，同时写入 gateway 的 alert 级别日志。</li>
+    <li>503 通常意味着 Redis 或 MySQL 故障、过载；降级说明应用超过图片题配额或图片生成满载，见 <code>RateLimit.InteractivePerAppPerMinute</code> 和 <code>PuzzlePool</code>。</li>
+    <li>同样的数据也以 Prometheus 格式导出在 gateway 本机的 <code>127.0.0.1:6470/metrics</code>（配置 <code>DevServer</code>），以后接 Grafana 或云监控不用改代码。</li>
+  </ul></div></div>
+</div>
+<script type="application/json" id="trend">{{json $d.Trend}}</script>
+{{template "foot" .}}

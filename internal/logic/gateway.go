@@ -107,6 +107,8 @@ type Gateway struct {
 	slotsOnce   sync.Once
 	// pool holds pre-generated puzzles; nil generates every one on demand.
 	pool *puzzlePool
+	// Monitor counts degraded challenges for the health page; nil is off.
+	Monitor *Monitor
 }
 
 func (g *Gateway) limit(ctx context.Context, dim, subject string, quota int) error {

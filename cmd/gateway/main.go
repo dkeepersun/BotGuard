@@ -53,6 +53,6 @@ func main() {
 	}
 	server := rest.MustNewServer(c.RestConf)
 	defer server.Stop()
-	(&handler.Gateway{Logic: ctx.Logic, IPs: ctx.IPs, Ready: ctx.Ready}).Register(server)
+	(&handler.Gateway{Logic: ctx.Logic, IPs: ctx.IPs, Ready: ctx.Ready, Monitor: ctx.Monitor}).Register(server)
 	server.StartWithOpts(config.ServerLimits(c.Timeout))
 }

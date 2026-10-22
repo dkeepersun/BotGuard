@@ -39,6 +39,7 @@ type env struct {
 	srv     *httptest.Server
 	console *logic.Console
 	stats   *repository.Stats
+	health  *repository.HealthStore
 	apps    *repository.AppAdmin
 }
 
@@ -58,7 +59,8 @@ func newEnv(t *testing.T) *env {
 	console := &logic.Console{Admins: repository.NewAdmins(conn), Audit: repo, Sessions: repository.NewSessions(rds, 30*time.Minute, 8*time.Hour),
 		Limiter: repository.NewRateLimiter(rds), Redis: rds, Sealer: seal, Now: time.Now}
 	stats := repository.NewStats(rds)
-	web := &Server{Console: console, Apps: &logic.AppAdmin{Repo: repo, Sealer: seal, Now: time.Now}, Repo: repo, Stats: stats,
+	health := repository.NewHealthStore(rds)
+	web := &Server{Console: console, Apps: &logic.AppAdmin{Repo: repo, Sealer: seal, Now: time.Now}, Repo: repo, Stats: stats, Health: health,
 		Checks:         func(context.Context) []Check { return []Check{{Name: "MySQL", OK: true}, {Name: "Redis", OK: true}} },
 		PublicEndpoint: "https://gw.example", SessionTTL: 8 * time.Hour, Info: map[string]string{"KEK": "k1"}}
 	rs := rest.MustNewServer(rest.RestConf{Host: "127.0.0.1", Port: 0})
@@ -73,7 +75,7 @@ func newEnv(t *testing.T) *env {
 	}
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, console: console, stats: stats, apps: repo}
+	return &env{t: t, srv: srv, console: console, stats: stats, health: health, apps: repo}
 }
 
 type browser struct {
@@ -187,10 +189,20 @@ func TestConsoleEndToEnd(t *testing.T) {
 	b.login("root", "Strong-Pass-2026")
 
 	// Every page renders for the owner.
-	for _, page := range []string{"/", "/console", "/apps", "/stats", "/stats?range=7d", "/stats?range=30d", "/events", "/preview", "/audit", "/admins", "/profile", "/system", "/menus", "/pear-config"} {
+	for _, page := range []string{"/", "/console", "/apps", "/stats", "/stats?range=7d", "/stats?range=30d", "/events", "/health", "/preview", "/audit", "/admins", "/profile", "/system", "/menus", "/pear-config"} {
 		if resp, body := b.get(page); resp.StatusCode != 200 || strings.Contains(body, "页面渲染失败") {
 			t.Fatalf("%s: %d %.300s", page, resp.StatusCode, body)
 		}
+	}
+	// The health page shows a gateway's minute and its anomaly.
+	minute := time.Now().Truncate(time.Minute).Add(-time.Minute).Unix()
+	if err := e.health.Put(context.Background(), repository.HealthMinute{At: minute, Instance: "gw-1:8090",
+		Requests: map[string]int64{"challenges": 40}, Codes: map[string]int64{"UNAVAILABLE": 2}, Goroutines: 30, HeapMB: 12},
+		[]repository.HealthAnomaly{{At: minute, Instance: "gw-1:8090", Kind: repository.AnomalyUnavailable, Detail: "返回 503 共 2 次"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, body := b.get("/health"); !strings.Contains(body, "gw-1:8090") || !strings.Contains(body, "返回 503 共 2 次") || !strings.Contains(body, "服务不可用") {
+		t.Fatalf("health page: %.500s", body)
 	}
 
 	// Create an app; it starts with the login action. The list comes back

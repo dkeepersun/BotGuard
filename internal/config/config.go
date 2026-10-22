@@ -169,6 +169,13 @@ type GatewayConfig struct {
 		LadderDowngradePasses int `json:",default=3"`
 		LadderWindowSeconds   int `json:",default=1800"`
 	}
+	// Monitor writes a per-minute summary to Redis for the admin health page.
+	// Instance defaults to hostname:port; RateLimitedPerMinute is the
+	// RATE_LIMITED count that records an anomaly (0 never does).
+	Monitor struct {
+		Instance             string `json:",optional"`
+		RateLimitedPerMinute int    `json:",default=300"`
+	}
 	// PuzzlePool pre-generates PerKind puzzles of every interactive kind.
 	// Workers 0 means half the CPUs (at least one); PerKind 0 disables it.
 	PuzzlePool struct {
@@ -256,6 +263,7 @@ func (c GatewayConfig) Validate() error {
 		inRange("Risk.DegradedMinDifficulty", c.Risk.DegradedMinDifficulty, 1, 1<<32),
 		inRange("RateLimit.InteractivePerPrefixPerMinute", c.RateLimit.InteractivePerPrefixPerMinute, 0, 10_000_000),
 		inRange("PuzzlePool.PerKind", c.PuzzlePool.PerKind, 0, 1024),
+		inRange("Monitor.RateLimitedPerMinute", c.Monitor.RateLimitedPerMinute, 0, 100_000_000),
 		inRange("PuzzlePool.Workers", c.PuzzlePool.Workers, 0, 256),
 		inRange("Risk.FailureWindowSeconds", c.Risk.FailureWindowSeconds, 60, 86400),
 		inRange("Risk.LadderDowngradePasses", c.Risk.LadderDowngradePasses, 1, 100),

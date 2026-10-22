@@ -137,7 +137,7 @@ func main() {
 	app := &logic.AppAdmin{Repo: repo, Sealer: seal, Now: time.Now}
 	server := rest.MustNewServer(c.RestConf)
 	defer server.Stop()
-	web := &adminweb.Server{Console: console, Apps: app, Repo: repo, Stats: repository.NewStats(rds), IPs: ips, Checks: checks,
+	web := &adminweb.Server{Console: console, Apps: app, Repo: repo, Stats: repository.NewStats(rds), Health: repository.NewHealthStore(rds), IPs: ips, Checks: checks,
 		PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), CookieSecure: c.CookieSecure, SessionTTL: absolute, Info: info}
 	if err := web.Register(server); err != nil {
 		log.Fatal(err)
