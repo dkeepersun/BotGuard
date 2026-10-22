@@ -26,19 +26,18 @@
 
 | 内容 | 最新版本 | 说明 |
 |---|---|---|
-| 服务端 | v0.3.0 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布（用 `publish` 工作流发版）。新增：允许来源支持子域名通配和 `*`，verify 返回 `origin`；按应用的图片题配额、预生成题库、容量不足时降级为 PoW；连接超时、本地限流影子、未知 key 查询预算 |
+| 服务端 | v0.4.0 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布（用 `publish` 工作流发版，标签在 `1bffcb5` 上）。安全修复第一批：管理后台 XSS、登录跳转与锁定、高风险不给 fallback、图片题按 IP 段限额与降级工作量下限、页面指定题型改为 action 开关（默认关闭，迁移 0007）；另有运行监控页和 Prometheus 指标 |
 | `@botguard/browser` | 0.2.1 | 0.2.1 起由 release-browser 工作流暂存发布、人工批准，带 provenance，GitHub Release 附同一个 tgz；0.1.0、0.2.0 是在本机手动发布的，没有 provenance |
 | `botguard/php-sdk` | 0.1.1 | `VerifyResult` 新增 `origin` |
-| `botguard/laravel` | 0.1.0 | 依赖 `botguard/php-sdk: ^0.1`，composer 更新时自动用上 php-sdk 0.1.1，不用另发 |
-| Go SDK 核心包 | v0.1.1 | `Result` 新增 `Origin`；标签在 `5dd9b5a` 上，proxy.golang.org 和 sum.golang.org 都已收录 |
-| Go SDK gin / go-zero 适配 | v0.1.0 | 标签在 `4b090c6` 上；依赖核心包 v0.1.0，用户 `go get .../packages/go@v0.1.1` 即可用上新核心包，适配包不用另发 |
+| `botguard/laravel` | 0.2.0 | 默认拒绝需要额外验证的 token（fallback、容量降级、高风险），可用 `accept` 配置放开；仍依赖 `botguard/php-sdk: ^0.1` |
+| Go SDK（核心包、gin、go-zero） | v0.2.0 | 三个模块同时发布，标签都在 `1bffcb5` 上。中间件默认拒绝需要额外验证的 token（`AllowFallback` 等选项放开），gin 适配在回调后一定中止。干净目录 `go get` 验证通过，go.sum 与 sum.golang.org 一致 |
 
 - npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置（只允许暂存发布）。`release-browser` 工作流改为暂存发布：推标签后版本进入暂存区，要人工批准才公开（见下文 npm 第 4 步）。0.2.1（2026-10-22）是改完后发的第一个版本，整套流程已验证：工作流暂存成功，npm 上暂存的 shasum 与 GitHub Release 的 tgz 一致；在 npmjs.com 的 Staged Packages 页面批准后公开，带 provenance；GitHub Release 以 `--latest=false` 发布，`releases/latest` 仍指向服务端版本。
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
 - 镜像仓库：[botguard-php-sdk](https://github.com/dkeepersun/botguard-php-sdk)、[botguard-laravel](https://github.com/dkeepersun/botguard-laravel)。已关闭 issues 和 wiki；部署密钥已配置，私钥只保存在主仓库的 Actions secrets 里。
 - 软件源：<https://dkeepersun.github.io/BotGuard/>，签名密钥指纹 `BE49F7E6B91F729E10F3E24A0E7787FFB93E3231`，私钥在 Actions secret `REPO_GPG_PRIVATE_KEY` 里。GitHub Pages 已启用（Source：GitHub Actions）。
 - 待办：
-  - 签名密钥的 UID 是生成时没改的占位文字 `BotGuard Packages <你的邮箱>`，用 `gpg --quick-add-uid` / `--quick-revoke-uid` 改为真实邮箱，重新写入 secret，再手动运行 `repo` 更新 `gpg.key`（指纹不变，已签名的包不受影响）。
+  - 签名密钥的 UID 是生成时没改的占位文字 `BotGuard Packages <真实邮箱>`，按下文「更换签名密钥的 UID」改为 GitHub noreply 邮箱。
 
 第一次发布时遇到的问题，下次可以提前避开：
 
@@ -66,6 +65,7 @@
 | 删掉重打后标签还是指向旧提交 | 本机的 `origin/main` 没有更新，`git tag ... origin/main` 又打在了旧提交上 | 用提交号打标签，先 `git cat-file -e <提交号>:packages/go/go.mod` 确认 |
 | 标签已改对，proxy.golang.org / sum.golang.org 仍返回 404 `unknown revision` | 删标签到重推之间，代理来查过一次，缓存了“版本不存在” | 不要再删或重推，等缓存过期（这次不到 40 分钟）。急用时 `GOPRIVATE=github.com/dkeepersun/* go get ...` 直接从 GitHub 取 |
 | 软件源可用后，`dnf install botguard` 失败 | 那个版本发布时还没有签名密钥，rpm 没签名，而软件源要求 `gpgcheck=1` | 配好密钥后发下一个补丁版本（这次就是 v0.2.1），`repo` 工作流会用签名的 rpm 重建软件源 |
+| `split-php` 推 `laravel-v0.2.0` 时报 `fatal: tag 'v0.2.0' already exists`（v0.4.0 发版时遇到） | checkout 带上了本仓库的服务端标签 `v0.2.0`，工作流在本地建同名标签时撞名 | 已在 [#22](https://github.com/dkeepersun/BotGuard/pull/22) 修复：拆分出的提交直接推到镜像的 `refs/tags/vX.Y.Z`。修复前推的标签，工作流按旧文件运行，重跑没用；在本机补推：`git subtree split --prefix packages/laravel <提交号>` 得到拆分提交，再 `git push git@github.com:dkeepersun/botguard-laravel.git <拆分提交>:refs/tags/vX.Y.Z` |
 
 
 ## 一、只能由你完成的步骤
@@ -164,8 +164,8 @@ botguard_0.3.0_linux_amd64/
 1. **签名密钥**。生成一把专用于软件源的 GPG 密钥（不设口令最简单；设了口令就把它存进 `REPO_GPG_PASSPHRASE`）：
 
    ```bash
-   # 把邮箱换成真实地址再运行：UID 会出现在用户导入的 gpg.key 里
-   gpg --batch --passphrase '' --quick-gen-key "BotGuard Packages <you@example.com>" rsa4096 sign never
+   # 邮箱会出现在公开的 gpg.key 里，建议用 GitHub noreply 地址
+   gpg --batch --passphrase '' --quick-gen-key "BotGuard Packages <2715388+dkeepersun@users.noreply.github.com>" rsa4096 sign never
    # 第一行应为 -----BEGIN PGP PRIVATE KEY BLOCK-----；提示 nothing exported 说明本机没有这把密钥
    gpg --armor --export-secret-keys "BotGuard Packages" | head -1
    # 用管道写入，避免复制粘贴出错
@@ -175,6 +175,26 @@ botguard_0.3.0_linux_amd64/
    secret 必须在 Settings → Secrets and variables → Actions 的 **Repository secrets** 里。私钥另外备份到密码管理器或离线介质。私钥同时用于签名 rpm 包和软件源元数据；公钥由工作流导出为 `gpg.key` 发布。**这把密钥不要更换**：换了之后，已经添加软件源的服务器需要重新导入公钥才能升级（改 UID 不算更换，指纹不变）。**要在发第一个正式版之前配好**，否则那个版本的 rpm 没有签名，软件源一旦可用，dnf/yum 就装不上。
 2. **GitHub Pages**。Settings → Pages → Build and deployment → Source 选择 **GitHub Actions**。没启用时 `repo` 工作流的 `deploy` 任务会报 `Failed to create deployment (status: 404)`。
 3. **镜像可见性**。第一次推送后，在 GitHub 个人主页 → Packages → `botguard` → Package settings 中把可见性改为 Public，否则用户拉取镜像需要登录。
+
+### 更换签名密钥的 UID
+
+UID 只是密钥上的名字和邮箱，改了指纹不变：已签名的包、已导入公钥的服务器都不受影响。邮箱用 GitHub 的 noreply 地址，`gpg.key` 是公开的，不暴露个人邮箱。在保存着这把私钥的机器上执行：
+
+```bash
+FPR=BE49F7E6B91F729E10F3E24A0E7787FFB93E3231
+NEW="BotGuard Packages <2715388+dkeepersun@users.noreply.github.com>"
+gpg --list-secret-keys "$FPR"            # 先确认本机有私钥；没有就从备份导入
+gpg --quick-add-uid "$FPR" "$NEW"
+gpg --quick-set-primary-uid "$FPR" "$NEW"
+gpg --list-keys "$FPR"                   # 记下旧 UID 的原文（例如 BotGuard Packages <真实邮箱>）
+gpg --quick-revoke-uid "$FPR" "BotGuard Packages <真实邮箱>"
+gpg --list-keys "$FPR"                   # 旧 UID 显示 [revoked]，新 UID 为 [ultimate]
+gpg --armor --export-secret-keys "$FPR" | head -1   # 应为 -----BEGIN PGP PRIVATE KEY BLOCK-----
+gpg --armor --export-secret-keys "$FPR" | gh secret set REPO_GPG_PRIVATE_KEY -R dkeepersun/BotGuard
+gh workflow run repo.yml -R dkeepersun/BotGuard     # 用新 UID 重新导出 gpg.key
+```
+
+吊销的 UID 仍留在公钥里（带吊销签名），这是 OpenPGP 的正常做法；`apt` / `dnf` 只看指纹。更新私钥备份。
 
 没有配置 `REPO_GPG_PRIVATE_KEY` 时，release 照常发布（rpm 不签名），`repo` 工作流会跳过并给出警告；一键安装脚本检测到软件源不可用时自动改用发布包安装。
 
