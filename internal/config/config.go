@@ -149,6 +149,10 @@ type GatewayConfig struct {
 		// Image challenges per app across all IPs; beyond it they degrade to
 		// harder PoW. 0 disables.
 		InteractivePerAppPerMinute int `json:",default=6000"`
+		// Image challenges per app and client network (IPv4 /24, IPv6 /48);
+		// beyond it the network gets 429, so a few networks cannot spend the
+		// app quota for everyone. 0 disables.
+		InteractivePerPrefixPerMinute int `json:",default=300"`
 	}
 	Risk struct {
 		MediumThreshold          int `json:",default=30"`
@@ -156,7 +160,10 @@ type GatewayConfig struct {
 		HighDifficultyFactor     int `json:",default=4"`
 		FallbackDifficultyFactor int `json:",default=8"`
 		DegradedDifficultyFactor int `json:",default=8"`
-		FailureWindowSeconds     int `json:",default=600"`
+		// Least per-puzzle PoW difficulty when degraded (about 2 s in a browser
+		// at the default 8 puzzles), so the degraded path is not nearly free.
+		DegradedMinDifficulty int `json:",default=60000"`
+		FailureWindowSeconds  int `json:",default=600"`
 		// Kind ladder (the page's levels): passes in a row per step down,
 		// and how long a client's rung lasts after its last solve.
 		LadderDowngradePasses int `json:",default=3"`
@@ -246,6 +253,8 @@ func (c GatewayConfig) Validate() error {
 		inRange("Risk.HighDifficultyFactor", c.Risk.HighDifficultyFactor, 1, 64),
 		inRange("Risk.FallbackDifficultyFactor", c.Risk.FallbackDifficultyFactor, 1, 256),
 		inRange("Risk.DegradedDifficultyFactor", c.Risk.DegradedDifficultyFactor, 1, 256),
+		inRange("Risk.DegradedMinDifficulty", c.Risk.DegradedMinDifficulty, 1, 1<<32),
+		inRange("RateLimit.InteractivePerPrefixPerMinute", c.RateLimit.InteractivePerPrefixPerMinute, 0, 10_000_000),
 		inRange("PuzzlePool.PerKind", c.PuzzlePool.PerKind, 0, 1024),
 		inRange("PuzzlePool.Workers", c.PuzzlePool.Workers, 0, 256),
 		inRange("Risk.FailureWindowSeconds", c.Risk.FailureWindowSeconds, 60, 86400),

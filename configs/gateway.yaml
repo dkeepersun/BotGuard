@@ -85,19 +85,28 @@ RateLimit:
   # flagged CAPACITY_DEGRADED, so a distributed flood on one app cannot take
   # the image capacity all apps share. 0 disables.
   InteractivePerAppPerMinute: 6000
+  # Image challenges per app per client network (IPv4 /24, IPv6 /48) per
+  # minute. Issuing costs the client nothing, so without this a few networks
+  # could spend the app quota above and push everyone onto the PoW-only path.
+  # Beyond it that network gets 429 (not the degraded path). 0 disables.
+  InteractivePerPrefixPerMinute: 300
 
 # Risk scoring (docs/challenge-types.md). For adaptive actions, a score >=
 # MediumThreshold draws an interactive kind at random from the action's kinds;
-# >= HighThreshold gives the hardest kind offered and multiplies PoW work.
-# Fallback multiplies it by FallbackDifficultyFactor on top. When an image
-# challenge cannot be served (app quota above, or every generator busy with
-# the pool empty) it degrades to PoW x DegradedDifficultyFactor instead of 503.
+# >= HighThreshold gives the hardest kind offered (also when the client asks
+# for the fallback) and multiplies PoW work. The fallback multiplies it by
+# FallbackDifficultyFactor. When an image challenge cannot be served (app
+# quota above, or every generator busy with the pool empty) it degrades to
+# PoW x DegradedDifficultyFactor, at least DegradedMinDifficulty per puzzle,
+# instead of 503.
 Risk:
   MediumThreshold: 30
   HighThreshold: 70
   HighDifficultyFactor: 4
   FallbackDifficultyFactor: 8
   DegradedDifficultyFactor: 8
+  # Per puzzle; 60000 x 8 puzzles is about 2 s in a browser.
+  DegradedMinDifficulty: 60000
   FailureWindowSeconds: 600
   # Kind ladder a page may ask for (levels in /v1/challenges): a failed solve
   # moves the client one tier up, this many passes in a row one tier down;
