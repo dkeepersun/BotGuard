@@ -46,6 +46,9 @@ type sealedState struct {
 	Swap    []int    `json:"w,omitempty"`
 	Score   int      `json:"s"`
 	Reasons []string `json:"r,omitempty"`
+	// Ladder is set when the page asked for a kind ladder: the solve then
+	// moves the client's rung.
+	Ladder bool `json:"l,omitempty"`
 }
 
 type IssueInput struct {
@@ -57,6 +60,9 @@ type IssueInput struct {
 	// Signals is nil when the client sent none.
 	Signals  *risk.Signals
 	Fallback bool
+	// Select is the page's requested kinds or ladder; zero leaves the
+	// choice to the action policy.
+	Select Selection
 }
 
 type SliderRender struct {
@@ -115,16 +121,14 @@ type JigsawRender struct {
 // and medium risk pick at random from the action's kinds, so an attacker
 // cannot tune for one style; high risk gets the hardest kind offered. Every
 // kind also carries proof of work; high risk and the fallback path make it
-// costlier.
-func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback bool, pick func(int) int) (kind string, factor uint64) {
+// costlier. requested is the page's selection, already resolved against the
+// action (Selection.candidates): below high risk the pick comes from it.
+func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback bool, requested []string, pick func(int) int) (kind string, factor uint64) {
 	factor = 1
 	if level == risk.LevelHigh {
 		factor = max(1, g.Settings.HighDifficultyFactor)
 	}
-	kinds := policy.Kinds
-	if len(kinds) == 0 {
-		kinds = []string{domain.KindSlider}
-	}
+	kinds := actionKinds(policy)
 	switch {
 	case policy.Mode == domain.ModeInvisible:
 		return domain.KindInvisible, factor
@@ -133,7 +137,10 @@ func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback 
 		// high-risk client's work cheaper than its hardest interactive kind.
 		return domain.KindFallback, factor * max(1, g.Settings.FallbackDifficultyFactor)
 	case level == risk.LevelHigh:
+		// The page's selection cannot lower the floor for a suspicious client.
 		return domain.Hardest(kinds), factor
+	case len(requested) > 0:
+		return requested[pick(len(requested))], factor
 	case policy.Mode == domain.ModeInteractive || level == risk.LevelMedium:
 		return kinds[pick(len(kinds))], factor
 	default:
@@ -291,6 +298,9 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	if !app.AllowsOrigin(origin) {
 		return nil, "", errx.ErrOriginNotAllowed
 	}
+	if err := in.Select.Validate(); err != nil {
+		return nil, origin, err
+	}
 	policy, ok := app.Actions[in.Action]
 	if !ok || !policy.Enabled {
 		return nil, origin, errx.ErrActionForbidden
@@ -313,7 +323,13 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		Fallback:       in.Fallback && policy.Mode != domain.ModeInvisible,
 	})
 	level := risk.Level(assessment.Score, g.Settings.RiskMedium, g.Settings.RiskHigh)
-	kind, factor := g.chooseKind(policy, level, in.Fallback, rand.IntN)
+	// Invisible mode never shows a picture, whatever the page asks.
+	ladder := in.Select.ladder() && policy.Mode != domain.ModeInvisible
+	rung := 0
+	if ladder {
+		rung = g.ladderRung(ctx, app.ID, ipBucket)
+	}
+	kind, factor := g.chooseKind(policy, level, in.Fallback, in.Select.candidates(policy, level, rung), rand.IntN)
 	var puzzle any
 	if domain.ValidInteractiveKind(kind) {
 		if puzzle, err = g.interactivePuzzle(ctx, app.ID, kind); err != nil {
@@ -339,7 +355,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	if err != nil {
 		return nil, origin, errx.ErrUnavailable
 	}
-	state := sealedState{Score: assessment.Score, Reasons: assessment.Reasons}
+	state := sealedState{Score: assessment.Score, Reasons: assessment.Reasons, Ladder: ladder}
 	var (
 		render       *SliderRender
 		rotateRender *RotateRender
@@ -538,9 +554,17 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if !first {
 		return nil, origin, errx.ErrChallengeUsed
 	}
+	// A wrong answer moves the client up its ladder as well as raising its
+	// risk; only proof and answer failures count.
+	fail := func(e *errx.Error) error {
+		if state.Ladder {
+			g.climb(ctx, app.ID, ipBucket, false)
+		}
+		return g.fail(ctx, ipBucket, e)
+	}
 	if err := pow.Verify(p.Algorithm, p.ChallengeID, p.Params, in.Nonces); err != nil {
 		if errors.Is(err, pow.ErrProofInvalid) {
-			return nil, origin, g.fail(ctx, ipBucket, errx.ErrProofInvalid)
+			return nil, origin, fail(errx.ErrProofInvalid)
 		}
 		return nil, origin, errx.ErrChallengeInvalid
 	}
@@ -561,7 +585,7 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		}
 		if reason := jigsaw.Check(state.Swap[0], state.Swap[1], in.Answer.Swap, in.Answer.Trajectory, input); reason != "" {
 			logx.WithContext(ctx).Infof("%s rejected: %s (app %d, %s)", p.Kind, reason, app.ID, input)
-			return nil, origin, g.fail(ctx, ipBucket, errx.ErrAnswerInvalid)
+			return nil, origin, fail(errx.ErrAnswerInvalid)
 		}
 	}
 	if domain.DragKind(p.Kind) {
@@ -573,7 +597,7 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		if reason := slider.Check(float64(state.X), in.Answer.X, tolerance, points, input); reason != "" {
 			// One public code for every failure; the specific reason stays in our logs.
 			logx.WithContext(ctx).Infof("%s rejected: %s (app %d, %s)", p.Kind, reason, app.ID, input)
-			return nil, origin, g.fail(ctx, ipBucket, errx.ErrAnswerInvalid)
+			return nil, origin, fail(errx.ErrAnswerInvalid)
 		}
 	}
 
@@ -585,7 +609,7 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		}
 		if reason := click.Check(state.Targets, in.Answer.Clicks, in.Answer.MovesBetween, input); reason != "" {
 			logx.WithContext(ctx).Infof("%s rejected: %s (app %d, %s)", p.Kind, reason, app.ID, input)
-			return nil, origin, g.fail(ctx, ipBucket, errx.ErrAnswerInvalid)
+			return nil, origin, fail(errx.ErrAnswerInvalid)
 		}
 	}
 
@@ -616,6 +640,9 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		// The challenge is already marked; failing here issues fewer tokens, never more.
 		logx.WithContext(ctx).Errorf("store token: %v", err)
 		return nil, origin, errx.ErrUnavailable
+	}
+	if state.Ladder {
+		g.climb(ctx, app.ID, ipBucket, true)
 	}
 	return &SolveOutput{Token: token, ExpiresAt: exp, ExpiresIn: int64(g.Settings.TokenTTL / time.Second)}, origin, nil
 }

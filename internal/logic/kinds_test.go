@@ -226,7 +226,7 @@ func TestChooseKind(t *testing.T) {
 	all := domain.ActionPolicy{Mode: domain.ModeInteractive, Kinds: domain.InteractiveKinds}
 	seen := map[string]bool{}
 	for i := 0; i < len(all.Kinds); i++ {
-		kind, _ := g.chooseKind(all, risk.LevelLow, false, func(int) int { return i })
+		kind, _ := g.chooseKind(all, risk.LevelLow, false, nil, func(int) int { return i })
 		seen[kind] = true
 	}
 	if len(seen) != len(domain.InteractiveKinds) {
@@ -234,21 +234,21 @@ func TestChooseKind(t *testing.T) {
 	}
 	adaptive := all
 	adaptive.Mode = domain.ModeAdaptive
-	if kind, f := g.chooseKind(adaptive, risk.LevelHigh, false, func(int) int { return 0 }); kind != domain.KindSpatial || f != 4 {
+	if kind, f := g.chooseKind(adaptive, risk.LevelHigh, false, nil, func(int) int { return 0 }); kind != domain.KindSpatial || f != 4 {
 		t.Fatalf("high risk: %s ×%d", kind, f)
 	}
-	if kind, _ := g.chooseKind(adaptive, risk.LevelLow, false, nil); kind != domain.KindInvisible {
+	if kind, _ := g.chooseKind(adaptive, risk.LevelLow, false, nil, nil); kind != domain.KindInvisible {
 		t.Fatalf("low risk: %s", kind)
 	}
 	textOnly := domain.ActionPolicy{Mode: domain.ModeAdaptive, Kinds: []string{domain.KindSlider, domain.KindClickText}}
-	if kind, _ := g.chooseKind(textOnly, risk.LevelHigh, false, nil); kind != domain.KindClickText {
+	if kind, _ := g.chooseKind(textOnly, risk.LevelHigh, false, nil, nil); kind != domain.KindClickText {
 		t.Fatalf("hardest offered: %s", kind)
 	}
-	if kind, f := g.chooseKind(adaptive, risk.LevelMedium, true, nil); kind != domain.KindFallback || f != 8 {
+	if kind, f := g.chooseKind(adaptive, risk.LevelMedium, true, nil, nil); kind != domain.KindFallback || f != 8 {
 		t.Fatalf("fallback: %s ×%d", kind, f)
 	}
 	// Fallback must not be a discount for high risk: the factors compound.
-	if kind, f := g.chooseKind(adaptive, risk.LevelHigh, true, nil); kind != domain.KindFallback || f != 32 {
+	if kind, f := g.chooseKind(adaptive, risk.LevelHigh, true, nil, nil); kind != domain.KindFallback || f != 32 {
 		t.Fatalf("high-risk fallback: %s ×%d", kind, f)
 	}
 }

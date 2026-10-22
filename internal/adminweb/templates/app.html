@@ -127,7 +127,7 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
       {{else}}<tr><td colspan="6"><div class="empty">还没有 action</div></td></tr>{{end}}
       </tbody></table></div></div>
     <div class="card mt"><div class="card-body"><b>出题方式说明：</b>
-      <span class="muted">无感——只在后台算 PoW；交互——每次从可出题型中随机选一种；自适应（推荐）——低风险无感，中风险随机出题，高风险出列表中最难的题型并把 PoW 提高 4 倍。难度从低到高：滑块拼图、旋转对齐、推理拼图、文字点选、语序点选、图标点选、图形点选、空间推理。</span></div></div>
+      <span class="muted">无感——只在后台算 PoW；交互——每次从可出题型中随机选一种；自适应（推荐）——低风险无感，中风险随机出题，高风险出列表中最难的题型并把 PoW 提高 4 倍。难度从低到高：滑块拼图、旋转对齐、推理拼图、文字点选、语序点选、图标点选、图形点选、空间推理。前端也可以用 kinds / levels 在可出题型范围内指定题型或难度阶梯，高风险时仍出最难的题型。</span></div></div>
   </section>
 
   <section id="tab-secrets" role="tabpanel">

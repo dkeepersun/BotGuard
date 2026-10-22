@@ -12,7 +12,8 @@
 // Attributes: endpoint, app-key, action, field-name (default botguard_token),
 // mode ("embed" or "popup"), auto (start without a click), width,
 // image-height, size ("compact"), accent, nonce (for a CSP without
-// constructable stylesheets). Events (bubbling): botguard:challenge,
+// constructable stylesheets), kinds / levels (the kinds the page asks for,
+// see selection() below). Events (bubbling): botguard:challenge,
 // botguard:verified, botguard:expired, botguard:error, botguard:cancel,
 // botguard:trace.
 //
@@ -260,6 +261,29 @@ function cssLength(v) {
   return /^\d+(\.\d+)?$/.test(v) ? `${v}px` : v;
 }
 
+// Kind lists: "slider, rotate" (or "*"); a ladder is tiers separated by ";",
+// "invisible; slider, rotate; spatial". Empty entries drop out.
+const kindList = (s) => String(s || '').split(/[\s,]+/).filter(Boolean);
+const kindLevels = (s) => String(s || '').split(';').map(kindList).filter((t) => t.length);
+
+/**
+ * The challenge request's kind selection from the kinds / levels attributes:
+ * one kind or several to pick from at random ("*" for every kind the action
+ * offers), or a ladder the gateway walks with the user's behaviour. The
+ * gateway only honours kinds the action offers, and a suspicious client
+ * still gets the hardest one.
+ */
+function selection(el) {
+  const levels = kindLevels(el.getAttribute('levels'));
+  if (levels.length) return { levels };
+  const kinds = kindList(el.getAttribute('kinds'));
+  return kinds.length ? { kinds } : {};
+}
+
+// init() options accept arrays as well as the attribute strings.
+const kindsAttr = (v) => (Array.isArray(v) ? v.join(',') : String(v));
+const levelsAttr = (v) => (Array.isArray(v) ? v.map((t) => (Array.isArray(t) ? t.join(',') : String(t))).join(';') : String(v));
+
 const errorWith = (message, code, extra) => Object.assign(new Error(message), { code, ...extra });
 const cancelled = () => errorWith('已取消验证', 'CANCELLED');
 
@@ -501,7 +525,7 @@ export class BotGuardWidget extends ElementBase {
       if (!round.live) return;
       const signals = { ...(env || {}), ...(interaction ? interaction.snapshot(trigger) : {}) };
       const t0 = performance.now();
-      const ch = await postJSON(`${endpoint}/v1/challenges`, { app_key: appKey, action, signals, fallback }, this.transport);
+      const ch = await postJSON(`${endpoint}/v1/challenges`, { app_key: appKey, action, signals, fallback, ...selection(this) }, this.transport);
       if (!round.live) return;
       const perPuzzle = expectedAttempts(ch.params.target);
       this.#emit('botguard:challenge', { kind: ch.kind });
@@ -1272,6 +1296,11 @@ function resolveElement(target, option) {
  *   accent      accent colour
  *   nonce       CSP nonce for the widget's <style>, needed only by browsers
  *               without constructable stylesheets
+ *   kinds       kinds to ask for: ['slider'] fixed, ['slider', 'rotate'] at
+ *               random, ['*'] every kind the action offers
+ *   levels      a kind ladder, easiest first, e.g. [['invisible'],
+ *               ['slider', 'rotate'], ['spatial']]: failures move the user
+ *               up a tier, passes in a row move them down
  *   onVerify(err, ret)  ret = { token, kind }
  * Returns { verify(), reset(), destroy(), token, element }.
  */
@@ -1296,6 +1325,8 @@ export function init(config) {
   if (config.size) w.setAttribute('size', config.size);
   if (config.accent) w.setAttribute('accent', config.accent);
   if (config.nonce) w.setAttribute('nonce', config.nonce);
+  if (config.kinds != null) w.setAttribute('kinds', kindsAttr(config.kinds));
+  if (config.levels != null) w.setAttribute('levels', levelsAttr(config.levels));
   if (typeof config.transport === 'function') w.transport = config.transport;
   host.appendChild(w);
 

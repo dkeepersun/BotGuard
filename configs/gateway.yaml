@@ -99,6 +99,11 @@ Risk:
   FallbackDifficultyFactor: 8
   DegradedDifficultyFactor: 8
   FailureWindowSeconds: 600
+  # Kind ladder a page may ask for (levels in /v1/challenges): a failed solve
+  # moves the client one tier up, this many passes in a row one tier down;
+  # the tier is forgotten this many seconds after the client's last solve.
+  LadderDowngradePasses: 3
+  LadderWindowSeconds: 1800
 
 # Puzzles generated ahead of time, per interactive kind (~15 KB each), so
 # bursts do not generate images on the request path. Each is served once.

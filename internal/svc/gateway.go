@@ -95,6 +95,8 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 				FallbackDifficultyFactor: uint64(c.Risk.FallbackDifficultyFactor),
 				DegradedDifficultyFactor: uint64(c.Risk.DegradedDifficultyFactor),
 				FailureWindow:            config.Seconds(c.Risk.FailureWindowSeconds),
+				LadderDowngradePasses:    c.Risk.LadderDowngradePasses,
+				LadderWindow:             config.Seconds(c.Risk.LadderWindowSeconds),
 				SliderTolerance:          c.Slider.Tolerance,
 				RotateToleranceDegrees:   c.Rotate.ToleranceDegrees,
 				IPHashKey:                ipHashKey(c),
