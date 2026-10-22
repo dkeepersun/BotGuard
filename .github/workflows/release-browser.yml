@@ -65,8 +65,10 @@ jobs:
           npm 不可用时可以直接按地址安装（npm、pnpm、yarn 都支持）：
 
           \`\`\`bash
-          npm install ${url}
+          npm install ${url} --allow-remote=root
           \`\`\`
+
+          npm 12 起默认不允许从网址安装（\`EALLOWREMOTE\`），需要加 \`--allow-remote=root\`；之后的 \`npm install\` / \`npm ci\` 也要带上，建议在项目的 \`.npmrc\` 里写一行 \`allow-remote=root\`。npm 11 及以下、pnpm、yarn 不需要。
           EOF
           gh release create "$GITHUB_REF_NAME" "$FILE" "$FILE.sha256" --repo "$GITHUB_REPOSITORY" \
             --verify-tag --draft --latest=false --title "@botguard/browser ${version}" --notes-file notes.md

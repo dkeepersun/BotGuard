@@ -27,13 +27,13 @@
 | 内容 | 最新版本 | 说明 |
 |---|---|---|
 | 服务端 | v0.3.0 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布（用 `publish` 工作流发版）。新增：允许来源支持子域名通配和 `*`，verify 返回 `origin`；按应用的图片题配额、预生成题库、容量不足时降级为 PoW；连接超时、本地限流影子、未知 key 查询预算 |
-| `@botguard/browser` | 0.2.0 | 0.1.0、0.2.0 都是在本机手动发布的，没有 provenance |
+| `@botguard/browser` | 0.2.1 | 0.2.1 起由 release-browser 工作流暂存发布、人工批准，带 provenance，GitHub Release 附同一个 tgz；0.1.0、0.2.0 是在本机手动发布的，没有 provenance |
 | `botguard/php-sdk` | 0.1.1 | `VerifyResult` 新增 `origin` |
 | `botguard/laravel` | 0.1.0 | 依赖 `botguard/php-sdk: ^0.1`，composer 更新时自动用上 php-sdk 0.1.1，不用另发 |
 | Go SDK 核心包 | v0.1.1 | `Result` 新增 `Origin`；标签在 `5dd9b5a` 上，proxy.golang.org 和 sum.golang.org 都已收录 |
 | Go SDK gin / go-zero 适配 | v0.1.0 | 标签在 `4b090c6` 上；依赖核心包 v0.1.0，用户 `go get .../packages/go@v0.1.1` 即可用上新核心包，适配包不用另发 |
 
-- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置（只允许暂存发布）。`release-browser` 工作流改为暂存发布：推标签后版本进入暂存区，要人工批准才公开（见下文 npm 第 4 步）。改完后还没有实际发过一个版本：main 上的版本号已改为 0.2.1，代码与 0.2.0 相同（README 多了不经过 npm 的安装方式），用来第一次验证暂存发布，以及把同一个 tgz 放进 GitHub Release 草稿。等 npm 当前的故障（Degraded Publish, Install, and View Package）恢复后，再推 `browser-v0.2.1` 并批准。
+- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置（只允许暂存发布）。`release-browser` 工作流改为暂存发布：推标签后版本进入暂存区，要人工批准才公开（见下文 npm 第 4 步）。0.2.1（2026-10-22）是改完后发的第一个版本，整套流程已验证：工作流暂存成功，npm 上暂存的 shasum 与 GitHub Release 的 tgz 一致；在 npmjs.com 的 Staged Packages 页面批准后公开，带 provenance；GitHub Release 以 `--latest=false` 发布，`releases/latest` 仍指向服务端版本。
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
 - 镜像仓库：[botguard-php-sdk](https://github.com/dkeepersun/botguard-php-sdk)、[botguard-laravel](https://github.com/dkeepersun/botguard-laravel)。已关闭 issues 和 wiki；部署密钥已配置，私钥只保存在主仓库的 Actions secrets 里。
 - 软件源：<https://dkeepersun.github.io/BotGuard/>，签名密钥指纹 `BE49F7E6B91F729E10F3E24A0E7787FFB93E3231`，私钥在 Actions secret `REPO_GPG_PRIVATE_KEY` 里。GitHub Pages 已启用（Source：GitHub Actions）。
@@ -104,7 +104,7 @@ npm 已在 2025 年底撤销 classic（含 Automation）令牌；有写权限的
 
       **一定要带 `--latest=false`**：`scripts/install.sh` 和 `scripts/botguard.sh` 通过 `releases/latest` 找服务端版本，浏览器组件的 release 不能占用 “Latest”。拒绝了 npm 版本时，用 `gh release delete browser-vX.Y.Z --repo dkeepersun/BotGuard --yes` 删掉草稿。
 
-      发布后，npm 出故障时也可以按地址安装同一个文件：`npm install https://github.com/dkeepersun/BotGuard/releases/download/browser-vX.Y.Z/botguard-browser-X.Y.Z.tgz`。
+      发布后，npm 出故障时也可以按地址安装同一个文件：`npm install https://github.com/dkeepersun/BotGuard/releases/download/browser-vX.Y.Z/botguard-browser-X.Y.Z.tgz --allow-remote=root`。npm 12 起 `allow-remote` 默认是 `none`，不加会报 `EALLOWREMOTE`；之后的 `npm install` / `npm ci` 也要带上，或在项目 `.npmrc` 里写 `allow-remote=root`。
 
 ### Composer / Packagist
 
