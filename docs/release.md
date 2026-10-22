@@ -29,7 +29,7 @@
 | 服务端 | v0.2.1 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布。v0.2.1 与 v0.2.0 代码相同，只是 rpm 改为签名发布 |
 | `@botguard/browser` | 0.2.0 | 0.1.0、0.2.0 都是在本机手动发布的，没有 provenance |
 | `botguard/php-sdk`、`botguard/laravel` | 0.1.0 | 之后只改了文档，没有发新版本 |
-| Go SDK（含 gin / go-zero 适配） | 未发布 | 代码在 `packages/go`，发布步骤见「五、Go SDK」 |
+| Go SDK（含 gin / go-zero 适配） | v0.1.0 | 三个模块的标签都在 `4b090c6` 上，proxy.golang.org 和 sum.golang.org 都已收录；在干净目录用默认设置 `go get` 并编译示例已验证 |
 
 - npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置，但工作流发布仍然失败（403，见下文“发版排错”）。
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
@@ -47,7 +47,7 @@
 - 发布后 npm 会自动留下一个 `0.0.0-stage` 版本，描述为 “Temporary package placeholder for staged publishing”。它不影响安装：`latest` 指向正式版本，`^0.1.0` 也不会匹配预发布版本。
 - 不要补推 `browser-v0.1.0`、`browser-v0.2.0` 标签：这两个版本已经发布，工作流会因为版本已存在而失败。下一个版本从 `browser-v0.2.1` 开始。
 
-### 发版排错（2026-10-22 发 v0.2.0 时遇到）
+### 发版排错（2026-10-22 发 v0.2.0 和 Go SDK 时遇到）
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
@@ -61,6 +61,9 @@
 | `gpg: no valid OpenPGP data found` | secret 内容不是 armored 私钥（公钥、指纹、二进制或截断的内容） | 用管道写入，见下文“软件源和镜像的一次性设置”第 1 步 |
 | `gpg: WARNING: nothing exported` 后 `gh secret set` 仍显示成功 | 本机没有这把密钥，secret 被写成了空值 | 先 `gpg --list-secret-keys` 确认密钥存在，再写入 |
 | `deploy-pages` 报 `Failed to create deployment (status: 404)` | 仓库的 GitHub Pages 没有启用 | Settings → Pages → Source 选 GitHub Actions |
+| `go get .../packages/go@v0.1.0` 报 `missing .../packages/go/go.mod at revision packages/go/v0.1.0` | 标签打在了合并 Go SDK 之前的提交上 | 先合并，再按提交号打标签（见「五、Go SDK」第 1 步）。这个版本从没成功下载过时，sum.golang.org 没有记录（lookup 返回 404），可以删掉标签重打 |
+| 删掉重打后标签还是指向旧提交 | 本机的 `origin/main` 没有更新，`git tag ... origin/main` 又打在了旧提交上 | 用提交号打标签，先 `git cat-file -e <提交号>:packages/go/go.mod` 确认 |
+| 标签已改对，proxy.golang.org / sum.golang.org 仍返回 404 `unknown revision` | 删标签到重推之间，代理来查过一次，缓存了“版本不存在” | 不要再删或重推，等缓存过期（这次不到 40 分钟）。急用时 `GOPRIVATE=github.com/dkeepersun/* go get ...` 直接从 GitHub 取 |
 | 软件源可用后，`dnf install botguard` 失败 | 那个版本发布时还没有签名密钥，rpm 没签名，而软件源要求 `gpgcheck=1` | 配好密钥后发下一个补丁版本（这次就是 v0.2.1），`repo` 工作流会用签名的 rpm 重建软件源 |
 
 
@@ -185,20 +188,23 @@ Go 模块不需要注册中心：`go get` 通过 Go 模块代理直接从本仓�
 
 适配包的 `go.mod` 里 `require` 的是核心包的**已发布版本**；`packages/go/go.work` 里的 `replace` 只在本仓库开发和 CI 时让它们用本目录的代码，用户 `go get` 时不会读到。所以：
 
-1. **先发核心包**，确认 main 上的 CI 通过后：
+1. **先发核心包**，确认改动已合并、main 上的 CI 通过后，**用提交号打标签**（本机的 `origin/main` 可能还没更新）：
 
    ```bash
    git fetch origin
-   git tag -a packages/go/v0.1.0 origin/main -m "BotGuard Go SDK v0.1.0"
+   SHA=$(git rev-parse origin/main)          # 或者直接写 GitHub 上看到的合并提交号
+   git cat-file -e "$SHA:packages/go/go.mod" && git log --oneline -1 "$SHA"   # 确认这个提交里有要发布的代码
+   git tag -a packages/go/v0.1.0 "$SHA" -m "BotGuard Go SDK v0.1.0"
    git push origin packages/go/v0.1.0
    ```
 
 2. **再发适配包**。适配包 require 的核心版本必须已经有标签，否则用户 `go get` 时会报 `unknown revision`：
 
    ```bash
-   git tag -a packages/go/gin/v0.1.0 origin/main -m "BotGuard Go SDK gin adapter v0.1.0"
-   git tag -a packages/go/gozero/v0.1.0 origin/main -m "BotGuard Go SDK go-zero adapter v0.1.0"
+   git tag -a packages/go/gin/v0.1.0 "$SHA" -m "BotGuard Go SDK gin adapter v0.1.0"
+   git tag -a packages/go/gozero/v0.1.0 "$SHA" -m "BotGuard Go SDK go-zero adapter v0.1.0"
    git push origin packages/go/gin/v0.1.0 packages/go/gozero/v0.1.0
+   git ls-remote --tags origin 'packages/go/*'   # 带 ^{} 的行应都是 $SHA
    ```
 
 3. **发布后验证**：在一个干净目录里，不带 `go.work`，确认能从模块代理装上：
@@ -210,6 +216,15 @@ Go 模块不需要注册中心：`go get` 通过 Go 模块代理直接从本仓�
           github.com/dkeepersun/BotGuard/packages/go/gozero@v0.1.0
    ```
 
+   也可以直接查代理和校验和数据库（路径里的大写字母写成 `!` 加小写）：
+
+   ```bash
+   curl https://proxy.golang.org/github.com/dkeepersun/!bot!guard/packages/go/@v/v0.1.0.info
+   curl https://sum.golang.org/lookup/github.com/dkeepersun/!bot!guard/packages/go@v0.1.0
+   ```
+
+   `.info` 里的 `Hash` 应是打标签的提交。`go get` 时会顺带下载一次服务端模块 `github.com/dkeepersun/BotGuard`（约 2 MB），这是 Go 在确认这个包不属于上一级模块，不会写进用户的 `go.mod`。
+
    模块代理第一次被请求时才去抓取标签，<https://pkg.go.dev/github.com/dkeepersun/BotGuard/packages/go> 也要等有人请求过才会出现文档页。
 
-以后升级核心包、并让适配包依赖新版本时：先发核心包新标签，再把适配包 `go.mod` 的 require 和 `go.work` 里 `replace` 的版本号一起改成新版本，合并后再给适配包打标签。只改适配包时不用动核心包。标签推送后不要移动或删除：模块代理和校验和数据库（sum.golang.org）会永久记住第一次看到的内容，同一个版本号换了代码，用户会遇到校验和不匹配。
+以后升级核心包、并让适配包依赖新版本时：先发核心包新标签，再把适配包 `go.mod` 的 require 和 `go.work` 里 `replace` 的版本号一起改成新版本，合并后再给适配包打标签。只改适配包时不用动核心包。标签推送后不要移动或删除：模块代理和校验和数据库（sum.golang.org）会永久记住第一次看到的内容，同一个版本号换了代码，用户会遇到校验和不匹配。唯一的例外是这个版本从来没有成功下载过：上面的 lookup 返回 404 时，数据库里没有记录，删掉重打不会造成冲突，只是代理可能要过一阵才认新标签（见「发版排错」）。
