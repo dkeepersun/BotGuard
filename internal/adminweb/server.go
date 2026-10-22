@@ -323,10 +323,26 @@ type loginView struct {
 }
 
 func safeNext(next string) string {
-	if !strings.HasPrefix(next, "/") || strings.HasPrefix(next, "//") || strings.HasPrefix(next, "/login") {
+	if !localPath(next) || strings.HasPrefix(next, "/login") {
 		return "/"
 	}
 	return next
+}
+
+// localPath reports whether p is a path on this site. Browsers treat "\"
+// as "/" and drop tabs and newlines, so "/\evil.com", or "/" + tab +
+// "/evil.com", would leave the site although they start with one slash.
+func localPath(p string) bool {
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.ContainsRune(p, '\\') {
+		return false
+	}
+	for _, r := range p {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	u, err := url.Parse(p)
+	return err == nil && u.Scheme == "" && u.Host == ""
 }
 
 func (s *Server) loginPage(w http.ResponseWriter, r *http.Request) {

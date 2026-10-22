@@ -81,6 +81,22 @@ func (l *RateLimiter) Take(ctx context.Context, dimension, subject string, limit
 	return n, retryAfter, nil
 }
 
+// refundScript takes back one hit without going below zero.
+const refundScript = `
+local n = tonumber(redis.call('GET', KEYS[1]) or '0')
+if n > 0 then redis.call('DECR', KEYS[1]) end
+return 1
+`
+
+// Refund takes back one hit in the current window, for an attempt that was
+// counted up front (so concurrent requests cannot all pass the check) and
+// turned out legitimate.
+func (l *RateLimiter) Refund(ctx context.Context, dimension, subject string, window time.Duration) error {
+	key, _, _ := l.window(dimension, subject, window)
+	_, err := l.rds.EvalCtx(ctx, refundScript, []string{key})
+	return err
+}
+
 // window returns the Redis key of the current window, the Unix second it
 // ends and the seconds left until then.
 func (l *RateLimiter) window(dimension, subject string, window time.Duration) (key string, end int64, retryAfter int) {

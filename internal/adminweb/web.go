@@ -167,7 +167,7 @@ func sameOrigin(r *http.Request) bool {
 // _back field, else the same-origin page the form was on. Never the action
 // URL itself, which has no GET route.
 func returnPath(r *http.Request) string {
-	if back := r.PostFormValue("_back"); strings.HasPrefix(back, "/") && !strings.HasPrefix(back, "//") {
+	if back := r.PostFormValue("_back"); localPath(back) {
 		return back
 	}
 	if ref, err := url.Parse(r.Referer()); err == nil && ref.Host == r.Host && strings.HasPrefix(ref.Path, "/") {

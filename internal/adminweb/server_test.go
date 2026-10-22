@@ -304,3 +304,26 @@ func TestConsoleEndToEnd(t *testing.T) {
 		t.Fatal("still signed in after logout")
 	}
 }
+
+// Only paths on this site survive; browsers read "\" as "/" and drop tabs
+// and newlines, so those count as leaving the site.
+func TestSafeNext(t *testing.T) {
+	for in, want := range map[string]string{
+		"/apps":               "/apps",
+		"/apps?open=x#y":      "/apps?open=x#y",
+		"/":                   "/",
+		"":                    "/",
+		"https://evil.com":    "/",
+		"//evil.com":          "/",
+		"/\\evil.com":         "/",
+		"/\t/evil.com":        "/",
+		"/\n/evil.com":        "/",
+		"\\\\evil.com":        "/",
+		"/login?next=/apps":   "/",
+		"javascript:alert(1)": "/",
+	} {
+		if got := safeNext(in); got != want {
+			t.Errorf("safeNext(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

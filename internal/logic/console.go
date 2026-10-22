@@ -19,6 +19,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/password"
 	"github.com/dkeepersun/BotGuard/internal/service/sealer"
 	"github.com/dkeepersun/BotGuard/internal/service/totp"
+	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 )
 
@@ -153,26 +154,52 @@ func truncateRunes(s string, n int) string {
 	return string([]rune(s)[:n])
 }
 
-// Login checks the password (and TOTP when enabled) and starts a session.
-// Failures are rate limited per IP and per username.
-func (c *Console) Login(ctx context.Context, in LoginInput) (*Principal, error) {
-	username := strings.ToLower(strings.TrimSpace(in.Username))
-	for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, username}} {
-		n, _, err := c.Limiter.Count(ctx, dim.name, dim.subject, loginMaxFails, loginWindow)
+type loginSubject struct{ dim, subject string }
+
+func loginSubjects(ip, username string) []loginSubject {
+	return []loginSubject{{dimLoginIP, ip}, {dimLoginUser, username}}
+}
+
+// takeAttempt counts a login attempt for every subject before anything is
+// checked, so concurrent guesses cannot all pass a read-only check, and
+// reports whether any subject is over the limit. Only a successful login
+// gives its attempt back (refundAttempt); failures, and the pending ticket
+// a correct password yields when TOTP is on, stay counted.
+func (c *Console) takeAttempt(ctx context.Context, subjects []loginSubject) error {
+	locked := false
+	for _, s := range subjects {
+		n, _, err := c.Limiter.Take(ctx, s.dim, s.subject, loginMaxFails, loginWindow)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		if n >= loginMaxFails {
-			return nil, ErrLoginLocked
+		locked = locked || n > loginMaxFails
+	}
+	if locked {
+		return ErrLoginLocked
+	}
+	return nil
+}
+
+func (c *Console) refundAttempt(ctx context.Context, subjects []loginSubject) {
+	for _, s := range subjects {
+		if err := c.Limiter.Refund(ctx, s.dim, s.subject, loginWindow); err != nil {
+			logx.WithContext(ctx).Errorf("refund login attempt: %v", err)
 		}
 	}
+}
+
+// Login checks the password (and TOTP when enabled) and starts a session.
+// Attempts are rate limited per IP and per username.
+func (c *Console) Login(ctx context.Context, in LoginInput) (*Principal, error) {
+	username := strings.ToLower(strings.TrimSpace(in.Username))
 	if in.Pending != "" {
 		return c.completeOTP(ctx, in)
 	}
+	subjects := loginSubjects(in.IP, username)
+	if err := c.takeAttempt(ctx, subjects); err != nil {
+		return nil, err
+	}
 	fail := func(err error, reason string) (*Principal, error) {
-		for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, username}} {
-			_, _, _ = c.Limiter.Take(ctx, dim.name, dim.subject, loginMaxFails, loginWindow)
-		}
 		c.auditLogin(ctx, username, "auth.login_failed", in.IP, map[string]any{"reason": reason})
 		return nil, err
 	}
@@ -211,6 +238,7 @@ func (c *Console) Login(ctx context.Context, in LoginInput) (*Principal, error) 
 			return nil, err
 		}
 	}
+	c.refundAttempt(ctx, subjects)
 	return c.startSession(ctx, admin, in.IP)
 }
 
@@ -280,15 +308,12 @@ func (c *Console) completeOTP(ctx context.Context, in LoginInput) (*Principal, e
 		}
 		return nil, err
 	}
-	for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, admin.Username}} {
-		n, _, err := c.Limiter.Count(ctx, dim.name, dim.subject, loginMaxFails, loginWindow)
-		if err != nil {
-			return nil, err
-		}
-		if n >= loginMaxFails {
+	subjects := loginSubjects(in.IP, admin.Username)
+	if err := c.takeAttempt(ctx, subjects); err != nil {
+		if errors.Is(err, ErrLoginLocked) {
 			_, _ = c.Redis.DelCtx(ctx, key)
-			return nil, ErrLoginLocked
 		}
+		return nil, err
 	}
 	if !admin.Enabled() || !admin.TOTPEnabled() {
 		_, _ = c.Redis.DelCtx(ctx, key)
@@ -298,13 +323,11 @@ func (c *Console) completeOTP(ctx context.Context, in LoginInput) (*Principal, e
 		if !errors.Is(err, ErrOTPInvalid) {
 			return nil, err
 		}
-		for _, dim := range []struct{ name, subject string }{{dimLoginIP, in.IP}, {dimLoginUser, admin.Username}} {
-			_, _, _ = c.Limiter.Take(ctx, dim.name, dim.subject, loginMaxFails, loginWindow)
-		}
 		c.auditLogin(ctx, admin.Username, "auth.login_failed", in.IP, map[string]any{"reason": otpReason(err)})
 		return nil, &OTPChallenge{Token: in.Pending, Username: admin.Username, retry: err}
 	}
 	_, _ = c.Redis.DelCtx(ctx, key)
+	c.refundAttempt(ctx, subjects)
 	return c.startSession(ctx, admin, in.IP)
 }
 
