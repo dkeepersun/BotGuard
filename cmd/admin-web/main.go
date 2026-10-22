@@ -15,6 +15,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/migration"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/sealer"
 	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/dkeepersun/BotGuard/internal/version"
 	"github.com/zeromicro/go-zero/core/conf"
@@ -76,7 +77,17 @@ func main() {
 	}
 	repo := repository.NewAppAdmin(db)
 	idle, absolute := time.Duration(c.Session.IdleMinutes)*time.Minute, time.Duration(c.Session.AbsoluteHours)*time.Hour
-	console := &logic.Console{Admins: repository.NewAdmins(db), Audit: repo, Sessions: repository.NewSessions(rds, idle, absolute),
+	sessions := repository.NewSessions(rds, idle, absolute)
+	if seal != nil {
+		_, kek, err := sealer.ParseKEK(c.SecretKEK)
+		if err != nil {
+			log.Fatal(err)
+		}
+		sessions.Key = repository.SessionKey(kek)
+	} else {
+		logx.Alert("SecretKEK 未配置：管理后台会话记录不签名，能写 Redis 的人可以伪造登录")
+	}
+	console := &logic.Console{Admins: repository.NewAdmins(db), Audit: repo, Sessions: sessions,
 		Limiter: repository.NewRateLimiter(rds), Redis: rds, Sealer: seal, Now: time.Now}
 	latest, err := migration.Latest(db.Driver)
 	if err != nil {

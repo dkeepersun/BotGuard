@@ -15,6 +15,7 @@ x-botguard: &botguard
     BOTGUARD_PUBLIC_ENDPOINT: ${BOTGUARD_PUBLIC_ENDPOINT:-http://localhost:8090}
     BOTGUARD_GATEWAY_URL: http://gateway:8090
     BOTGUARD_REDIS_ADDR: redis:6379
+    BOTGUARD_REDIS_PASSWORD: ${BOTGUARD_REDIS_PASSWORD:-}
   volumes:
     - botguard-data:/var/lib/botguard
 
@@ -22,10 +23,18 @@ services:
   redis:
     image: ${BOTGUARD_REDIS_IMAGE:-redis:7.4-alpine}
     restart: unless-stopped
+    # install.sh 在 .env 里生成密码；旧的 .env 没有这一项时不设密码。
+    environment:
+      BOTGUARD_REDIS_PASSWORD: ${BOTGUARD_REDIS_PASSWORD:-}
+    command:
+      - sh
+      - -c
+      - 'if [ -n "$$BOTGUARD_REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$BOTGUARD_REDIS_PASSWORD"; else exec redis-server; fi'
     volumes:
       - redis-data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      # 没通过认证时 redis-cli 也以 0 退出，所以要看到 PONG。
+      test: ["CMD-SHELL", 'if [ -n "$$BOTGUARD_REDIS_PASSWORD" ]; then export REDISCLI_AUTH="$$BOTGUARD_REDIS_PASSWORD"; fi; redis-cli ping | grep -q PONG']
       interval: 5s
       retries: 20
 

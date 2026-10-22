@@ -828,6 +828,9 @@ BOTGUARD_CHALLENGE_KEY_K1='$(random_key)'
 BOTGUARD_SECRET_KEK='k1:$(random_key)'
 BOTGUARD_SECRET_KEK_PREVIOUS=''
 
+# 本机 Redis 设了 requirepass 时填上。
+BOTGUARD_REDIS_PASSWORD=''
+
 BOTGUARD_PUBLIC_ENDPOINT='$endpoint'
 BOTGUARD_GATEWAY_URL='http://$gateway_host:$port'
 ENV

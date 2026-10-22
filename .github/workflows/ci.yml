@@ -156,6 +156,12 @@ jobs:
             curl -fsS "http://127.0.0.1:$port/readyz"; echo
           done
           curl -fsS -o /dev/null http://127.0.0.1:8090/sdk/v1/load.js
+      - name: Check the docker install
+        if: matrix.method == 'docker'
+        run: |
+          # Redis has the generated password: without it every command is refused.
+          docker compose -f /tmp/botguard/compose.yml --env-file /tmp/botguard/.env exec -T redis redis-cli ping | tee /tmp/ping.txt
+          grep -q NOAUTH /tmp/ping.txt
       - name: Check the macOS install
         if: matrix.method == 'macos'
         run: |

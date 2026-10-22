@@ -25,6 +25,8 @@ Log:
 Redis:
   Host: 127.0.0.1:6379
   Type: node
+  # From the environment (botguard.env); empty means no password.
+  Pass: ${BOTGUARD_REDIS_PASSWORD}
   # Set true for Redis < 7.2, which lacks CLIENT SETINFO; otherwise go-zero's
   # breaker counts the handshake error as a failure.
   DisableIdentity: false

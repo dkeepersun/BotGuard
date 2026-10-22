@@ -461,6 +461,8 @@ install_docker() {
   ref="$TAG"
   compose="$INSTALL_DIR/compose.yml"
   envf="$INSTALL_DIR/.env"
+  # 十六进制：在 YAML、命令行和 .env 里都不需要转义。
+  redis_password() { head -c 24 /dev/urandom | od -An -vtx1 | tr -d ' \n'; }
   $FSUDO install -d -m 0755 "$INSTALL_DIR"
   say "下载 compose.yml（${ref}）"
   curl -fsSL "$RAW_BASE/$ref/deploy/docker/compose.yml" | $FSUDO tee "$compose" >/dev/null || die "下载 compose.yml 失败"
@@ -468,6 +470,11 @@ install_docker() {
     say "$envf 已存在，更新镜像版本为 ${TAG#v}"
     # 不用 sed -i（BSD 和 GNU 写法不同）；cat 写回保留原文件的 0600 权限。
     $FSUDO sh -c "umask 077 && sed 's|^BOTGUARD_VERSION=.*|BOTGUARD_VERSION=${TAG#v}|' \"\$1\" > \"\$1.tmp\" && cat \"\$1.tmp\" > \"\$1\" && rm -f \"\$1.tmp\"" sh "$envf"
+    # 早期版本生成的 .env 没有 Redis 密码：补一个，Redis 重建容器时生效。
+    if ! $FSUDO grep -q '^BOTGUARD_REDIS_PASSWORD=' "$envf"; then
+      printf 'BOTGUARD_REDIS_PASSWORD=%s\n' "$(redis_password)" | $FSUDO tee -a "$envf" >/dev/null
+      say "已在 $envf 中加入 Redis 密码"
+    fi
     UPGRADED=1
   else
     ask_settings
@@ -479,6 +486,7 @@ BOTGUARD_LISTEN=$LISTEN
 BOTGUARD_CHALLENGE_KEY_K1=$(key)
 BOTGUARD_SECRET_KEK=k1:$(key)
 BOTGUARD_SECRET_KEK_PREVIOUS=
+BOTGUARD_REDIS_PASSWORD=$(redis_password)
 BOTGUARD_PUBLIC_ENDPOINT=$PUBLIC_ENDPOINT
 ENV
     say "已生成 ${envf}（随机密钥）"
