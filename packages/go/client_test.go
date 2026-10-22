@@ -119,7 +119,7 @@ func (g *gateway) count() int {
 
 func pass(body map[string]string) string {
 	return `{"code":"OK","data":{"success":true,"app_key":"` + body["app_key"] + `","action":"` + body["action"] +
-		`","verified_at":1790000030,"challenge_kind":"slider","risk_level":"medium","risk_reasons":["NO_SIGNALS",3]},"request_id":"x"}`
+		`","verified_at":1790000030,"challenge_kind":"slider","risk_level":"medium","risk_reasons":["NO_SIGNALS",3],"origin":"https://m.shop.example"},"request_id":"x"}`
 }
 
 func fixed(status int, resp string) func(int, map[string]string) (int, http.Header, string) {
@@ -149,7 +149,8 @@ func TestPassed(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 	// Risk fields are informational; a non-string reason is dropped.
-	if res.ChallengeKind != "slider" || res.RiskLevel != "medium" || len(res.RiskReasons) != 1 || res.RiskReasons[0] != "NO_SIGNALS" {
+	if res.ChallengeKind != "slider" || res.RiskLevel != "medium" || len(res.RiskReasons) != 1 || res.RiskReasons[0] != "NO_SIGNALS" ||
+		res.Origin != "https://m.shop.example" {
 		t.Fatalf("risk: %+v", res)
 	}
 	if !g.calls[0].signed || g.calls[0].body != `{"action":"login","app_key":"app_test_1","request_id":"r-1","token":"bgt1.app.x"}` {
@@ -162,7 +163,7 @@ func TestOlderGatewayWithoutRiskFields(t *testing.T) {
 		return 200, nil, `{"code":"OK","data":{"success":true,"app_key":"` + b["app_key"] + `","action":"login","verified_at":1}}`
 	})
 	res, err := newClient(t, g).Verify(context.Background(), req("tok"))
-	if err != nil || !res.Passed || res.ChallengeKind != "" || len(res.RiskReasons) != 0 {
+	if err != nil || !res.Passed || res.ChallengeKind != "" || len(res.RiskReasons) != 0 || res.Origin != "" {
 		t.Fatalf("%+v %v", res, err)
 	}
 }

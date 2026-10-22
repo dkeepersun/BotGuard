@@ -275,6 +275,7 @@ func parseOK(req VerifyRequest, parsed bool, env envelope) (*Result, error) {
 		ChallengeKind any             `json:"challenge_kind"`
 		RiskLevel     any             `json:"risk_level"`
 		RiskReasons   any             `json:"risk_reasons"`
+		Origin        any             `json:"origin"`
 	}
 	if !parsed || env.Code == nil || *env.Code != "OK" || json.Unmarshal(env.Data, &data) != nil || data.Success == nil {
 		return nil, protocol("响应格式不符合契约")
@@ -296,6 +297,7 @@ func parseOK(req VerifyRequest, parsed bool, env envelope) (*Result, error) {
 		VerifiedAt: time.Unix(verifiedAt, 0), RiskReasons: []string{}}
 	res.ChallengeKind, _ = data.ChallengeKind.(string)
 	res.RiskLevel, _ = data.RiskLevel.(string)
+	res.Origin, _ = data.Origin.(string)
 	if list, ok := data.RiskReasons.([]any); ok {
 		for _, v := range list {
 			if s, ok := v.(string); ok {
