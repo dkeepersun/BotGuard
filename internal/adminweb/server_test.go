@@ -231,6 +231,14 @@ func TestConsoleEndToEnd(t *testing.T) {
 	if !strings.Contains(body, "https://shop.example") || !strings.Contains(body, "旋转对齐") || !strings.Contains(body, "4,000") {
 		t.Fatalf("origin/action not shown")
 	}
+	if strings.Contains(body, "页面可指定题型") || !strings.Contains(body, `data-fill-client-select="0"`) {
+		t.Fatal("page selection must default to off")
+	}
+	b.post("/apps/"+key+"/actions/save", url.Values{"_csrf": {token}, "action": {"pay"}, "enabled": {"1"}, "mode": {"interactive"},
+		"kinds": {"rotate", "click_shape"}, "client_select": {"1"}, "puzzles": {"8"}, "difficulty": {"4000"}})
+	if _, body = b.get("/apps/" + key + "?tab=actions"); !strings.Contains(body, "页面可指定题型") || !strings.Contains(body, `data-fill-client-select="1"`) {
+		t.Fatal("page selection switch not saved")
+	}
 	// The secret key is shown once, in a dialog over the app's secrets tab.
 	resp, body = b.post("/apps/"+key+"/secrets/create", url.Values{"_csrf": {token}, "ttl_days": {"0"}})
 	m := regexp.MustCompile(`id="skey">([A-Za-z0-9_-]{20,})<`).FindStringSubmatch(body)

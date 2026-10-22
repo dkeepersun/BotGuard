@@ -455,8 +455,9 @@ func TestSQLiteConcurrentPrepare(t *testing.T) {
 		}
 	}
 	raw, _ := db.Raw()
+	lite, _ := Load(store.SQLite)
 	var n int
-	if err := raw.QueryRow("SELECT COUNT(*) FROM botguard_schema_migration").Scan(&n); err != nil || n != 1 {
-		t.Fatalf("history rows: %d %v", n, err)
+	if err := raw.QueryRow("SELECT COUNT(*) FROM botguard_schema_migration").Scan(&n); err != nil || n != len(lite) {
+		t.Fatalf("history rows: %d (want %d, one per migration) %v", n, len(lite), err)
 	}
 }

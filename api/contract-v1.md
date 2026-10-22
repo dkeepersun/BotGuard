@@ -63,7 +63,7 @@ interactive 模式每次从列表随机选题；adaptive 模式中风险随机�
 
 ### 前端指定题型
 
-签发请求可以带 `kinds` 或 `levels`（二者只能选一个），在 action 的配置范围内指定题型：
+签发请求可以带 `kinds` 或 `levels`（二者只能选一个），在 action 的配置范围内指定题型。**只有 action 打开了「允许页面指定题型」（`client_select`，管理后台的 action 设置或 `botguard-ctl action set -client-kinds`）才生效，默认关闭；关闭时这两个字段被忽略（不报错），按 action 策略出题。** 这两个字段谁都能写，打开后机器人也能每次只要列表里最简单的题型，所以只在确实需要固定题型或难度阶梯的场景打开：
 
 | 写法 | 效果 |
 |---|---|

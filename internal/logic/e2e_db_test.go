@@ -249,3 +249,37 @@ func TestAppTextRejectsMarkup(t *testing.T) {
 		t.Errorf("update: %v", err)
 	}
 }
+
+// The page-selection switch is stored per action and read back by the
+// gateway's app loader; saving it again is a no-op.
+func TestActionClientSelectRoundTrip(t *testing.T) {
+	_, conn := testdb.Open(t)
+	ctx := context.Background()
+	seal := testSealer(t)
+	admin := &AppAdmin{Repo: repository.NewAppAdmin(conn), Sealer: seal, Now: time.Now}
+	key, err := admin.CreateApp(ctx, "select", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := domain.ActionPolicy{Enabled: true, Mode: domain.ModeAdaptive, Kinds: []string{domain.KindSlider, domain.KindSpatial}, Puzzles: 2, Difficulty: 10}
+	if err := admin.SetAction(ctx, key, "login", p); err != nil {
+		t.Fatal(err)
+	}
+	apps := repository.NewSQLApps(conn, seal)
+	app, err := apps.AppByKey(ctx, key)
+	if err != nil || app.Actions["login"].ClientSelect {
+		t.Fatalf("default must be off: %+v %v", app, err)
+	}
+	p.ClientSelect = true
+	if err := admin.SetAction(ctx, key, "login", p); err != nil {
+		t.Fatal(err)
+	}
+	app, _ = apps.AppByKey(ctx, key)
+	if !app.Actions["login"].ClientSelect || app.PolicyVersion < 3 {
+		t.Fatalf("switch not stored: %+v", app)
+	}
+	d, _ := admin.AppDetail(ctx, key)
+	if len(d.Actions) != 1 || !d.Actions[0].Client {
+		t.Fatalf("detail: %+v", d.Actions)
+	}
+}

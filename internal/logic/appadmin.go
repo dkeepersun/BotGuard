@@ -152,7 +152,7 @@ func (a *AppAdmin) SetAction(ctx context.Context, appKey, action string, p domai
 		return invalid("difficulty 须在 1–%d 之间", MaxDifficulty)
 	}
 	ctx = repository.Audited(ctx, "action.set", appKey, map[string]any{"action": action, "enabled": p.Enabled, "mode": p.Mode,
-		"kinds": p.Kinds, "puzzles": p.Puzzles, "difficulty": p.Difficulty})
+		"kinds": p.Kinds, "client_select": p.ClientSelect, "puzzles": p.Puzzles, "difficulty": p.Difficulty})
 	return a.Repo.UpsertAction(ctx, appKey, action, p)
 }
 

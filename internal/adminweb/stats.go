@@ -227,12 +227,12 @@ var kindOrder = append([]string{domain.KindInvisible}, append(append([]string{},
 type DetailItem struct{ Label, Value string }
 
 var detailLabels = map[string]string{
-	"action": "action", "enabled": "状态", "mode": "出题方式", "kinds": "题型", "puzzles": "PoW 子题数", "difficulty": "每题难度",
+	"action": "action", "enabled": "状态", "mode": "出题方式", "kinds": "题型", "client_select": "页面指定题型", "puzzles": "PoW 子题数", "difficulty": "每题难度",
 	"origin": "来源", "name": "名称", "remark": "备注", "role": "角色", "username": "用户名", "new_secret_id": "新密钥对",
 	"grace": "宽限期", "expires_at": "过期时间", "totp": "动态码", "mfa": "动态码", "reason": "原因", "display_name": "显示名称", "app_key": "应用",
 }
 
-var detailOrder = []string{"username", "name", "action", "origin", "enabled", "mode", "kinds", "puzzles", "difficulty", "role",
+var detailOrder = []string{"username", "name", "action", "origin", "enabled", "mode", "kinds", "client_select", "puzzles", "difficulty", "role",
 	"display_name", "remark", "app_key", "new_secret_id", "grace", "expires_at", "totp", "mfa", "reason"}
 
 var detailReasons = map[string]string{"unknown_user": "用户不存在", "bad_password": "密码错误", "disabled": "账号已停用",

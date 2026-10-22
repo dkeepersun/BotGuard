@@ -115,19 +115,19 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
 
   <section id="tab-actions" role="tabpanel">
     <div class="card"><div class="card-head"><h2>验证策略<span class="hint">每个业务场景（登录、注册、发帖、支付……）一个 action</span></h2>
-      {{if $manage}}<button class="btn primary sm" data-open="dlg-action" data-fill-action="" data-fill-enabled="1" data-fill-mode="adaptive" data-fill-kinds="{{join kinds ","}}" data-fill-puzzles="8" data-fill-difficulty="3000">＋ 新增 action</button>{{end}}</div>
+      {{if $manage}}<button class="btn primary sm" data-open="dlg-action" data-fill-action="" data-fill-enabled="1" data-fill-mode="adaptive" data-fill-kinds="{{join kinds ","}}" data-fill-client-select="0" data-fill-puzzles="8" data-fill-difficulty="3000">＋ 新增 action</button>{{end}}</div>
       <div class="card-body flush table-wrap"><table class="table"><thead><tr><th>action</th><th>状态</th><th>出题方式</th><th>可出题型</th><th class="num">PoW 计算量</th><th class="actions">操作</th></tr></thead><tbody>
       {{range $d.Actions}}<tr><td class="mono cell-title">{{.Action}}</td>
         <td>{{if .Enabled}}<span class="badge ok">启用</span>{{else}}<span class="badge">停用</span>{{end}}</td>
         <td>{{mode .Mode}}</td>
-        <td>{{if eq .Mode "invisible"}}<span class="muted">只算 PoW</span>{{else}}{{range .KindList}}<span class="tag">{{kind .}}</span>{{end}}{{end}}</td>
+        <td>{{if eq .Mode "invisible"}}<span class="muted">只算 PoW</span>{{else}}{{range .KindList}}<span class="tag">{{kind .}}</span>{{end}}{{if .Client}}<div class="cell-sub">页面可指定题型</div>{{end}}{{end}}</td>
         <td class="num">{{.Puzzles}} × {{num .Difficulty}}<div class="cell-sub">{{.Seconds}}</div></td>
-        <td class="actions">{{if $manage}}<button class="btn sm" data-open="dlg-action" data-fill-action="{{.Action}}" data-fill-enabled="{{if .Enabled}}1{{else}}0{{end}}" data-fill-mode="{{.Mode}}" data-fill-kinds="{{join .KindList ","}}" data-fill-puzzles="{{.Puzzles}}" data-fill-difficulty="{{.Difficulty}}">编辑</button>
+        <td class="actions">{{if $manage}}<button class="btn sm" data-open="dlg-action" data-fill-action="{{.Action}}" data-fill-enabled="{{if .Enabled}}1{{else}}0{{end}}" data-fill-mode="{{.Mode}}" data-fill-kinds="{{join .KindList ","}}" data-fill-client-select="{{if .Client}}1{{else}}0{{end}}" data-fill-puzzles="{{.Puzzles}}" data-fill-difficulty="{{.Difficulty}}">编辑</button>
           <form method="post" action="/apps/{{$a.AppKey}}/actions/delete" data-confirm="删除后，使用 action「{{.Action}}」的页面将无法获取验证。确定删除？" data-danger data-ok-text="删除">{{template "csrf" $.CSRF}}<input type="hidden" name="action" value="{{.Action}}"><button class="btn sm danger">删除</button></form>{{end}}</td></tr>
       {{else}}<tr><td colspan="6"><div class="empty">还没有 action</div></td></tr>{{end}}
       </tbody></table></div></div>
     <div class="card mt"><div class="card-body"><b>出题方式说明：</b>
-      <span class="muted">无感——只在后台算 PoW；交互——每次从可出题型中随机选一种；自适应（推荐）——低风险无感，中风险随机出题，高风险出列表中最难的题型并把 PoW 提高 4 倍。难度从低到高：滑块拼图、旋转对齐、推理拼图、文字点选、语序点选、图标点选、图形点选、空间推理。前端也可以用 kinds / levels 在可出题型范围内指定题型或难度阶梯，高风险时仍出最难的题型。</span></div></div>
+      <span class="muted">无感——只在后台算 PoW；交互——每次从可出题型中随机选一种；自适应（推荐）——低风险无感，中风险随机出题，高风险出列表中最难的题型并把 PoW 提高 4 倍。难度从低到高：滑块拼图、旋转对齐、推理拼图、文字点选、语序点选、图标点选、图形点选、空间推理。勾选「允许页面指定题型」后，前端可以用 kinds / levels 在可出题型范围内指定题型或难度阶梯（高风险时仍出最难的题型）；不勾选时忽略前端的指定。</span></div></div>
   </section>
 
   <section id="tab-secrets" role="tabpanel">
@@ -180,6 +180,8 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
       <label class="chip"><input type="checkbox" name="kinds" value="click_shape">图形点选<span class="k-level">难</span></label>
       <label class="chip"><input type="checkbox" name="kinds" value="spatial">空间推理<span class="k-level">最难</span></label></div>
       <div class="help">至少选一种。<a href="/preview" data-tab-open="preview" data-title="题型预览">预览各题型 →</a></div></div>
+    <div class="form-row"><label class="chip"><input type="checkbox" name="client_select" value="1">允许页面指定题型（kinds / levels）</label>
+      <div class="help">默认不勾选。勾选后机器人也能指定只出最简单的题型；只在确实需要固定题型或难度阶梯时打开，高风险请求不受影响。</div></div>
     <div class="grid g-2"><div class="form-row"><label>PoW 子题数</label><input class="input" type="number" name="puzzles" min="1" max="32" required></div>
       <div class="form-row"><label>每题难度（期望尝试次数）</label><input class="input" type="number" name="difficulty" min="1" max="100000000" required></div></div>
     <div class="help estimate"></div>

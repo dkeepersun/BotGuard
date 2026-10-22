@@ -59,6 +59,7 @@ type actionRow struct {
 	Enabled    bool   `db:"enabled"`
 	Mode       string `db:"challenge_mode"`
 	Kinds      string `db:"challenge_kinds"`
+	Client     bool   `db:"client_select"`
 	Puzzles    int    `db:"pow_puzzles"`
 	Difficulty uint64 `db:"pow_difficulty"`
 }
@@ -90,7 +91,7 @@ func (r *SQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, err
 	}
 	var actions []actionRow
 	if err := r.conn.QueryRowsCtx(ctx, &actions,
-		"SELECT action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty FROM botguard_app_action WHERE app_id = ?", row.ID); err != nil {
+		"SELECT action, enabled, challenge_mode, challenge_kinds, client_select, pow_puzzles, pow_difficulty FROM botguard_app_action WHERE app_id = ?", row.ID); err != nil {
 		return nil, err
 	}
 	app := &domain.App{
@@ -115,7 +116,7 @@ func (r *SQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, err
 			logx.WithContext(ctx).Errorf("app %d action %s has unknown mode %q, using adaptive", row.ID, a.Action, a.Mode)
 		}
 		app.Actions[a.Action] = domain.ActionPolicy{Enabled: a.Enabled, Mode: mode, Kinds: kinds,
-			Puzzles: a.Puzzles, Difficulty: a.Difficulty}
+			Puzzles: a.Puzzles, Difficulty: a.Difficulty, ClientSelect: a.Client}
 	}
 	return app, nil
 }

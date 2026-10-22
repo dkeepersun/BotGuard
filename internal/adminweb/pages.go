@@ -283,7 +283,7 @@ func (s *Server) actionSave(w http.ResponseWriter, r *http.Request, p *logic.Pri
 	}
 	action := strings.TrimSpace(r.PostFormValue("action"))
 	policy := domain.ActionPolicy{Enabled: r.PostFormValue("enabled") == "1", Mode: r.PostFormValue("mode"),
-		Kinds: r.PostForm["kinds"], Puzzles: puzzles, Difficulty: difficulty}
+		Kinds: r.PostForm["kinds"], ClientSelect: r.PostFormValue("client_select") == "1", Puzzles: puzzles, Difficulty: difficulty}
 	if err := s.Apps.SetAction(s.actor(r, p), key, action, policy); err != nil {
 		return "", err
 	}

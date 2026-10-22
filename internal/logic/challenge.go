@@ -324,6 +324,13 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	if !ok || !policy.Enabled {
 		return nil, origin, errx.ErrActionForbidden
 	}
+	// The page's kinds / levels count only where the action opts in: anyone
+	// can write them, so left on by default they would let a bot always ask
+	// for the easiest kind. Elsewhere they are ignored, not refused, so a
+	// page configured for them keeps working when the switch is off.
+	if !policy.ClientSelect {
+		in.Select = Selection{}
+	}
 
 	if in.Signals != nil {
 		s := *in.Signals

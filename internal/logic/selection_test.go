@@ -74,9 +74,21 @@ func (h *harness) issueSel(t *testing.T, action string, s *risk.Signals, sel Sel
 	return out
 }
 
+// allowSelect turns on ClientSelect for actions of the harness apps.
+func allowSelect(h *harness, actions ...string) {
+	for _, app := range h.apps.apps {
+		for _, a := range actions {
+			p := app.Actions[a]
+			p.ClientSelect = true
+			app.Actions[a] = p
+		}
+	}
+}
+
 func TestIssueSelection(t *testing.T) {
 	h := newHarness(t)
 	withPuzzle(h)
+	allowSelect(h, "mixed", "slide", "login")
 	// Fixed: a clean browser on an adaptive action would get invisible.
 	if c := h.issueSel(t, "mixed", clean(), Selection{Kinds: []string{domain.KindRotate}}); c.Kind != domain.KindRotate || c.Rotate == nil {
 		t.Fatalf("fixed kind: %s", c.Kind)
@@ -116,6 +128,7 @@ func TestIssueSelection(t *testing.T) {
 func TestLadder(t *testing.T) {
 	h := newHarness(t)
 	withPuzzle(h)
+	allowSelect(h, "mixed", "slide")
 	h.g.Settings.LadderDowngradePasses, h.g.Settings.LadderWindow = 3, 30*time.Minute
 	sel := Selection{Levels: [][]string{{domain.KindSlider}, {domain.KindSpatial}}}
 	human := &SliderAnswer{Clicks: [][3]float64{{1700, 62, 48}, {2600, 224, 83}, {3350, 137, 158}}, MovesBetween: []int{3, 12, 9}}
@@ -152,5 +165,26 @@ func TestLadder(t *testing.T) {
 	}
 	if c := h.issueSel(t, "mixed", clean(), sel); c.Kind != domain.KindSlider {
 		t.Fatalf("non-ladder failure moved the rung: %s", c.Kind)
+	}
+}
+
+// Without the action's opt-in the page's kinds and levels are ignored, not
+// refused: the server picks as if the page had sent nothing.
+func TestSelectionNeedsOptIn(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+	if c := h.issueSel(t, "mixed", clean(), Selection{Kinds: []string{domain.KindSlider}}); c.Kind != domain.KindInvisible {
+		t.Fatalf("kinds without opt-in: %s", c.Kind)
+	}
+	if c := h.issueSel(t, "mixed", clean(), Selection{Levels: [][]string{{domain.KindSlider}}}); c.Kind != domain.KindInvisible {
+		t.Fatalf("levels without opt-in: %s", c.Kind)
+	}
+	// Medium risk (no signals) draws from every kind again, not only the page's pick.
+	seen := map[string]bool{}
+	for i := 0; i < 60; i++ {
+		seen[h.issueSel(t, "mixed", nil, Selection{Kinds: []string{domain.KindSlider}}).Kind] = true
+	}
+	if len(seen) < 3 {
+		t.Fatalf("medium risk honoured the page's kinds: %v", seen)
 	}
 }
