@@ -21,12 +21,21 @@
 
 ## 当前状态（2026-10-22）
 
-三个包都已发布 0.1.0，许可证 MIT：
+许可证均为 MIT。
 
-- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。0.1.0 是在本机手动发布的。
+| 内容 | 最新版本 | 说明 |
+|---|---|---|
+| 服务端 | v0.2.1 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布。v0.2.1 与 v0.2.0 代码相同，只是 rpm 改为签名发布 |
+| `@botguard/browser` | 0.2.0 | 0.1.0、0.2.0 都是在本机手动发布的，没有 provenance |
+| `botguard/php-sdk`、`botguard/laravel` | 0.1.0 | 之后只改了文档，没有发新版本 |
+
+- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置，但工作流发布仍然失败（403，见下文“发版排错”）。
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
 - 镜像仓库：[botguard-php-sdk](https://github.com/dkeepersun/botguard-php-sdk)、[botguard-laravel](https://github.com/dkeepersun/botguard-laravel)。已关闭 issues 和 wiki；部署密钥已配置，私钥只保存在主仓库的 Actions secrets 里。
-- 待办：在 npm 包设置里配置 Trusted Publisher（见下文 npm 第 3 步），之后的版本才能由工作流自动发布。
+- 软件源：<https://dkeepersun.github.io/BotGuard/>，签名密钥指纹 `BE49F7E6B91F729E10F3E24A0E7787FFB93E3231`，私钥在 Actions secret `REPO_GPG_PRIVATE_KEY` 里。GitHub Pages 已启用（Source：GitHub Actions）。
+- 待办：
+  - 查清 `release-browser` 工作流的 403，否则 npm 新版本仍需在本机手动发布；
+  - 签名密钥的 UID 是生成时没改的占位文字 `BotGuard Packages <你的邮箱>`，用 `gpg --quick-add-uid` / `--quick-revoke-uid` 改为真实邮箱，重新写入 secret，再手动运行 `repo` 更新 `gpg.key`（指纹不变，已签名的包不受影响）。
 
 第一次发布时遇到的问题，下次可以提前避开：
 
@@ -34,7 +43,23 @@
 - npm 发布要求账号开启 2FA，且要先在网站上建好 `botguard` 组织，否则会报 403 或 `Scope not found`。
 - `npm login`、`npm publish` 要在真正的终端里运行。在 Claude Code 里用 `!` 运行时无法交互，`npm login` 会直接报错退出。
 - 发布后 npm 会自动留下一个 `0.0.0-stage` 版本，描述为 “Temporary package placeholder for staged publishing”。它不影响安装：`latest` 指向正式版本，`^0.1.0` 也不会匹配预发布版本。
-- 不要补推 `browser-v0.1.0` 标签：0.1.0 已经手动发布，工作流会因为版本已存在而失败。下一个版本是 `browser-v0.2.0`（新增 `kinds` / `levels`，与服务端 v0.2.0 配套）。
+- 不要补推 `browser-v0.1.0`、`browser-v0.2.0` 标签：这两个版本已经发布，工作流会因为版本已存在而失败。下一个版本从 `browser-v0.2.1` 开始。
+
+### 发版排错（2026-10-22 发 v0.2.0 时遇到）
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `release-browser` 在 “Tag must match package.json version” 失败 | 标签打在了改版本号的 PR 合并之前的提交上 | 先合并改版本号的 PR，再在新的 main 上打标签。这一步失败时什么都没发布，可以删掉标签重新推：`git push origin :refs/tags/browser-vX.Y.Z` |
+| 工作流 `npm publish` 报 404 `PUT .../@botguard%2fbrowser - Not found` | npm 没把请求认作 Trusted Publishing：包上没配置，或配置与工作流对不上 | 核对 Trusted Publisher：仓库 `dkeepersun` / `BotGuard`（注意大小写）、工作流文件名只写 `release-browser.yml`、Environment 留空 |
+| 工作流 `npm publish` 报 403 `OIDC permission denied for this action` | 未查明。provenance 已签成功，说明 OIDC 凭证有效 | 待查。先在本机手动发布（见下面几行） |
+| 本机 `npm publish` 报 404 | 没登录，或账号对 `@botguard` 没有写权限，或 registry 指向了镜像 | `npm whoami`、`npm access list collaborators @botguard/browser`、`npm config get registry` |
+| 本机 `npm publish` 报 409 `Cannot publish over previously staged version` | 这个版本号已进过暂存区（staged publishing），暂存和正式版本共用版本号 | `npm stage list @botguard/browser` 查看，`npm stage approve <stage-id>` 批准（需要 npm ≥ 11.15.0 和 2FA）。暂存区为空时先看 npm 上是否其实已经发布了 |
+| `repo` 工作流显示成功，但软件源没更新 | 读不到 `REPO_GPG_PRIVATE_KEY` 时整个构建被跳过，只留一条警告 | 不能只看结论，要看 “Build the repository” 等步骤是不是 skipped |
+| 日志里 `REPO_GPG_PRIVATE_KEY:` 为空 | secret 不在 Actions 的 Repository secrets 里（例如放进了 `github-pages` 环境、Dependabot / Codespaces，或 Variables） | 存到 Settings → Secrets and variables → Actions → Repository secrets |
+| `gpg: no valid OpenPGP data found` | secret 内容不是 armored 私钥（公钥、指纹、二进制或截断的内容） | 用管道写入，见下文“软件源和镜像的一次性设置”第 1 步 |
+| `gpg: WARNING: nothing exported` 后 `gh secret set` 仍显示成功 | 本机没有这把密钥，secret 被写成了空值 | 先 `gpg --list-secret-keys` 确认密钥存在，再写入 |
+| `deploy-pages` 报 `Failed to create deployment (status: 404)` | 仓库的 GitHub Pages 没有启用 | Settings → Pages → Source 选 GitHub Actions |
+| 软件源可用后，`dnf install botguard` 失败 | 那个版本发布时还没有签名密钥，rpm 没签名，而软件源要求 `gpgcheck=1` | 配好密钥后发下一个补丁版本（这次就是 v0.2.1），`repo` 工作流会用签名的 rpm 重建软件源 |
 
 
 ## 一、只能由你完成的步骤
@@ -112,12 +137,16 @@ botguard_0.3.0_linux_amd64/
 1. **签名密钥**。生成一把专用于软件源的 GPG 密钥（不设口令最简单；设了口令就把它存进 `REPO_GPG_PASSPHRASE`）：
 
    ```bash
-   gpg --quick-gen-key "BotGuard Packages <你的邮箱>" rsa4096 sign never
-   gpg --armor --export-secret-keys "BotGuard Packages" > botguard-signing.asc
+   # 把邮箱换成真实地址再运行：UID 会出现在用户导入的 gpg.key 里
+   gpg --batch --passphrase '' --quick-gen-key "BotGuard Packages <you@example.com>" rsa4096 sign never
+   # 第一行应为 -----BEGIN PGP PRIVATE KEY BLOCK-----；提示 nothing exported 说明本机没有这把密钥
+   gpg --armor --export-secret-keys "BotGuard Packages" | head -1
+   # 用管道写入，避免复制粘贴出错
+   gpg --armor --export-secret-keys "BotGuard Packages" | gh secret set REPO_GPG_PRIVATE_KEY -R dkeepersun/BotGuard
    ```
 
-   在仓库 Settings → Secrets and variables → Actions 中新建 secret `REPO_GPG_PRIVATE_KEY`，内容为 `botguard-signing.asc`，然后删除本地文件。私钥同时用于签名 rpm 包和软件源元数据；公钥由工作流导出为 `gpg.key` 发布。**这把密钥不要更换**：换了之后，已经添加软件源的服务器需要重新导入公钥才能升级。
-2. **GitHub Pages**。Settings → Pages → Build and deployment → Source 选择 **GitHub Actions**。
+   secret 必须在 Settings → Secrets and variables → Actions 的 **Repository secrets** 里。私钥另外备份到密码管理器或离线介质。私钥同时用于签名 rpm 包和软件源元数据；公钥由工作流导出为 `gpg.key` 发布。**这把密钥不要更换**：换了之后，已经添加软件源的服务器需要重新导入公钥才能升级（改 UID 不算更换，指纹不变）。**要在发第一个正式版之前配好**，否则那个版本的 rpm 没有签名，软件源一旦可用，dnf/yum 就装不上。
+2. **GitHub Pages**。Settings → Pages → Build and deployment → Source 选择 **GitHub Actions**。没启用时 `repo` 工作流的 `deploy` 任务会报 `Failed to create deployment (status: 404)`。
 3. **镜像可见性**。第一次推送后，在 GitHub 个人主页 → Packages → `botguard` → Package settings 中把可见性改为 Public，否则用户拉取镜像需要登录。
 
 没有配置 `REPO_GPG_PRIVATE_KEY` 时，release 照常发布（rpm 不签名），`repo` 工作流会跳过并给出警告；一键安装脚本检测到软件源不可用时自动改用发布包安装。
@@ -136,7 +165,7 @@ botguard_0.3.0_linux_amd64/
      git push origin v0.3.0
      ```
 
-4. 工作流结束后，在 Release 页面检查附件和自动生成的说明，需要时手动补充升级注意事项（配置变化、迁移耗时等）。确认 `repo` 工作流已更新软件源。
+4. 工作流结束后，在 Release 页面检查附件和自动生成的说明，需要时手动补充升级注意事项（配置变化、迁移耗时等）。确认 `repo` 工作流已更新软件源：打开这次运行，看 “Build the repository” 步骤没有被跳过，日志里列出的是新版本的 deb / rpm。
 
 第一次发版建议先推 `v0.3.0-rc.1` 这样的预发布标签，确认工作流、附件、镜像和 `upgrade` 都正常后再发正式版。标签一旦推送就不要移动或复用；发错了就发下一个版本号。
 
