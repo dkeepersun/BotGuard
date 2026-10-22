@@ -31,7 +31,7 @@
 | `botguard/php-sdk`、`botguard/laravel` | 0.1.0 | 之后只改了文档，没有发新版本 |
 | Go SDK（含 gin / go-zero 适配） | v0.1.0 | 三个模块的标签都在 `4b090c6` 上，proxy.golang.org 和 sum.golang.org 都已收录；在干净目录用默认设置 `go get` 并编译示例已验证 |
 
-- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置（只允许暂存发布）。`release-browser` 工作流改为暂存发布：推标签后版本进入暂存区，要人工批准才公开（见下文 npm 第 4 步）。改完后还没有实际发过一个版本：main 上的版本号已改为 0.2.1，代码与 0.2.0 相同，只用来第一次验证暂存发布。等 npm 当前的故障（Degraded Publish, Install, and View Package）恢复后，再推 `browser-v0.2.1` 并批准。
+- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置（只允许暂存发布）。`release-browser` 工作流改为暂存发布：推标签后版本进入暂存区，要人工批准才公开（见下文 npm 第 4 步）。改完后还没有实际发过一个版本：main 上的版本号已改为 0.2.1，代码与 0.2.0 相同（README 多了不经过 npm 的安装方式），用来第一次验证暂存发布，以及把同一个 tgz 放进 GitHub Release 草稿。等 npm 当前的故障（Degraded Publish, Install, and View Package）恢复后，再推 `browser-v0.2.1` 并批准。
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
 - 镜像仓库：[botguard-php-sdk](https://github.com/dkeepersun/botguard-php-sdk)、[botguard-laravel](https://github.com/dkeepersun/botguard-laravel)。已关闭 issues 和 wiki；部署密钥已配置，私钥只保存在主仓库的 Actions secrets 里。
 - 软件源：<https://dkeepersun.github.io/BotGuard/>，签名密钥指纹 `BE49F7E6B91F729E10F3E24A0E7787FFB93E3231`，私钥在 Actions secret `REPO_GPG_PRIVATE_KEY` 里。GitHub Pages 已启用（Source：GitHub Actions）。
@@ -83,7 +83,7 @@ npm 已在 2025 年底撤销 classic（含 Automation）令牌；有写权限的
 3. 在 npmjs.com 打开包 `@botguard/browser` → Settings → Trusted Publisher，选择 GitHub Actions，填写仓库 `dkeepersun/BotGuard`、工作流文件 `release-browser.yml`，Environment 留空。权限只勾**暂存发布**（stage publish，新建配置的默认值），不要勾 “Allow npm publish”：这样即使 CI 被攻破，没有你的 2FA 也发不出包。之后可以在包的 Access 页面选择 “Require two-factor authentication and disallow tokens”，Trusted Publishing 不受影响。
 4. 之后的版本：
    1. 改 `package.json` 的 version，PR 合并后在合并提交上推标签 `browser-vX.Y.Z`；
-   2. `release-browser` 工作流检查版本号、跑测试，然后 `npm stage publish --provenance` 把这个版本放进暂存区（需要主仓库保持公开）。运行摘要里会写出批准命令。这时版本**还没有公开**，`npm install` 装不到；
+   2. `release-browser` 工作流检查版本号、跑测试，`npm pack` 打一次包，再做两件事：用 `npm stage publish --provenance` 把这个包放进 npm 暂存区（需要主仓库保持公开）；把同一个 `.tgz` 和它的 `.sha256` 放进 GitHub Release 草稿（`--latest=false`）。运行摘要里会写出 shasum 和下面两步的命令。这时版本**还没有公开**，`npm install` 装不到；
    3. 在本机批准（需要 npm ≥ 11.15.0 和 2FA）：
 
       ```bash
@@ -93,6 +93,16 @@ npm 已在 2025 年底撤销 classic（含 Automation）令牌；有写权限的
       ```
 
       也可以在 npmjs.com 上批准。发现问题就 `npm stage reject <stage-id>`。拒绝后这个版本号可以重新暂存，但标签已经推过，改了代码就发下一个版本号。
+
+   4. npm 批准后，发布 GitHub Release 草稿：
+
+      ```bash
+      gh release edit browser-vX.Y.Z --repo dkeepersun/BotGuard --draft=false --latest=false
+      ```
+
+      **一定要带 `--latest=false`**：`scripts/install.sh` 和 `scripts/botguard.sh` 通过 `releases/latest` 找服务端版本，浏览器组件的 release 不能占用 “Latest”。拒绝了 npm 版本时，用 `gh release delete browser-vX.Y.Z --repo dkeepersun/BotGuard --yes` 删掉草稿。
+
+      发布后，npm 出故障时也可以按地址安装同一个文件：`npm install https://github.com/dkeepersun/BotGuard/releases/download/browser-vX.Y.Z/botguard-browser-X.Y.Z.tgz`。
 
 ### Composer / Packagist
 

@@ -69,6 +69,15 @@ initBotGuard({ mode: 'popup', bindTo: '#submit', endpoint, appKey, action: 'logi
 npm install @botguard/browser
 ```
 
+yarn、pnpm 装的也是 npm 上的同一个包。npm 出故障或访问慢时，还有几种不经过 npm 的装法：
+
+| 方式 | 写法 | 说明 |
+|---|---|---|
+| GitHub Release | `npm install https://github.com/dkeepersun/BotGuard/releases/download/browser-v0.2.1/botguard-browser-0.2.1.tgz` | 与 npm 上的同版本是同一个文件，release 里附有 SHA-256；npm、pnpm、yarn 都支持。从 0.2.1 开始提供 |
+| jsDelivr（直接取 GitHub 标签） | `https://cdn.jsdelivr.net/gh/dkeepersun/BotGuard@browser-v0.2.1/packages/browser/src/botguard.js` | 用 `<script type="module">` 引入，或下载到项目里；不经过 npm。只有 `src/` 源码，webpack 4 用的 `dist/` 构建产物不在仓库里，请用 GitHub Release 的包 |
+| 国内镜像 | `npm install @botguard/browser --registry=https://registry.npmmirror.com` | 国内更快；已同步过去的版本在 npm 出问题时也能装 |
+| gateway 托管 | `<script src="https://你的gateway/sdk/v1/load.js">` | 见上文第 1 种方式，版本始终与 gateway 一致 |
+
 ```js
 import { init } from '@botguard/browser';
 init({ element: '#captcha', endpoint, appKey, action: 'login', onVerify(err, ret) { /* ... */ } });
