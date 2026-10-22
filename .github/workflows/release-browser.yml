@@ -1,5 +1,9 @@
-# Publishes @botguard/browser to npm when a tag browser-vX.Y.Z is pushed.
-# Uses npm Trusted Publishing (OIDC): no token is stored in this repository.
+# Stages @botguard/browser on npm when a tag browser-vX.Y.Z is pushed; a
+# maintainer then approves it with 2FA (npm stage approve, or npmjs.com)
+# before it becomes public. Uses npm Trusted Publishing (OIDC): no token is
+# stored in this repository, and the trust relationship only needs the
+# "stage publish" permission, npm's default and recommendation, so a
+# compromised workflow cannot publish on its own.
 # One-time setup on npmjs.com, after the first manual publish: package
 # settings -> Trusted Publisher -> GitHub Actions, repository
 # dkeepersun/BotGuard, workflow release-browser.yml (docs/release.md).
@@ -27,8 +31,23 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - name: Tag must match package.json version
         run: test "browser-v$(node -p "require('./package.json').version")" = "${GITHUB_REF_NAME}"
-      # Trusted Publishing needs npm >= 11.5.1; Node 22 ships npm 10.
-      - run: npm install -g npm@11
+      # npm stage publish needs npm >= 11.15.0; Node 22 ships npm 10.
+      - run: npm install -g npm@11.21.1
       - run: npm ci
       - run: npm test
-      - run: npm publish --provenance --access public
+      - run: npm stage publish --provenance --access public
+      - name: How to approve
+        run: |
+          {
+            echo "### @botguard/browser ${GITHUB_REF_NAME#browser-v} 已暂存，还没有公开"
+            echo
+            echo '用有写权限的账号批准（需要 2FA，npm ≥ 11.15.0）：'
+            echo
+            echo '```bash'
+            echo 'npm stage list @botguard/browser'
+            echo 'npm stage view <stage-id>     # 核对版本和 shasum'
+            echo 'npm stage approve <stage-id>'
+            echo '```'
+            echo
+            echo '也可以在 npmjs.com 上批准。'
+          } >> "$GITHUB_STEP_SUMMARY"

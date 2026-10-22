@@ -31,12 +31,11 @@
 | `botguard/php-sdk`、`botguard/laravel` | 0.1.0 | 之后只改了文档，没有发新版本 |
 | Go SDK（含 gin / go-zero 适配） | v0.1.0 | 三个模块的标签都在 `4b090c6` 上，proxy.golang.org 和 sum.golang.org 都已收录；在干净目录用默认设置 `go get` 并编译示例已验证 |
 
-- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置，但工作流发布仍然失败（403，见下文“发版排错”）。
+- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置（只允许暂存发布）。`release-browser` 工作流改为暂存发布：推标签后版本进入暂存区，要人工批准才公开（见下文 npm 第 4 步）。改完后还没有实际发过一个版本。
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
 - 镜像仓库：[botguard-php-sdk](https://github.com/dkeepersun/botguard-php-sdk)、[botguard-laravel](https://github.com/dkeepersun/botguard-laravel)。已关闭 issues 和 wiki；部署密钥已配置，私钥只保存在主仓库的 Actions secrets 里。
 - 软件源：<https://dkeepersun.github.io/BotGuard/>，签名密钥指纹 `BE49F7E6B91F729E10F3E24A0E7787FFB93E3231`，私钥在 Actions secret `REPO_GPG_PRIVATE_KEY` 里。GitHub Pages 已启用（Source：GitHub Actions）。
 - 待办：
-  - 查清 `release-browser` 工作流的 403，否则 npm 新版本仍需在本机手动发布；
   - 签名密钥的 UID 是生成时没改的占位文字 `BotGuard Packages <你的邮箱>`，用 `gpg --quick-add-uid` / `--quick-revoke-uid` 改为真实邮箱，重新写入 secret，再手动运行 `repo` 更新 `gpg.key`（指纹不变，已签名的包不受影响）。
 
 第一次发布时遇到的问题，下次可以提前避开：
@@ -53,7 +52,7 @@
 |---|---|---|
 | `release-browser` 在 “Tag must match package.json version” 失败 | 标签打在了改版本号的 PR 合并之前的提交上 | 先合并改版本号的 PR，再在新的 main 上打标签。这一步失败时什么都没发布，可以删掉标签重新推：`git push origin :refs/tags/browser-vX.Y.Z` |
 | 工作流 `npm publish` 报 404 `PUT .../@botguard%2fbrowser - Not found` | npm 没把请求认作 Trusted Publishing：包上没配置，或配置与工作流对不上 | 核对 Trusted Publisher：仓库 `dkeepersun` / `BotGuard`（注意大小写）、工作流文件名只写 `release-browser.yml`、Environment 留空 |
-| 工作流 `npm publish` 报 403 `OIDC permission denied for this action` | 未查明。provenance 已签成功，说明 OIDC 凭证有效 | 待查。先在本机手动发布（见下面几行） |
+| 工作流 `npm publish` 报 403 `OIDC permission denied for this action` | 新建的 Trusted Publisher 默认只允许 `npm stage publish`，不允许直接 `npm publish`（`npm help trust` 里的 `--allow-publish` / `--allow-stage-publish`） | 工作流已改为 `npm stage publish`，推标签后人工批准。不要为此打开 “Allow npm publish”：npm 建议只开放暂存发布 |
 | 本机 `npm publish` 报 404 | 没登录，或账号对 `@botguard` 没有写权限，或 registry 指向了镜像 | `npm whoami`、`npm access list collaborators @botguard/browser`、`npm config get registry` |
 | 本机 `npm publish` 报 409 `Cannot publish over previously staged version` | 这个版本号已进过暂存区（staged publishing），暂存和正式版本共用版本号 | `npm stage list @botguard/browser` 查看，`npm stage approve <stage-id>` 批准（需要 npm ≥ 11.15.0 和 2FA）。暂存区为空时先看 npm 上是否其实已经发布了 |
 | `repo` 工作流显示成功，但软件源没更新 | 读不到 `REPO_GPG_PRIVATE_KEY` 时整个构建被跳过，只留一条警告 | 不能只看结论，要看 “Build the repository” 等步骤是不是 skipped |
@@ -81,8 +80,19 @@ npm 已在 2025 年底撤销 classic（含 Automation）令牌；有写权限的
 
 1. 注册或登录 npmjs.com，开启 2FA，创建组织 **botguard**，这样才能使用 `@botguard/` 前缀。如果组织名已被占用，告诉我换哪个名字，我来改包名。
 2. **第一次发布手动完成**，因为 Trusted Publishing 要在已存在的包上配置：在 `packages/browser` 下执行 `npm ci && npm test && npm publish --access public`，按提示输入 2FA 验证码。
-3. 在 npmjs.com 打开包 `@botguard/browser` → Settings → Trusted Publisher，选择 GitHub Actions，填写仓库 `dkeepersun/BotGuard`、工作流文件 `release-browser.yml`。之后可以在同一页面把发布方式设为“只允许 Trusted Publishing”。
-4. 之后的版本：修改 `package.json` 的 version，推送标签 `browser-vX.Y.Z`。`release-browser` 工作流会检查版本号、跑测试，然后带 provenance 发布（需要主仓库保持公开）。
+3. 在 npmjs.com 打开包 `@botguard/browser` → Settings → Trusted Publisher，选择 GitHub Actions，填写仓库 `dkeepersun/BotGuard`、工作流文件 `release-browser.yml`，Environment 留空。权限只勾**暂存发布**（stage publish，新建配置的默认值），不要勾 “Allow npm publish”：这样即使 CI 被攻破，没有你的 2FA 也发不出包。之后可以在包的 Access 页面选择 “Require two-factor authentication and disallow tokens”，Trusted Publishing 不受影响。
+4. 之后的版本：
+   1. 改 `package.json` 的 version，PR 合并后在合并提交上推标签 `browser-vX.Y.Z`；
+   2. `release-browser` 工作流检查版本号、跑测试，然后 `npm stage publish --provenance` 把这个版本放进暂存区（需要主仓库保持公开）。运行摘要里会写出批准命令。这时版本**还没有公开**，`npm install` 装不到；
+   3. 在本机批准（需要 npm ≥ 11.15.0 和 2FA）：
+
+      ```bash
+      npm stage list @botguard/browser
+      npm stage view <stage-id>      # 核对版本号和 shasum，shasum 应与工作流日志里 npm notice 打印的一致
+      npm stage approve <stage-id>
+      ```
+
+      也可以在 npmjs.com 上批准。发现问题就 `npm stage reject <stage-id>`。拒绝后这个版本号可以重新暂存，但标签已经推过，改了代码就发下一个版本号。
 
 ### Composer / Packagist
 
