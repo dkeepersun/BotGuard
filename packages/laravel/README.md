@@ -102,6 +102,16 @@ if (!botguard()->passes($request->input('botguard_token'), 'login')) {
 }
 ```
 
+### 限定来源
+
+应用在 gateway 里的允许来源用了通配（`https://*.example.com`）或 `*` 时，别的站点拿到的 token 也会通过。在 `.env` 里列出自己的页面来源，`passes()` 和验证规则只放行从这些来源拿到的 token：
+
+```dotenv
+BOTGUARD_ORIGINS=https://shop.example.com,https://*.example.com
+```
+
+通配只匹配子域名，不含 `example.com` 本身，规则与 gateway 的允许来源一致。名单外的来源、以及旧版 gateway 不返回来源的 token 都按未通过处理（记 info 日志）；名单里有格式错误的项时拒绝所有 token 并记 error 日志。`BotGuard::originAllowed($patterns, $result->origin)` 可以在 `verify()` 之后自己判断。需要 `botguard/laravel` 0.3.0 及以上。
+
 ### token 什么时候被消耗
 
 规则一执行就会消耗 token。Laravel 在某个字段校验失败后，**仍会继续校验其余字段**（`bail` 只对同一个字段内的多条规则生效），所以把 `botguard` 规则写在数组最后并不能避免消耗：用户名写错时 token 照样被用掉，用户改完再提交只会得到“验证未通过”。两种做法：

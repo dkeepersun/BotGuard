@@ -14,6 +14,7 @@
   - 登录失败按“IP”和“用户名”两个维度限流，5 分钟内超过 10 次就锁定，并写入审计。
 - 会话：
   - 服务端会话存在 Redis，Cookie 只保存随机 ID 的明文；Cookie 设为 `HttpOnly`、`SameSite=Strict`，HTTPS 部署时加 `Secure`；
+  - 会话记录带 HMAC 签名（密钥由 `BOTGUARD_SECRET_KEK` 派生），覆盖记录内容和它在 Redis 里的键：能写 Redis 的人伪造不了会话，也不能把别人的会话挪到自己的 Cookie 下。签名不对的记录按未登录处理。更换 KEK 会让所有人重新登录；没配置 KEK 时会话不签名，启动日志里有提醒；
   - 空闲 30 分钟、最长 8 小时过期；
   - 改密码、停用账号、修改角色时 `session_version` 加 1，该账号已有的会话全部失效。
 - 写操作一律是 POST，并且必须同时满足：会话中的 CSRF token 匹配、`Origin` 与后台自身一致、具备相应权限。
