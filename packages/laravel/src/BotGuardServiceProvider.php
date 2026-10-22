@@ -40,6 +40,7 @@ final class BotGuardServiceProvider extends ServiceProvider
             static fn (): Client => $app->make(Client::class),
             self::logger($app),
             self::accept($app['config']['botguard.accept'] ?? []),
+            array_values(array_filter((array) ($app['config']['botguard.origins'] ?? []), 'is_string')),
         ));
     }
 

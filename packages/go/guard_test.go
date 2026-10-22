@@ -189,3 +189,57 @@ func TestGuardStepUp(t *testing.T) {
 		t.Fatalf("client: %+v %v", res, err)
 	}
 }
+
+func TestGuardAllowedOrigins(t *testing.T) {
+	reply := func(origin string) func(int, map[string]string) (int, http.Header, string) {
+		return func(_ int, b map[string]string) (int, http.Header, string) {
+			extra := ""
+			if origin != "" {
+				extra = `,"origin":"` + origin + `"`
+			}
+			return 200, nil, `{"code":"OK","data":{"success":true,"app_key":"` + b["app_key"] + `","action":"login","verified_at":1,"risk_level":"low"` + extra + `}}`
+		}
+	}
+	opt := WithAllowedOrigins("https://shop.example.com", " HTTPS://*.Example.org/ ")
+	cases := map[string]bool{
+		"https://shop.example.com":      true,
+		"https://a.example.org":         true,
+		"https://a.b.example.org":       true,
+		"https://example.org":           false, // the wildcard is for subdomains only
+		"https://evil-example.org":      false,
+		"https://a.example.org.evil.cn": false,
+		"http://a.example.org":          false,
+		"https://a.example.org:8443":    false,
+		"https://other.example.com":     false,
+		"":                              false, // an older gateway does not report it
+	}
+	for origin, want := range cases {
+		gw := newGateway(t, reply(origin))
+		w, res := serve(NewGuard(newClient(t, gw), "login", opt), form("tok"))
+		if got := w.Code == 200 && res != nil && res.Passed; got != want {
+			t.Errorf("%q: %d %s", origin, w.Code, w.Body)
+		}
+		if !want {
+			var body map[string]string
+			_ = json.Unmarshal(w.Body.Bytes(), &body)
+			if w.Code != 403 || body["reason"] != ReasonOriginNotAllowed {
+				t.Errorf("%q rejection: %d %s", origin, w.Code, w.Body)
+			}
+		}
+	}
+	// Without the option the origin is not checked.
+	gw := newGateway(t, reply("https://anything.example"))
+	if w, _ := serve(NewGuard(newClient(t, gw), "login"), form("tok")); w.Code != 200 {
+		t.Fatalf("no allowlist: %d", w.Code)
+	}
+	for _, bad := range []string{"shop.example.com", "https://", "https://a.com/path", "https://*.*.a.com", "https://a*.com", "*", "ftp://a.com"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%q accepted", bad)
+				}
+			}()
+			NewGuard(newClient(t, newGateway(t, reply(""))), "login", WithAllowedOrigins(bad))
+		}()
+	}
+}
