@@ -11,7 +11,7 @@
     },
     "require": {
         "php": ">=8.1",
-        "botguard/php-sdk": "^0.1",
+        "botguard/php-sdk": "^0.1.1",
         "illuminate/container": "^9.0|^10.0|^11.0|^12.0|^13.0",
         "illuminate/contracts": "^9.0|^10.0|^11.0|^12.0|^13.0",
         "illuminate/support": "^9.0|^10.0|^11.0|^12.0|^13.0",
