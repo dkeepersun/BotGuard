@@ -121,7 +121,9 @@ type JigsawRender struct {
 // and medium risk pick at random from the action's kinds, so an attacker
 // cannot tune for one style; high risk gets the hardest kind offered. Every
 // kind also carries proof of work; high risk and the fallback path make it
-// costlier. requested is the page's selection, already resolved against the
+// costlier. A high-risk client gets no fallback: the fallback is PoW alone,
+// which a bot computes natively in milliseconds, so offering it there would
+// let any suspicious client skip the picture by asking. requested is the page's selection, already resolved against the
 // action (Selection.candidates): below high risk the pick comes from it.
 func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback bool, requested []string, pick func(int) int) (kind string, factor uint64) {
 	factor = 1
@@ -132,13 +134,12 @@ func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback 
 	switch {
 	case policy.Mode == domain.ModeInvisible:
 		return domain.KindInvisible, factor
-	case fallback:
-		// The factors compound: choosing fallback must never make a
-		// high-risk client's work cheaper than its hardest interactive kind.
-		return domain.KindFallback, factor * max(1, g.Settings.FallbackDifficultyFactor)
 	case level == risk.LevelHigh:
-		// The page's selection cannot lower the floor for a suspicious client.
+		// Neither the fallback nor the page's selection can lower the floor
+		// for a suspicious client.
 		return domain.Hardest(kinds), factor
+	case fallback:
+		return domain.KindFallback, factor * max(1, g.Settings.FallbackDifficultyFactor)
 	case len(requested) > 0:
 		return requested[pick(len(requested))], factor
 	case policy.Mode == domain.ModeInteractive || level == risk.LevelMedium:

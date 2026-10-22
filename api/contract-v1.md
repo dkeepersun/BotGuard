@@ -57,9 +57,9 @@ SHA-256 在原生代码/GPU 上比浏览器快 2–3 个数量级，所以难度
 | `click_icon` | 图标点选：按提示图标的顺序点击大图中同款图标，同时后台算 PoW | 题型列表中含 click_icon，且被选中 |
 | `spatial` | 空间推理：点击被描述图形旁边紧挨着的图形，同时后台算 PoW | 题型列表中含 spatial，且被选中 |
 | `click_shape` | 按顺序点击描述的图形（要数点数、边数），同时后台算 PoW | 题型列表中含 click_shape，且被选中 |
-| `fallback` | 只算 PoW，难度 × 8（高风险时再 × 4，即 × 32），独立限流 | 用户在滑块面板选择“无法完成拼图？”（invisible 模式下无此路径） |
+| `fallback` | 只算 PoW，难度 × 8，独立限流 | 用户在滑块面板选择“无法完成拼图？”，且风险不为高（invisible 模式下无此路径） |
 
-interactive 模式每次从列表随机选题；adaptive 模式中风险随机选、高风险选列表中最难的（spatial > click_shape > click_icon > click_order > click_text > jigsaw > rotate > slider）。风险为高时，任何题型的 PoW 难度 × 4，包括 fallback（倍数相乘），所以选 fallback 不会比高风险的点选题更便宜。实际难度不超过 `Challenge.MaxDifficulty`。应用超过图片题配额（`RateLimit.InteractivePerAppPerMinute`），或图片生成满载且预生成题库为空时，本该出的图片题降级为 `invisible`，PoW 难度再 × `Risk.DegradedDifficultyFactor`（默认 8），verify 的 `risk_reasons` 带 `CAPACITY_DEGRADED`；不返回 503。风险分和原因码只通过 verify 返回给业务服务器，不返回给浏览器。
+interactive 模式每次从列表随机选题；adaptive 模式中风险随机选、高风险选列表中最难的（spatial > click_shape > click_icon > click_order > click_text > jigsaw > rotate > slider）。风险为高时，任何题型的 PoW 难度 × 4；高风险请求即使带 `fallback: true` 也照样出列表中最难的题型，因为 fallback 只有 PoW，机器人用原生代码几毫秒就能算完。实际难度不超过 `Challenge.MaxDifficulty`。应用超过图片题配额（`RateLimit.InteractivePerAppPerMinute`），或图片生成满载且预生成题库为空时，本该出的图片题降级为 `invisible`，PoW 难度再 × `Risk.DegradedDifficultyFactor`（默认 8），verify 的 `risk_reasons` 带 `CAPACITY_DEGRADED`；不返回 503。风险分和原因码只通过 verify 返回给业务服务器，不返回给浏览器。
 
 ### 前端指定题型
 
