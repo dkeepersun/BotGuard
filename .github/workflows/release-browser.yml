@@ -7,6 +7,10 @@
 # One-time setup on npmjs.com, after the first manual publish: package
 # settings -> Trusted Publisher -> GitHub Actions, repository
 # dkeepersun/BotGuard, workflow release-browser.yml (docs/release.md).
+# The same tarball also goes on a draft GitHub Release, so the package can be
+# installed by URL when the npm registry is down. It is a draft until the npm
+# version is approved, and never "Latest": scripts/install.sh and
+# scripts/botguard.sh find the server version through releases/latest.
 name: release-browser
 
 on:
@@ -14,7 +18,7 @@ on:
     tags: ["browser-v*"]
 
 permissions:
-  contents: read
+  contents: write # draft GitHub Release with the tarball
   id-token: write # Trusted Publishing and provenance
 
 jobs:
@@ -35,13 +39,47 @@ jobs:
       - run: npm install -g npm@11.21.1
       - run: npm ci
       - run: npm test
-      - run: npm stage publish --provenance --access public
+      # Pack once: npm and the GitHub Release get the very same file.
+      - name: Pack
+        id: pack
+        run: |
+          file=$(npm pack --silent | tail -1)
+          sha256sum "$file" > "$file.sha256"
+          {
+            echo "file=$file"
+            echo "shasum=$(sha1sum "$file" | cut -d' ' -f1)"
+            echo "sha256=$(cut -d' ' -f1 "$file.sha256")"
+          } >> "$GITHUB_OUTPUT"
+      - run: npm stage publish "./${{ steps.pack.outputs.file }}" --provenance --access public
+      - name: Draft GitHub Release with the same tarball
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FILE: ${{ steps.pack.outputs.file }}
+          SHA256: ${{ steps.pack.outputs.sha256 }}
+        run: |
+          version="${GITHUB_REF_NAME#browser-v}"
+          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${FILE}"
+          cat > notes.md <<EOF
+          @botguard/browser ${version}，与 npm 上的同版本是同一个文件（SHA-256 \`${SHA256}\`）。
+
+          npm 不可用时可以直接按地址安装（npm、pnpm、yarn 都支持）：
+
+          \`\`\`bash
+          npm install ${url}
+          \`\`\`
+          EOF
+          gh release create "$GITHUB_REF_NAME" "$FILE" "$FILE.sha256" --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --draft --latest=false --title "@botguard/browser ${version}" --notes-file notes.md
       - name: How to approve
+        env:
+          SHASUM: ${{ steps.pack.outputs.shasum }}
         run: |
           {
             echo "### @botguard/browser ${GITHUB_REF_NAME#browser-v} 已暂存，还没有公开"
             echo
-            echo '用有写权限的账号批准（需要 2FA，npm ≥ 11.15.0）：'
+            echo "打包的 shasum：\`${SHASUM}\`，批准前用 npm stage view 核对。"
+            echo
+            echo '1. 用有写权限的账号批准 npm 版本（需要 2FA，npm ≥ 11.15.0），也可以在 npmjs.com 上批准：'
             echo
             echo '```bash'
             echo 'npm stage list @botguard/browser'
@@ -49,5 +87,11 @@ jobs:
             echo 'npm stage approve <stage-id>'
             echo '```'
             echo
-            echo '也可以在 npmjs.com 上批准。'
+            echo '2. 批准后发布 GitHub Release 草稿（不能设为 Latest，安装脚本靠 releases/latest 找服务端版本）：'
+            echo
+            echo '```bash'
+            echo "gh release edit ${GITHUB_REF_NAME} --repo ${GITHUB_REPOSITORY} --draft=false --latest=false"
+            echo '```'
+            echo
+            echo '拒绝 npm 版本时，删掉草稿：`gh release delete '"${GITHUB_REF_NAME}"' --repo '"${GITHUB_REPOSITORY}"' --yes`'
           } >> "$GITHUB_STEP_SUMMARY"
