@@ -59,6 +59,8 @@ jobs:
               echo "$version already on the mirror"
               exit 0
             fi
-            git tag "$version" split
-            git push "${{ matrix.mirror }}" "$version"
+            # Push the split commit straight to the mirror's tag: the checkout
+            # also holds this repository's server tags (v0.2.0 ...), so a local
+            # `git tag "$version"` can collide with one of them.
+            git push "${{ matrix.mirror }}" "split:refs/tags/$version"
           fi
