@@ -150,7 +150,7 @@ token 的有效期优先使用服务端返回的相对时长 `expires_in`（秒�
 
 ## 指定题型
 
-默认由服务端按 action 配置和风险决定出什么题。也可以在前端指定，但只能在 action 已启用的题型里选（管理后台应用详情页里该 action 的「可出题型」），其余忽略：
+默认由服务端按 action 配置和风险决定出什么题。也可以在前端指定，但要先在管理后台为该 action 勾选「允许页面指定题型」（默认不勾选，不勾选时组件发来的 `kinds` / `levels` 会被忽略），而且只能在 action 已启用的题型里选（该 action 的「可出题型」），其余忽略。打开这个开关后，机器人也能每次只要最简单的题型，只在确实需要时打开：
 
 ```js
 init({ element: '#captcha', endpoint, appKey, action: 'login', kinds: ['slider'] });            // 固定滑块

@@ -247,8 +247,8 @@ func TestChooseKind(t *testing.T) {
 	if kind, f := g.chooseKind(adaptive, risk.LevelMedium, true, nil, nil); kind != domain.KindFallback || f != 8 {
 		t.Fatalf("fallback: %s ×%d", kind, f)
 	}
-	// Fallback must not be a discount for high risk: the factors compound.
-	if kind, f := g.chooseKind(adaptive, risk.LevelHigh, true, nil, nil); kind != domain.KindFallback || f != 32 {
+	// High risk gets no fallback: asking for it still gets the hardest kind.
+	if kind, f := g.chooseKind(adaptive, risk.LevelHigh, true, nil, nil); kind != domain.KindSpatial || f != 4 {
 		t.Fatalf("high-risk fallback: %s ×%d", kind, f)
 	}
 }

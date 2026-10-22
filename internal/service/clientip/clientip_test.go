@@ -40,3 +40,19 @@ func TestBucket(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestPrefix(t *testing.T) {
+	for in, want := range map[string]string{
+		"2001:db8:1:2:3:4:5:6": "2001:db8:1::/48",
+		"2001:db8:1:ffff::1":   "2001:db8:1::/48",
+		"192.0.2.77":           "192.0.2.0/24",
+		"::ffff:192.0.2.77":    "192.0.2.0/24",
+	} {
+		if got := Prefix(netip.MustParseAddr(in)); got != want {
+			t.Errorf("Prefix(%s) = %s, want %s", in, got, want)
+		}
+	}
+	if Prefix(netip.Addr{}) != "unknown" {
+		t.Error("invalid address")
+	}
+}

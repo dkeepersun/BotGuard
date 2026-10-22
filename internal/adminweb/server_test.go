@@ -165,7 +165,8 @@ func TestConsoleEndToEnd(t *testing.T) {
 		t.Fatalf("signed out: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	resp, body := b.get("/login")
-	if resp.StatusCode != 200 || !strings.Contains(body, "登录管理后台") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors 'self'") {
+	if resp.StatusCode != 200 || !strings.Contains(body, "登录管理后台") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors 'self'") ||
+		strings.Contains(resp.Header.Get("Content-Security-Policy"), "unsafe-eval") {
 		t.Fatalf("login page: %d", resp.StatusCode)
 	}
 	if resp, body := b.post("/login", url.Values{"username": {"root"}, "password": {"wrong"}}); resp.StatusCode != 401 || !strings.Contains(body, "用户名或密码错误") {
@@ -242,6 +243,14 @@ func TestConsoleEndToEnd(t *testing.T) {
 	if !strings.Contains(body, "https://shop.example") || !strings.Contains(body, "旋转对齐") || !strings.Contains(body, "4,000") {
 		t.Fatalf("origin/action not shown")
 	}
+	if strings.Contains(body, "页面可指定题型") || !strings.Contains(body, `data-fill-client-select="0"`) {
+		t.Fatal("page selection must default to off")
+	}
+	b.post("/apps/"+key+"/actions/save", url.Values{"_csrf": {token}, "action": {"pay"}, "enabled": {"1"}, "mode": {"interactive"},
+		"kinds": {"rotate", "click_shape"}, "client_select": {"1"}, "puzzles": {"8"}, "difficulty": {"4000"}})
+	if _, body = b.get("/apps/" + key + "?tab=actions"); !strings.Contains(body, "页面可指定题型") || !strings.Contains(body, `data-fill-client-select="1"`) {
+		t.Fatal("page selection switch not saved")
+	}
 	// The secret key is shown once, in a dialog over the app's secrets tab.
 	resp, body = b.post("/apps/"+key+"/secrets/create", url.Values{"_csrf": {token}, "ttl_days": {"0"}})
 	m := regexp.MustCompile(`id="skey">([A-Za-z0-9_-]{20,})<`).FindStringSubmatch(body)
@@ -313,5 +322,28 @@ func TestConsoleEndToEnd(t *testing.T) {
 	b.post("/logout", url.Values{"_csrf": {token}})
 	if resp, _ := b.get("/console"); resp.StatusCode != http.StatusSeeOther {
 		t.Fatal("still signed in after logout")
+	}
+}
+
+// Only paths on this site survive; browsers read "\" as "/" and drop tabs
+// and newlines, so those count as leaving the site.
+func TestSafeNext(t *testing.T) {
+	for in, want := range map[string]string{
+		"/apps":               "/apps",
+		"/apps?open=x#y":      "/apps?open=x#y",
+		"/":                   "/",
+		"":                    "/",
+		"https://evil.com":    "/",
+		"//evil.com":          "/",
+		"/\\evil.com":         "/",
+		"/\t/evil.com":        "/",
+		"/\n/evil.com":        "/",
+		"\\\\evil.com":        "/",
+		"/login?next=/apps":   "/",
+		"javascript:alert(1)": "/",
+	} {
+		if got := safeNext(in); got != want {
+			t.Errorf("safeNext(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

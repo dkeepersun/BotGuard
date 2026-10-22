@@ -226,3 +226,60 @@ func TestWrongKEKFailsClosed(t *testing.T) {
 		t.Fatal("secret key stored in plaintext")
 	}
 }
+
+// App names end up in console markup (tabs, the app switcher); markup in
+// them is refused outright, on top of the escaping at render time.
+func TestAppTextRejectsMarkup(t *testing.T) {
+	_, conn := testdb.Open(t)
+	ctx := context.Background()
+	admin := &AppAdmin{Repo: repository.NewAppAdmin(conn), Sealer: testSealer(t), Now: time.Now}
+	for _, name := range []string{"Shop<script>x</script>", "a > b"} {
+		if _, err := admin.CreateApp(ctx, name, ""); !errors.Is(err, ErrInvalid) {
+			t.Errorf("name %q: %v", name, err)
+		}
+	}
+	if _, err := admin.CreateApp(ctx, "Shop", "<img src=x>"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("remark: %v", err)
+	}
+	key, err := admin.CreateApp(ctx, "商城 & 积分", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.UpdateApp(ctx, key, "x<y", ""); !errors.Is(err, ErrInvalid) {
+		t.Errorf("update: %v", err)
+	}
+}
+
+// The page-selection switch is stored per action and read back by the
+// gateway's app loader; saving it again is a no-op.
+func TestActionClientSelectRoundTrip(t *testing.T) {
+	_, conn := testdb.Open(t)
+	ctx := context.Background()
+	seal := testSealer(t)
+	admin := &AppAdmin{Repo: repository.NewAppAdmin(conn), Sealer: seal, Now: time.Now}
+	key, err := admin.CreateApp(ctx, "select", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := domain.ActionPolicy{Enabled: true, Mode: domain.ModeAdaptive, Kinds: []string{domain.KindSlider, domain.KindSpatial}, Puzzles: 2, Difficulty: 10}
+	if err := admin.SetAction(ctx, key, "login", p); err != nil {
+		t.Fatal(err)
+	}
+	apps := repository.NewSQLApps(conn, seal)
+	app, err := apps.AppByKey(ctx, key)
+	if err != nil || app.Actions["login"].ClientSelect {
+		t.Fatalf("default must be off: %+v %v", app, err)
+	}
+	p.ClientSelect = true
+	if err := admin.SetAction(ctx, key, "login", p); err != nil {
+		t.Fatal(err)
+	}
+	app, _ = apps.AppByKey(ctx, key)
+	if !app.Actions["login"].ClientSelect || app.PolicyVersion < 3 {
+		t.Fatalf("switch not stored: %+v", app)
+	}
+	d, _ := admin.AppDetail(ctx, key)
+	if len(d.Actions) != 1 || !d.Actions[0].Client {
+		t.Fatalf("detail: %+v", d.Actions)
+	}
+}

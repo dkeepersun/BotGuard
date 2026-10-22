@@ -58,6 +58,10 @@ type Settings struct {
 	// addresses; beyond it the app's challenges degrade to harder PoW. Zero
 	// disables it.
 	InteractivePerAppPerMinute int
+	// InteractivePerPrefixPerMinute bounds image challenges per app and
+	// client network prefix (IPv4 /24, IPv6 /48); beyond it issuing an image
+	// challenge answers 429. Zero disables it.
+	InteractivePerPrefixPerMinute int
 
 	// Risk thresholds and the PoW multipliers they trigger.
 	RiskMedium               int
@@ -67,7 +71,10 @@ type Settings struct {
 	// DegradedDifficultyFactor multiplies PoW work when an interactive
 	// challenge degrades for lack of image capacity.
 	DegradedDifficultyFactor uint64
-	FailureWindow            time.Duration
+	// DegradedMinDifficulty is the least per-puzzle difficulty of a degraded
+	// challenge, whatever the action's own.
+	DegradedMinDifficulty uint64
+	FailureWindow         time.Duration
 	// LadderDowngradePasses passes in a row move a client one rung down the
 	// kind ladder a page asked for; LadderWindow is how long the rung lasts
 	// after the client's last solve.

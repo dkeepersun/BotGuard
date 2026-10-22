@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -249,5 +251,68 @@ func TestConsoleTwoStepTOTP(t *testing.T) {
 	code, _ = totp.Code(secret, *clock)
 	if _, err := c.Login(ctx, LoginInput{Pending: ch.Token, OTP: code}); !errors.Is(err, ErrOTPExpired) {
 		t.Fatalf("sixth attempt: %v", err)
+	}
+}
+
+// Attempts are counted before the password is checked, so a burst of
+// concurrent guesses cannot all slip past the lockout.
+func TestConsoleLockoutHoldsUnderConcurrency(t *testing.T) {
+	c, _ := newConsole(t)
+	ctx := context.Background()
+	_, _ = c.CreateAdmin(ctx, nil, "", "owner", "", RoleOwner)
+	var wg sync.WaitGroup
+	var checked atomic.Int32
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := c.Login(ctx, LoginInput{Username: "owner", Password: "guess", IP: "203.0.113.7"}); errors.Is(err, ErrLoginFailed) {
+				checked.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := checked.Load(); n > loginMaxFails {
+		t.Fatalf("%d passwords checked in one window, limit %d", n, loginMaxFails)
+	}
+}
+
+// A successful login gives its attempt back; failures stay counted, and so
+// does each pending TOTP ticket a correct password yields.
+func TestConsoleLoginRefundsSuccess(t *testing.T) {
+	c, clock := newConsole(t)
+	ctx := context.Background()
+	pw, _ := c.CreateAdmin(ctx, nil, "", "owner", "", RoleOwner)
+	for i := 0; i < loginMaxFails-1; i++ {
+		_, _ = c.Login(ctx, LoginInput{Username: "owner", Password: "nope", IP: "203.0.113.8"})
+	}
+	for i := 0; i < 5; i++ {
+		if _, err := c.Login(ctx, LoginInput{Username: "owner", Password: pw, IP: "203.0.113.8"}); err != nil {
+			t.Fatalf("success %d after %d failures: %v", i, loginMaxFails-1, err)
+		}
+	}
+	_, _ = c.Login(ctx, LoginInput{Username: "owner", Password: "nope", IP: "203.0.113.8"})
+	if _, err := c.Login(ctx, LoginInput{Username: "owner", Password: pw, IP: "203.0.113.8"}); !errors.Is(err, ErrLoginLocked) {
+		t.Fatalf("not locked after %d failures: %v", loginMaxFails, err)
+	}
+
+	// TOTP on: a correct password mints a ticket and the attempt stays counted.
+	c2, _ := newConsole(t)
+	pw2, _ := c2.CreateAdmin(ctx, nil, "", "ops", "", RoleOperator)
+	p, _ := c2.Login(ctx, LoginInput{Username: "ops", Password: pw2})
+	secret, _, _ := c2.BeginTOTP(ctx, p)
+	code, _ := totp.Code(secret, *clock)
+	if err := c2.ConfirmTOTP(ctx, p, "", code); err != nil {
+		t.Fatal(err)
+	}
+	tickets := 0
+	for i := 0; i < loginMaxFails+5; i++ {
+		var ch *OTPChallenge
+		if _, err := c2.Login(ctx, LoginInput{Username: "ops", Password: pw2, IP: "203.0.113.9"}); errors.As(err, &ch) {
+			tickets++
+		}
+	}
+	if tickets > loginMaxFails {
+		t.Fatalf("%d pending tickets minted in one window, limit %d", tickets, loginMaxFails)
 	}
 }

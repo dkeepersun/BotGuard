@@ -39,6 +39,7 @@ final class BotGuardServiceProvider extends ServiceProvider
         $this->app->scoped(BotGuard::class, fn ($app) => new BotGuard(
             static fn (): Client => $app->make(Client::class),
             self::logger($app),
+            self::accept($app['config']['botguard.accept'] ?? []),
         ));
     }
 
@@ -66,6 +67,19 @@ final class BotGuardServiceProvider extends ServiceProvider
                 return Container::getInstance()->make(BotGuard::class)->passes($value, (string) $parameters[0]);
             }, '人机验证未通过，请重新验证');
         });
+    }
+
+    /**
+     * Step-up classes to let through, from config/env: only an explicit
+     * true ("true", "1", "on", "yes") counts.
+     *
+     * @return array{fallback: bool, degraded: bool, high_risk: bool}
+     */
+    private static function accept(mixed $value): array
+    {
+        $value = is_array($value) ? $value : [];
+        $on = static fn (string $k): bool => filter_var($value[$k] ?? false, FILTER_VALIDATE_BOOLEAN);
+        return ['fallback' => $on('fallback'), 'degraded' => $on('degraded'), 'high_risk' => $on('high_risk')];
     }
 
     /** Seconds from config/env: empty, non-numeric or non-positive values use the default. */

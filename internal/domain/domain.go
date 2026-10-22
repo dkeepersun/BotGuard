@@ -93,6 +93,10 @@ type ActionPolicy struct {
 	Kinds      []string
 	Puzzles    int
 	Difficulty uint64
+	// ClientSelect lets the page choose among Kinds (kinds / levels in the
+	// challenge request). Off by default: a bot would always ask for the
+	// easiest kind.
+	ClientSelect bool
 }
 
 type App struct {

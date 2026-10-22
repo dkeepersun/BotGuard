@@ -42,7 +42,7 @@
 |---|---|---|
 | low | invisible | action 配置值 |
 | medium | 从 action 的题型列表随机抽一种（第一期只有 slider） | action 配置值 |
-| high | 列表中最难的题型（click_shape > click_text > rotate > slider） | action 配置值 × 4（选 fallback 时再 × 8） |
+| high | 列表中最难的题型（spatial > click_shape > click_icon > click_order > click_text > jigsaw > rotate > slider）；选 fallback 也照样出这个题型 | action 配置值 × 4 |
 
 **第一期不做“直接拒绝”**（已确认）。误判会把真实用户挡在门外，而高风险用户仍需解出更难的题。等有真实流量数据后再评估是否加入按 action 开启的硬拒绝。
 
@@ -227,6 +227,7 @@ solve 时按从便宜到贵的顺序校验：签名 → 期限 → 应用 / Orig
 滑块面板下方提供“无法完成拼图？”入口，点击后组件重新请求 challenge，并带上 `fallback: true`：
 
 - gateway 返回 `kind: "fallback"`：不出图形题，只有 PoW，难度为 action 配置值 × `Risk.FallbackDifficultyFactor`（默认 8）；在普通电脑上大约需要几秒，组件显示进度；
+- 风险为高时不提供 fallback：请求带 `fallback: true` 也照样出列表中最难的题型。fallback 只有 PoW，机器人用原生代码几毫秒就能算完，否则任何可疑客户端都能靠这个开关跳过图形题（2026-10-22 安全评估）；
 - fallback 签发有独立的、更严格的限流（默认每 IP 每分钟 5 次），与普通签发分开计数；
 - 签发出的 token 记录 `challenge_kind: "fallback"`，并在 `risk_reasons` 中带上 `FALLBACK_CHOSEN`。verify 结果对业务方可见，由业务方决定是否追加验证（例如短信）；
 - 机器人也会走这条路，所以它被设计得**更贵、更受限、而且对业务方可见**，而不是更容易。

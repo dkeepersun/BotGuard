@@ -66,6 +66,22 @@ func (r *Resolver) Resolve(req *http.Request) netip.Addr {
 	return addr
 }
 
+// Prefix is a coarser group than Bucket: IPv4 /24 and IPv6 /48, roughly
+// what one customer, data centre rack or tunnel broker allocation holds.
+// Limits on it make many addresses from one network cost like one.
+func Prefix(a netip.Addr) string {
+	if !a.IsValid() {
+		return "unknown"
+	}
+	a = a.Unmap()
+	bits := 24
+	if a.Is6() {
+		bits = 48
+	}
+	p, _ := a.Prefix(bits)
+	return p.String()
+}
+
 // Bucket groups IPv6 clients by /64 so rotating within one allocation does
 // not reset rate limits.
 func Bucket(a netip.Addr) string {

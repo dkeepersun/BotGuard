@@ -32,6 +32,8 @@ type Guard struct {
 	onReject  func(http.ResponseWriter, *http.Request, *Result)
 	onError   func(http.ResponseWriter, *http.Request, error)
 	logger    *slog.Logger
+	// accept lists the step-up reasons let through (AllowFallback & co.).
+	accept map[string]bool
 }
 
 // GuardOption configures a Guard.
@@ -55,6 +57,31 @@ func WithTokenField(name string) GuardOption {
 // idempotent answer. The default is a fresh UUID per request.
 func WithRequestID(f func(*http.Request) string) GuardOption {
 	return func(g *Guard) { g.requestID = f }
+}
+
+// AllowFallback lets tokens earned on the accessible fallback through. By
+// default they are rejected with ReasonStepUpFallback: the fallback is proof
+// of work only. Allow it when the business adds its own check for such
+// requests, or values accessibility over the cost to bots.
+func AllowFallback() GuardOption { return allow(ReasonStepUpFallback) }
+
+// AllowDegraded lets tokens earned while the gateway had no image capacity
+// (CAPACITY_DEGRADED, proof of work only) through. By default they are
+// rejected with ReasonStepUpDegraded; allowing them keeps the action usable
+// under an image-quota flood at the price of the cheaper path.
+func AllowDegraded() GuardOption { return allow(ReasonStepUpDegraded) }
+
+// AllowHighRisk lets high-risk tokens through. By default they are rejected
+// with ReasonStepUpHighRisk, although the client solved the hardest kind.
+func AllowHighRisk() GuardOption { return allow(ReasonStepUpHighRisk) }
+
+func allow(reason string) GuardOption {
+	return func(g *Guard) {
+		if g.accept == nil {
+			g.accept = map[string]bool{}
+		}
+		g.accept[reason] = true
+	}
 }
 
 // WithGuardAppKey verifies against this app instead of the client's WithAppKey.
@@ -113,10 +140,23 @@ func formOrHeader(r *http.Request, field string) string {
 }
 
 // Check verifies the request's token. It returns a Result (passed or
-// rejected) or a *CallerError / *UnknownError, exactly like Client.Verify.
+// rejected) or a *CallerError / *UnknownError, like Client.Verify.
+//
+// A pass that needs a step-up (Result.StepUp) and is not allowed by
+// AllowFallback, AllowDegraded or AllowHighRisk comes back rejected, with the
+// step-up reason and the gateway's risk fields kept for OnReject.
 func (g *Guard) Check(r *http.Request) (*Result, error) {
-	return g.client.Verify(r.Context(), VerifyRequest{AppKey: g.appKey, Token: g.tokenFrom(r),
+	res, err := g.client.Verify(r.Context(), VerifyRequest{AppKey: g.appKey, Token: g.tokenFrom(r),
 		Action: g.action, RequestID: g.requestID(r)})
+	if err != nil {
+		return nil, err
+	}
+	if why := res.StepUp(); why != "" && !g.accept[why] {
+		held := *res
+		held.Passed, held.Reason = false, why
+		return &held, nil
+	}
+	return res, nil
 }
 
 // Middleware lets the request through only when its token passes; the
@@ -174,7 +214,12 @@ func ErrorResponse(err error) (status int, body map[string]string, retryAfter ti
 }
 
 // RejectResponse is the default status and body for a rejected token.
+// A step-up rejection answers BOTGUARD_STEP_UP instead, so the page can offer
+// the extra check rather than another captcha.
 func RejectResponse(res *Result) (status int, body map[string]string) {
+	if IsStepUp(res.Reason) {
+		return http.StatusForbidden, map[string]string{"code": "BOTGUARD_STEP_UP", "reason": res.Reason, "message": "需要进一步验证"}
+	}
 	return http.StatusForbidden, map[string]string{"code": "BOTGUARD_REJECTED", "reason": res.Reason, "message": "人机验证未通过，请重新验证"}
 }
 

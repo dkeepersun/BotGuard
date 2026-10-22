@@ -144,11 +144,11 @@ func (r *AppAdmin) upsertAction() string {
 	if r.conn.Driver == store.MySQL {
 		return `
 ON DUPLICATE KEY UPDATE enabled = VALUES(enabled), challenge_mode = VALUES(challenge_mode),
-  challenge_kinds = VALUES(challenge_kinds), pow_puzzles = VALUES(pow_puzzles), pow_difficulty = VALUES(pow_difficulty)`
+  challenge_kinds = VALUES(challenge_kinds), client_select = VALUES(client_select), pow_puzzles = VALUES(pow_puzzles), pow_difficulty = VALUES(pow_difficulty)`
 	}
 	return `
 ON CONFLICT (app_id, action) DO UPDATE SET enabled = excluded.enabled, challenge_mode = excluded.challenge_mode,
-  challenge_kinds = excluded.challenge_kinds, pow_puzzles = excluded.pow_puzzles, pow_difficulty = excluded.pow_difficulty`
+  challenge_kinds = excluded.challenge_kinds, client_select = excluded.client_select, pow_puzzles = excluded.pow_puzzles, pow_difficulty = excluded.pow_difficulty`
 }
 
 func (r *AppAdmin) UpsertAction(ctx context.Context, appKey, action string, p domain.ActionPolicy) error {
@@ -160,16 +160,16 @@ func (r *AppAdmin) UpsertAction(ctx context.Context, appKey, action string, p do
 		// Saving the same policy again is a no-op: no new policy version, no
 		// audit row (seed scripts and retries re-apply configuration).
 		var cur []actionRow
-		if err := s.QueryRowsCtx(ctx, &cur, "SELECT action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty FROM botguard_app_action WHERE app_id = ? AND action = ?"+r.conn.ForUpdate(), id, action); err != nil {
+		if err := s.QueryRowsCtx(ctx, &cur, "SELECT action, enabled, challenge_mode, challenge_kinds, client_select, pow_puzzles, pow_difficulty FROM botguard_app_action WHERE app_id = ? AND action = ?"+r.conn.ForUpdate(), id, action); err != nil {
 			return err
 		}
 		if len(cur) == 1 && cur[0].Enabled == p.Enabled && cur[0].Mode == p.Mode && cur[0].Kinds == strings.Join(p.Kinds, ",") &&
-			cur[0].Puzzles == p.Puzzles && cur[0].Difficulty == p.Difficulty {
+			cur[0].Client == p.ClientSelect && cur[0].Puzzles == p.Puzzles && cur[0].Difficulty == p.Difficulty {
 			return nil
 		}
-		if _, err := s.ExecCtx(ctx, `INSERT INTO botguard_app_action (app_id, action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty)
-VALUES (?, ?, ?, ?, ?, ?, ?)`+r.upsertAction(),
-			id, action, p.Enabled, p.Mode, strings.Join(p.Kinds, ","), p.Puzzles, p.Difficulty); err != nil {
+		if _, err := s.ExecCtx(ctx, `INSERT INTO botguard_app_action (app_id, action, enabled, challenge_mode, challenge_kinds, client_select, pow_puzzles, pow_difficulty)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)`+r.upsertAction(),
+			id, action, p.Enabled, p.Mode, strings.Join(p.Kinds, ","), p.ClientSelect, p.Puzzles, p.Difficulty); err != nil {
 			return err
 		}
 		if err := bumpPolicy(ctx, s, id); err != nil {
@@ -319,6 +319,7 @@ type ActionDetail struct {
 	Enabled    bool   `db:"enabled"`
 	Mode       string `db:"challenge_mode"`
 	Kinds      string `db:"challenge_kinds"`
+	Client     bool   `db:"client_select"`
 	Puzzles    int    `db:"pow_puzzles"`
 	Difficulty uint64 `db:"pow_difficulty"`
 }
@@ -357,7 +358,7 @@ func (r *AppAdmin) AppDetail(ctx context.Context, appKey string) (*AppDetail, er
 		return nil, err
 	}
 	if err := r.conn.QueryRowsCtx(ctx, &d.Actions,
-		"SELECT action, enabled, challenge_mode, challenge_kinds, pow_puzzles, pow_difficulty FROM botguard_app_action WHERE app_id = ? ORDER BY action", id); err != nil {
+		"SELECT action, enabled, challenge_mode, challenge_kinds, client_select, pow_puzzles, pow_difficulty FROM botguard_app_action WHERE app_id = ? ORDER BY action", id); err != nil {
 		return nil, err
 	}
 	if err := r.conn.QueryRowsCtx(ctx, &d.Secrets,

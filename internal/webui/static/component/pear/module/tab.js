@@ -9,6 +9,14 @@ layui.define(['jquery', 'element'], function(exports) {
 		this.option = opt;
 	};
 
+	// Titles come from page data (app names are free text): never splice them
+	// into markup unescaped. Ids and urls get the same treatment.
+	var esc = function(s) {
+		return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+			return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+		});
+	};
+
 	var tabData = new Array();
 	var tabDataCurrent = 0;
 	var contextTabDOM;
@@ -172,17 +180,17 @@ layui.define(['jquery', 'element'], function(exports) {
 	pearTab.prototype.addTab = function(opt) {
 		var title = '';
 		if (opt.close) {
-			title += '<span class="pear-tab-active"></span><span class="able-close title">' + opt.title +
+			title += '<span class="pear-tab-active"></span><span class="able-close title">' + esc(opt.title) +
 				'</span><i class="layui-icon layui-unselect layui-tab-close">ဆ</i>';
 		} else {
-			title += '<span class="pear-tab-active"></span><span class="disable-close title">' + opt.title +
+			title += '<span class="pear-tab-active"></span><span class="disable-close title">' + esc(opt.title) +
 				'</span><i class="layui-icon layui-unselect layui-tab-close">ဆ</i>';
 		}
 		element.tabAdd(this.option.elem, {
 			title: title,
-			content: '<iframe id="' + opt.id + '" data-frameid="' + opt.id +
+			content: '<iframe id="' + esc(opt.id) + '" data-frameid="' + esc(opt.id) +
 				'" scrolling="auto" frameborder="0" src="' +
-				opt.url + '" style="width:100%;height:100%;" allowfullscreen="true"></>',
+				esc(opt.url) + '" style="width:100%;height:100%;" allowfullscreen="true"></>',
 			id: opt.id
 		});
 		tabData.push(opt);
@@ -196,7 +204,7 @@ layui.define(['jquery', 'element'], function(exports) {
 	pearTab.prototype.changeTabTitleById = function(elem, id, title) {
 		var currentTab = $(".layui-tab[lay-filter='" + elem + "'] .layui-tab-title [lay-id='" + id +
 			"'] .title");
-		currentTab.html(title);
+		currentTab.text(title);
 	}
 
 	// 根据过滤 filter 标识, 删除指定选项卡
@@ -244,18 +252,18 @@ layui.define(['jquery', 'element'], function(exports) {
 	pearTab.prototype.addTabOnlyByElem = function(elem, opt, time) {
 		var title = '';
 		if (opt.close) {
-			title += '<span class="pear-tab-active"></span><span class="able-close title">' + opt.title +
+			title += '<span class="pear-tab-active"></span><span class="able-close title">' + esc(opt.title) +
 				'</span><i class="layui-icon layui-unselect layui-tab-close">ဆ</i>'
 		} else {
-			title += '<span class="pear-tab-active"></span><span class="disable-close title">' + opt.title +
+			title += '<span class="pear-tab-active"></span><span class="disable-close title">' + esc(opt.title) +
 				'</span><i class="layui-icon layui-unselect layui-tab-close">ဆ</i>'
 		}
 		if ($(".layui-tab[lay-filter='" + elem + "'] .layui-tab-title li[lay-id]").length <= 0) {
 			element.tabAdd(elem, {
 				title: title,
-				content: '<iframe id="' + opt.id + '" data-frameid="' + opt.id +
+				content: '<iframe id="' + esc(opt.id) + '" data-frameid="' + esc(opt.id) +
 					'" scrolling="auto" frameborder="0" src="' +
-					opt.url + '" style="width:100%;height:100%;" allowfullscreen="true"></iframe>',
+					esc(opt.url) + '" style="width:100%;height:100%;" allowfullscreen="true"></iframe>',
 				id: opt.id
 			});
 			if (time != false && time != 0) {
@@ -274,9 +282,9 @@ layui.define(['jquery', 'element'], function(exports) {
 			if (isData == false) {
 				element.tabAdd(elem, {
 					title: title,
-					content: '<iframe id="' + opt.id + '" data-frameid="' + opt.id +
+					content: '<iframe id="' + esc(opt.id) + '" data-frameid="' + esc(opt.id) +
 						'" scrolling="auto" frameborder="0" src="' +
-						opt.url + '" style="width:100%;height:100%;" allowfullscreen="true"></iframe>',
+						esc(opt.url) + '" style="width:100%;height:100%;" allowfullscreen="true"></iframe>',
 					id: opt.id
 				});
 				if (time != false && time != 0) {
@@ -295,19 +303,19 @@ layui.define(['jquery', 'element'], function(exports) {
 	pearTab.prototype.addTabOnly = function(opt, time) {
 		var title = '';
 		if (opt.close) {
-			title += '<span class="pear-tab-active"></span><span class="able-close title">' + opt.title +
+			title += '<span class="pear-tab-active"></span><span class="able-close title">' + esc(opt.title) +
 				'</span><i class="layui-icon layui-unselect layui-tab-close">ဆ</i>';
 		} else {
-			title += '<span class="pear-tab-active"></span><span class="disable-close title">' + opt.title +
+			title += '<span class="pear-tab-active"></span><span class="disable-close title">' + esc(opt.title) +
 				'</span><i class="layui-icon layui-unselect layui-tab-close">ဆ</i>';
 		}
 		if ($(".layui-tab[lay-filter='" + this.option.elem + "'] .layui-tab-title li[lay-id]").length <=
 			0) {
 			element.tabAdd(this.option.elem, {
 				title: title,
-				content: '<iframe id="' + opt.id + '" data-frameid="' + opt.id +
+				content: '<iframe id="' + esc(opt.id) + '" data-frameid="' + esc(opt.id) +
 					'" scrolling="auto" frameborder="0" src="' +
-					opt.url + '" style="width:100%;height:100%;" allowfullscreen="true"></iframe>',
+					esc(opt.url) + '" style="width:100%;height:100%;" allowfullscreen="true"></iframe>',
 				id: opt.id
 			});
 			if (time != false && time != 0) {
@@ -340,9 +348,9 @@ layui.define(['jquery', 'element'], function(exports) {
 
 				element.tabAdd(this.option.elem, {
 					title: title,
-					content: '<iframe id="' + opt.id + '" data-frameid="' + opt.id +
+					content: '<iframe id="' + esc(opt.id) + '" data-frameid="' + esc(opt.id) +
 						'" scrolling="auto" frameborder="0" src="' +
-						opt.url + '" style="width:100%;height:100%;" allowfullscreen="true"></iframe>',
+						esc(opt.url) + '" style="width:100%;height:100%;" allowfullscreen="true"></iframe>',
 					id: opt.id
 				});
 				if (time != false && time != 0) {
@@ -466,36 +474,36 @@ layui.define(['jquery', 'element'], function(exports) {
 		$.each(option.data, function(i, item) {
 			var TitleItem = '';
 			if (option.index == index) {
-				TitleItem += '<li lay-id="' + item.id +
+				TitleItem += '<li lay-id="' + esc(item.id) +
 					'" class="layui-this"><span class="pear-tab-active"></span>';
 			} else {
-				TitleItem += '<li lay-id="' + item.id + '" ><span class="pear-tab-active"></span>';
+				TitleItem += '<li lay-id="' + esc(item.id) + '" ><span class="pear-tab-active"></span>';
 			}
 
 			if (item.close) {
 				// 当 前 选 项 卡 可 以 关 闭
-				TitleItem += '<span class="able-close title">' + item.title + '</span>';
+				TitleItem += '<span class="able-close title">' + esc(item.title) + '</span>';
 			} else {
 				// 当 前 选 项 卡 不 允 许 关 闭
-				TitleItem += '<span class="disable-close title">' + item.title + '</span>';
+				TitleItem += '<span class="disable-close title">' + esc(item.title) + '</span>';
 			}
 			TitleItem += '<i class="layui-icon layui-unselect layui-tab-close">ဆ</i></li>';
 			title += TitleItem;
 			if (option.index == index) {
 
 				// 处 理 显 示 内 容
-				content += '<div class="layui-show layui-tab-item"><iframe id="' + item.id +
-					'" data-frameid="' + item.id +
-					'"  src="' + item.url +
+				content += '<div class="layui-show layui-tab-item"><iframe id="' + esc(item.id) +
+					'" data-frameid="' + esc(item.id) +
+					'"  src="' + esc(item.url) +
 					'" frameborder="no" border="0" marginwidth="0" marginheight="0" style="width: 100%;height: 100%;" allowfullscreen="true"></iframe></div>'
 			} else {
 				if (!option.preload) {
 					item.url = "about:blank";
 				}
 				// 处 理 显 示 内 容
-				content += '<div class="layui-tab-item"><iframe id="' + item.id + '" data-frameid="' +
-					item.id + '"  src="' +
-					item.url +
+				content += '<div class="layui-tab-item"><iframe id="' + esc(item.id) + '" data-frameid="' +
+					esc(item.id) + '"  src="' +
+					esc(item.url) +
 					'" frameborder="no" border="0" marginwidth="0" marginheight="0" style="width: 100%;height: 100%;" allowfullscreen="true"></iframe></div>'
 			}
 			index++;

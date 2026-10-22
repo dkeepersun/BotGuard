@@ -50,12 +50,13 @@ const usage = `用法：botguard-ctl <命令> [参数]
   app disable -app app_key                          停用应用
   origin add    -app app_key -origin URL            添加允许来源，如 https://example.com；子域名通配 https://*.example.com；全部允许 *；App 用 app://包名
   origin remove -app app_key -origin URL            移除允许来源
-  action set -app app_key -action 名称 [-mode adaptive] [-kinds slider,rotate,click_text,click_shape]
+  action set -app app_key -action 名称 [-mode adaptive] [-kinds slider,rotate,click_text,click_shape] [-client-kinds=false]
              [-enabled=true] [-puzzles 8] [-difficulty 2000]
                                                     新增或修改 action；只修改显式给出的参数。
                                                     mode：invisible（无感）、interactive（每次从 kinds 随机出题）、
                                                     adaptive（按风险出题，新建 action 的默认值）；slider 等同
-                                                    interactive 且只出滑块。kinds：可出的交互题型，默认全部
+                                                    interactive 且只出滑块。kinds：可出的交互题型，默认全部。
+                                                    client-kinds：是否采纳页面请求里的 kinds / levels，默认否
   secret create -app app_key [-ttl 0]               生成密钥对（secret_id + secret_key），secret_key 只显示这一次
   secret revoke -secret secret_id                   吊销密钥对
   secret rotate -secret secret_id [-grace 24h] [-ttl 0]
@@ -344,6 +345,13 @@ func enabledText(b bool) string {
 	return "停用"
 }
 
+func allowedText(b bool) string {
+	if b {
+		return "允许"
+	}
+	return "不允许"
+}
+
 func (a *App) appShow(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("app show", flag.ContinueOnError)
 	app := fs.String("app", "", "")
@@ -370,9 +378,9 @@ func (a *App) appShow(ctx context.Context, args []string) error {
 		fmt.Fprintln(a.Out, "  （无）")
 	} else {
 		w := tabwriter.NewWriter(a.Out, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "  名称\t状态\t模式\t题型\tpuzzles\tdifficulty")
+		fmt.Fprintln(w, "  名称\t状态\t模式\t题型\t页面指定\tpuzzles\tdifficulty")
 		for _, x := range d.Actions {
-			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%d\t%d\n", x.Action, enabledText(x.Enabled), x.Mode, x.Kinds, x.Puzzles, x.Difficulty)
+			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\t%d\t%d\n", x.Action, enabledText(x.Enabled), x.Mode, x.Kinds, allowedText(x.Client), x.Puzzles, x.Difficulty)
 		}
 		_ = w.Flush()
 	}
@@ -457,6 +465,7 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 	difficulty := fs.Uint64("difficulty", logic.DefaultDifficulty, "")
 	mode := fs.String("mode", domain.ModeAdaptive, "")
 	kinds := fs.String("kinds", strings.Join(domain.InteractiveKinds, ","), "")
+	clientKinds := fs.Bool("client-kinds", false, "")
 	if err := parse(fs, args, "app", "action"); err != nil {
 		return err
 	}
@@ -479,7 +488,7 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 	for _, x := range d.Actions {
 		if x.Action == *action {
 			p = domain.ActionPolicy{Enabled: x.Enabled, Mode: x.Mode, Kinds: repository.ParseKinds(x.Kinds),
-				Puzzles: x.Puzzles, Difficulty: x.Difficulty}
+				ClientSelect: x.Client, Puzzles: x.Puzzles, Difficulty: x.Difficulty}
 		}
 	}
 	fs.Visit(func(f *flag.Flag) {
@@ -492,6 +501,8 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 			p.Difficulty = *difficulty
 		case "mode":
 			p.Mode = *mode
+		case "client-kinds":
+			p.ClientSelect = *clientKinds
 		case "kinds":
 			p.Kinds = nil
 			for _, k := range strings.Split(*kinds, ",") {
@@ -507,8 +518,8 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 	if p.Mode == domain.ModeSlider {
 		p.Mode, p.Kinds = domain.ModeInteractive, []string{domain.KindSlider}
 	}
-	fmt.Fprintf(a.Out, "action %s：%s，模式 %s，题型 %s，puzzles=%d，difficulty=%d（每次验证期望总尝试次数约 %d）\n",
-		*action, enabledText(p.Enabled), p.Mode, strings.Join(p.Kinds, ","), p.Puzzles, p.Difficulty, uint64(p.Puzzles)*p.Difficulty)
+	fmt.Fprintf(a.Out, "action %s：%s，模式 %s，题型 %s，页面指定题型 %s，puzzles=%d，difficulty=%d（每次验证期望总尝试次数约 %d）\n",
+		*action, enabledText(p.Enabled), p.Mode, strings.Join(p.Kinds, ","), allowedText(p.ClientSelect), p.Puzzles, p.Difficulty, uint64(p.Puzzles)*p.Difficulty)
 	fmt.Fprintln(a.Out, "注意：gateway 的 Challenge.MaxDifficulty 会限制实际难度。")
 	return nil
 }

@@ -47,6 +47,11 @@ func validAppText(name, remark string) error {
 	if utf8.RuneCountInString(remark) > 255 {
 		return invalid("备注不能超过 255 个字符")
 	}
+	// Pages escape these, but a name is shown in many places (tabs, the app
+	// switcher, integration snippets); there is no reason to store markup.
+	if strings.ContainsAny(name+remark, "<>") {
+		return invalid("应用名称和备注不能包含 < 或 >")
+	}
 	return nil
 }
 
@@ -147,7 +152,7 @@ func (a *AppAdmin) SetAction(ctx context.Context, appKey, action string, p domai
 		return invalid("difficulty 须在 1–%d 之间", MaxDifficulty)
 	}
 	ctx = repository.Audited(ctx, "action.set", appKey, map[string]any{"action": action, "enabled": p.Enabled, "mode": p.Mode,
-		"kinds": p.Kinds, "puzzles": p.Puzzles, "difficulty": p.Difficulty})
+		"kinds": p.Kinds, "client_select": p.ClientSelect, "puzzles": p.Puzzles, "difficulty": p.Difficulty})
 	return a.Repo.UpsertAction(ctx, appKey, action, p)
 }
 

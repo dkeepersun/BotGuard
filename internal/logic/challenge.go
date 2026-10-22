@@ -35,6 +35,9 @@ const (
 	dimFallback = "fallback"
 	// dimAppInteractive counts interactive challenges per app.
 	dimAppInteractive = "appinteractive"
+	// dimPrefixInteractive counts interactive challenges per app and client
+	// network prefix (clientip.Prefix).
+	dimPrefixInteractive = "prefixinteractive"
 )
 
 // sealedState travels inside the signed challenge, encrypted: the browser
@@ -121,7 +124,9 @@ type JigsawRender struct {
 // and medium risk pick at random from the action's kinds, so an attacker
 // cannot tune for one style; high risk gets the hardest kind offered. Every
 // kind also carries proof of work; high risk and the fallback path make it
-// costlier. requested is the page's selection, already resolved against the
+// costlier. A high-risk client gets no fallback: the fallback is PoW alone,
+// which a bot computes natively in milliseconds, so offering it there would
+// let any suspicious client skip the picture by asking. requested is the page's selection, already resolved against the
 // action (Selection.candidates): below high risk the pick comes from it.
 func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback bool, requested []string, pick func(int) int) (kind string, factor uint64) {
 	factor = 1
@@ -132,13 +137,12 @@ func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback 
 	switch {
 	case policy.Mode == domain.ModeInvisible:
 		return domain.KindInvisible, factor
-	case fallback:
-		// The factors compound: choosing fallback must never make a
-		// high-risk client's work cheaper than its hardest interactive kind.
-		return domain.KindFallback, factor * max(1, g.Settings.FallbackDifficultyFactor)
 	case level == risk.LevelHigh:
-		// The page's selection cannot lower the floor for a suspicious client.
+		// Neither the fallback nor the page's selection can lower the floor
+		// for a suspicious client.
 		return domain.Hardest(kinds), factor
+	case fallback:
+		return domain.KindFallback, factor * max(1, g.Settings.FallbackDifficultyFactor)
 	case len(requested) > 0:
 		return requested[pick(len(requested))], factor
 	case policy.Mode == domain.ModeInteractive || level == risk.LevelMedium:
@@ -227,7 +231,22 @@ func (g *Gateway) generate(kind string) (any, error) {
 // caller then degrades.
 // The quota counts across addresses and replicas, so a flood spread over many
 // IPs against one app cannot take the image capacity every app shares.
-func (g *Gateway) interactivePuzzle(ctx context.Context, appID int64, kind string) (puzzle any, cause string, err error) {
+//
+// Issuing costs the client nothing, so the app quota alone would let anyone
+// spend it from a few networks and push the app onto the PoW-only path. A
+// network prefix over its own share is therefore refused (429) before it
+// touches the app quota: degrading it would hand it exactly that cheap path.
+func (g *Gateway) interactivePuzzle(ctx context.Context, appID int64, prefix, kind string) (puzzle any, cause string, err error) {
+	if quota := g.Settings.InteractivePerPrefixPerMinute; quota > 0 {
+		ok, retry, err := g.Limiter.Allow(ctx, dimPrefixInteractive, strconv.FormatInt(appID, 10)+":"+prefix, quota, rateWindow)
+		if err != nil {
+			logx.WithContext(ctx).Errorf("rate limiter %s: %v", dimPrefixInteractive, err)
+			return nil, "", errx.ErrUnavailable
+		}
+		if !ok {
+			return nil, "", errx.RateLimited(retry)
+		}
+	}
 	if quota := g.Settings.InteractivePerAppPerMinute; quota > 0 {
 		ok, _, err := g.Limiter.Allow(ctx, dimAppInteractive, strconv.FormatInt(appID, 10), quota, rateWindow)
 		if err != nil {
@@ -306,6 +325,13 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	if !ok || !policy.Enabled {
 		return nil, origin, errx.ErrActionForbidden
 	}
+	// The page's kinds / levels count only where the action opts in: anyone
+	// can write them, so left on by default they would let a bot always ask
+	// for the easiest kind. Elsewhere they are ignored, not refused, so a
+	// page configured for them keeps working when the switch is off.
+	if !policy.ClientSelect {
+		in.Select = Selection{}
+	}
 
 	if in.Signals != nil {
 		s := *in.Signals
@@ -332,9 +358,10 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	}
 	kind, factor := g.chooseKind(policy, level, in.Fallback, in.Select.candidates(policy, level, rung), rand.IntN)
 	var puzzle any
+	degraded := false
 	if domain.ValidInteractiveKind(kind) {
 		var cause string
-		if puzzle, cause, err = g.interactivePuzzle(ctx, app.ID, kind); err != nil {
+		if puzzle, cause, err = g.interactivePuzzle(ctx, app.ID, clientip.Prefix(in.ClientIP), kind); err != nil {
 			return nil, origin, err
 		}
 		if puzzle == nil {
@@ -343,12 +370,18 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 			// a flood its goal, so the client gets harder PoW instead and the
 			// business server sees why in risk_reasons.
 			kind, factor = domain.KindInvisible, factor*max(1, g.Settings.DegradedDifficultyFactor)
+			degraded = true
 			assessment = assessment.Add(risk.Assessment{Reasons: []string{risk.ReasonCapacityDegraded}})
 		}
 	}
 	st.kind, st.level, st.reasons = kind, level, assessment.Reasons
 
 	difficulty := min(policy.Difficulty*factor, g.Settings.MaxDifficulty)
+	if degraded {
+		// A multiple of a small action difficulty is still nearly free for
+		// native code; the degraded path gets an absolute floor as well.
+		difficulty = min(max(difficulty, g.Settings.DegradedMinDifficulty), g.Settings.MaxDifficulty)
+	}
 	params, err := pow.NewParams(policy.Puzzles, difficulty)
 	if err != nil {
 		logx.WithContext(ctx).Errorf("app %d action %s has invalid pow policy", app.ID, in.Action)

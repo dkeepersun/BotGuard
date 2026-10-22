@@ -3,7 +3,7 @@ module github.com/dkeepersun/BotGuard/packages/go/gin
 go 1.22
 
 require (
-	github.com/dkeepersun/BotGuard/packages/go v0.1.0
+	github.com/dkeepersun/BotGuard/packages/go v0.2.0
 	github.com/gin-gonic/gin v1.10.0
 )
 

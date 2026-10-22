@@ -74,7 +74,7 @@ r.POST("/login", botguardgin.Protect(botguard.NewGuard(client, "login")), func(c
 })
 ```
 
-`botguardgin.OnReject`、`botguardgin.OnError` 可以换成自己的响应格式（回调里要 `c.Abort...`）。
+`botguardgin.OnReject`、`botguardgin.OnError` 可以换成自己的响应格式，例如 `c.JSON(400, ...)`。回调返回后 `Protect` 一定会中止后续处理器，回调里不需要、也不能靠自己调用 `c.Abort`；回调什么都没写时，返回默认的 403 / 500 / 503。
 
 ### go-zero
 
@@ -95,6 +95,7 @@ server.AddRoutes(rest.WithMiddlewares([]rest.Middleware{login}, rest.Route{
 |---|---|
 | 通过 | 放行，结果放进 request context（`botguard.ResultFrom`） |
 | 拒绝 | 403 `{"code":"BOTGUARD_REJECTED","reason":"TOKEN_EXPIRED","message":"人机验证未通过，请重新验证"}` |
+| 通过，但需要额外验证（见下文） | 403 `{"code":"BOTGUARD_STEP_UP","reason":"STEP_UP_FALLBACK","message":"需要进一步验证"}` |
 | `CallerError` | 记录 error 日志，500 `{"code":"BOTGUARD_MISCONFIGURED",...}` |
 | `UnknownError` | 记录 error 日志，503 `{"code":"BOTGUARD_UNAVAILABLE",...}`，有 Retry-After 时透传 |
 
@@ -102,6 +103,28 @@ server.AddRoutes(rest.WithMiddlewares([]rest.Middleware{login}, rest.Route{
 - 字段名不同用 `botguard.WithTokenField("captcha")`；request_id 默认每个请求新生成，要和业务幂等键绑定用 `botguard.WithRequestID`。
 - 一个请求的 token 只核验一次。中间件会消耗 token，所以放在普通字段校验、登录态检查之后，业务副作用之前。
 - 日志默认写到 `slog.Default()`，可以用 `botguard.WithLogger` 换掉；`botguard.OnReject` / `botguard.OnError` 可以替换 net/http 中间件的响应。
+
+### 额外验证（step-up）
+
+有三类 token 网关判为通过，但拿到的成本对机器人很低。中间件（net/http、gin、go-zero）**默认把它们当作未通过**，原因码分别是：
+
+| 原因码 | 情况 | 为什么 |
+|---|---|---|
+| `STEP_UP_FALLBACK` | 用户选了无障碍备用路径（`challenge_kind` 为 `fallback`） | 只有工作量证明，原生代码几十毫秒就能算完 |
+| `STEP_UP_DEGRADED` | 网关图片题容量不足，降级为工作量证明（`risk_reasons` 含 `CAPACITY_DEGRADED`） | 同上；攻击者可以故意刷满配额触发降级 |
+| `STEP_UP_HIGH_RISK` | 风险等级为 `high` | 解出了最难的题，但信号显示很可能是自动化 |
+
+响应码是 `BOTGUARD_STEP_UP`，页面可以据此改为让用户做短信验证等额外检查，而不是再弹一次验证码。确实要放行时逐类打开：
+
+```go
+guard := botguard.NewGuard(client, "login",
+	botguard.AllowFallback(),  // 例如业务自己会对这类请求追加短信验证
+	botguard.AllowDegraded(),  // 宁可放宽也不想在配额被刷满时影响用户
+	botguard.AllowHighRisk(),
+)
+```
+
+`OnReject` 拿到的 `*Result` 保留了网关返回的题型、风险等级和原因码。直接调用 `client.Verify` 时不做这项判断，可以用 `res.StepUp()` 自己判断。
 - `NewGuard` 在 app_key 缺失或 action 格式不对时直接 panic：这是启动时就该发现的配置错误。
 
 ## 本地校验

@@ -50,13 +50,14 @@ func newNonce() string {
 
 // secure sets the response headers every console response carries. Pages
 // are framed by the PearAdmin shell from the same origin only. Inline
-// scripts need the per-request nonce; Layui needs inline styles, and its
-// template engine needs eval in the shell.
+// scripts need the per-request nonce; Layui needs inline styles. No eval:
+// the bundled jQuery runs <script> found in inserted markup through eval, so
+// allowing it would turn any markup injection into script execution.
 func (s *Server) secure(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		nonce := newNonce()
 		h := w.Header()
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'nonce-"+nonce+"' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; "+
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'nonce-"+nonce+"'; style-src 'self' 'unsafe-inline'; "+
 			"img-src 'self' data:; font-src 'self' data:; connect-src 'self'; frame-src 'self'; frame-ancestors 'self'; form-action 'self'; base-uri 'none'; object-src 'none'")
 		h.Set("X-Frame-Options", "SAMEORIGIN")
 		h.Set("X-Content-Type-Options", "nosniff")
@@ -166,7 +167,7 @@ func sameOrigin(r *http.Request) bool {
 // _back field, else the same-origin page the form was on. Never the action
 // URL itself, which has no GET route.
 func returnPath(r *http.Request) string {
-	if back := r.PostFormValue("_back"); strings.HasPrefix(back, "/") && !strings.HasPrefix(back, "//") {
+	if back := r.PostFormValue("_back"); localPath(back) {
 		return back
 	}
 	if ref, err := url.Parse(r.Referer()); err == nil && ref.Host == r.Host && strings.HasPrefix(ref.Path, "/") {
