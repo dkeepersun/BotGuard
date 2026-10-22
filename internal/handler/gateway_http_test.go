@@ -167,6 +167,12 @@ func TestErrorEnvelopes(t *testing.T) {
 	if w.Code != 400 {
 		t.Fatalf("trailing data: %d %+v", w.Code, env)
 	}
+	// The page's kind selection reaches the logic: kinds and levels together are refused.
+	w, env = call(t, h, http.MethodPost, "/v1/challenges", "text/plain", "https://a.example", "",
+		`{"app_key":"app_public","action":"login","kinds":["slider"],"levels":[["slider"]]}`)
+	if w.Code != 400 || env.Code != "INVALID_REQUEST" || w.Header().Get("Access-Control-Allow-Origin") != "https://a.example" {
+		t.Fatalf("kinds and levels: %d %+v", w.Code, env)
+	}
 	// Oversized bodies get the contract's JSON 400, not a bare 413 (cmd/gateway
 	// turns go-zero's MaxBytes middleware off for this).
 	big := `{"app_key":"app_public","challenge":"` + strings.Repeat("x", 40<<10) + `"}`

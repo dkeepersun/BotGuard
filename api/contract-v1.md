@@ -61,13 +61,31 @@ SHA-256 在原生代码/GPU 上比浏览器快 2–3 个数量级，所以难度
 
 interactive 模式每次从列表随机选题；adaptive 模式中风险随机选、高风险选列表中最难的（spatial > click_shape > click_icon > click_order > click_text > jigsaw > rotate > slider）。风险为高时，任何题型的 PoW 难度 × 4，包括 fallback（倍数相乘），所以选 fallback 不会比高风险的点选题更便宜。实际难度不超过 `Challenge.MaxDifficulty`。应用超过图片题配额（`RateLimit.InteractivePerAppPerMinute`），或图片生成满载且预生成题库为空时，本该出的图片题降级为 `invisible`，PoW 难度再 × `Risk.DegradedDifficultyFactor`（默认 8），verify 的 `risk_reasons` 带 `CAPACITY_DEGRADED`；不返回 503。风险分和原因码只通过 verify 返回给业务服务器，不返回给浏览器。
 
+### 前端指定题型
+
+签发请求可以带 `kinds` 或 `levels`（二者只能选一个），在 action 的配置范围内指定题型：
+
+| 写法 | 效果 |
+|---|---|
+| `"kinds": ["slider"]` | 固定出这一种 |
+| `"kinds": ["slider", "rotate"]` | 在这几种中随机 |
+| `"kinds": ["*"]` | 在 action 启用的全部题型中随机 |
+| `"levels": [["invisible"], ["slider", "rotate"], ["spatial"]]` | 难度阶梯：从易到难的若干档，档内随机；按用户行为升降档 |
+
+规则：
+
+- 只认 action 题型列表中启用的题型，其余（含未知名称）忽略；过滤后为空时按 action 策略出题。`invisible` 只在 adaptive 模式、风险为低时有效，所以前端不能把 interactive 模式降为无感。invisible 模式的 action 忽略前端指定，始终无感。
+- 风险为高时仍出 action 列表中最难的题型，不受前端指定影响；fallback、PoW 难度倍数和容量降级规则不变。指定了 `kinds` 时风险为低也出交互题（invisible 除外）。
+- 阶梯：gateway 按应用 + IP 段记录用户所在档位（从 0 开始）。用 `levels` 签发的 challenge 在 solve 时，PoW 或答案错误升一档，连续通过 `Risk.LadderDowngradePasses`（默认 3）次降一档；档位在最后一次 solve 后 `Risk.LadderWindowSeconds`（默认 1800）秒过期。风险为中时至少从第 2 档开始，风险为高时同上一条。某档过滤后为空时用更难的一档（已在最高档则用更易的一档）。档位最多 8 档。
+- `kinds` 最多 16 项；`levels` 最多 8 档、每档最多 16 项；超出或两者同时出现返回 400 `INVALID_REQUEST`。
+
 ## GET /sdk/v1/{file}（浏览器组件脚本）
 
 gateway 托管浏览器组件：`load.js`（经典脚本，提供 `initBotGuard`，对应易盾的 `load.min.js`）、`botguard.js`、`signals.js`、`solver.js`、`worker.js`。这些是公开文件，返回 `Access-Control-Allow-Origin: *`，因为模块脚本和跨域 Worker 导入都要求 CORS；`Cache-Control: public, max-age=300`。不兼容的改动发布到新的路径版本（`/sdk/v2/`）。
 
 ## POST /v1/challenges（浏览器）
 
-请求：`app_key`、`action`，可选 `signals`（风险信号对象，字段见 `docs/challenge-types.md` §5，缺失计为 `NO_SIGNALS`）和 `fallback`（布尔，选择无障碍备用路径）。服务端从请求读取 Origin，校验精确应用白名单；缺失/`null` Origin 默认拒绝。原生 App（包括 uni-app App 端从逻辑层发出的请求）没有 Origin，可改用请求头 `X-BotGuard-Origin: app://包名`，白名单里登记同样的 `app://包名`；只有请求不带 Origin 时才读这个头，所以浏览器里的网页（POST 一定带 Origin，`null` 也算）无法冒充 App。App 来源的响应不带 CORS 头。和 Origin 一样，这个头能被脚本伪造，只用于区分应用的使用场景，不构成身份。仅为允许来源返回 CORS，`Vary: Origin`，不用跨站 cookie。预检请求不带 body、无法得知应用，因此对任何 Origin 都返回允许（`Access-Control-Max-Age: 600`）；真正的请求仍按应用白名单校验，且只对允许来源返回 CORS 头。
+请求：`app_key`、`action`，可选 `signals`（风险信号对象，字段见 `docs/challenge-types.md` §5，缺失计为 `NO_SIGNALS`）、`fallback`（布尔，选择无障碍备用路径），以及 `kinds`（字符串数组）或 `levels`（字符串数组的数组），见上文“前端指定题型”。服务端从请求读取 Origin，校验精确应用白名单；缺失/`null` Origin 默认拒绝。原生 App（包括 uni-app App 端从逻辑层发出的请求）没有 Origin，可改用请求头 `X-BotGuard-Origin: app://包名`，白名单里登记同样的 `app://包名`；只有请求不带 Origin 时才读这个头，所以浏览器里的网页（POST 一定带 Origin，`null` 也算）无法冒充 App。App 来源的响应不带 CORS 头。和 Origin 一样，这个头能被脚本伪造，只用于区分应用的使用场景，不构成身份。仅为允许来源返回 CORS，`Vary: Origin`，不用跨站 cookie。预检请求不带 body、无法得知应用，因此对任何 Origin 都返回允许（`Access-Control-Max-Age: 600`）；真正的请求仍按应用白名单校验，且只对允许来源返回 CORS 头。
 
 签发前校验应用/action 启用并完成签发限流。签发是无状态的：不写入任何 per-challenge 的 Redis 记录，只更新有界的限流计数。
 

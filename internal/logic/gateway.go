@@ -68,6 +68,11 @@ type Settings struct {
 	// challenge degrades for lack of image capacity.
 	DegradedDifficultyFactor uint64
 	FailureWindow            time.Duration
+	// LadderDowngradePasses passes in a row move a client one rung down the
+	// kind ladder a page asked for; LadderWindow is how long the rung lasts
+	// after the client's last solve.
+	LadderDowngradePasses int
+	LadderWindow          time.Duration
 
 	SliderTolerance int
 	// IPHashKey salts the IP tags in console events; empty disables them.

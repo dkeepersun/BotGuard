@@ -102,6 +102,8 @@ init({ element: '#captcha', endpoint, appKey, action: 'login', onVerify(err, ret
 | `mode` | `embed`（默认，嵌入页面）或 `popup`（弹出层，配合 `verify()` 或 `bindTo`） |
 | `auto` | 页面加载后自动开始验证，不用点击 |
 | `nonce` | CSP nonce，见下文“内容安全策略（CSP）”；`init()` 中对应 `nonce` 选项 |
+| `kinds` | 指定题型，逗号分隔：`slider` 固定、`slider,rotate` 随机、`*` 全部随机；见下文“指定题型” |
+| `levels` | 难度阶梯，档之间用 `;` 分隔：`invisible; slider,rotate; spatial`；与 `kinds` 同时设置时以 `levels` 为准 |
 
 `endpoint`、`app-key`、`action`、`field-name` 在验证通过后（或验证进行中）被修改时，组件会作废旧 token、回到初始状态，因为旧 token 是按旧的应用和场景签发的。
 
@@ -136,6 +138,27 @@ init({ element: '#captcha', endpoint, appKey, action: 'login', onVerify(err, ret
 组件被移出页面时，进行中的验证会被取消（Worker 停止，状态回到初始），再插回页面后可以重新验证；已拿到的 token 会保留，过期计时继续。
 
 token 的有效期优先使用服务端返回的相对时长 `expires_in`（秒），不受用户电脑时钟偏差影响；旧版 gateway 没有这个字段时按 `expires_at` 计算，结果不合理（≤ 0 或超过 10 分钟）时按 60 秒处理。组件会提前 3 秒视为过期。
+
+## 指定题型
+
+默认由服务端按 action 配置和风险决定出什么题。也可以在前端指定，但只能在 action 已启用的题型里选（管理后台应用详情页里该 action 的「可出题型」），其余忽略：
+
+```js
+init({ element: '#captcha', endpoint, appKey, action: 'login', kinds: ['slider'] });            // 固定滑块
+init({ element: '#captcha', endpoint, appKey, action: 'login', kinds: ['slider', 'rotate'] });  // 两种随机
+init({ element: '#captcha', endpoint, appKey, action: 'login', kinds: ['*'] });                 // 全部随机
+// 难度阶梯：答错升一档，连续答对 3 次降一档（服务端按应用 + IP 记录，30 分钟无操作后归零）
+init({ element: '#captcha', endpoint, appKey, action: 'login',
+  levels: [['invisible'], ['slider', 'rotate'], ['click_text', 'click_icon'], ['spatial']] });
+```
+
+标签写法：`<botguard-widget kinds="slider,rotate" …>`、`<botguard-widget levels="invisible; slider,rotate; spatial" …>`。
+
+服务端的兜底规则（前端无法绕过）：
+
+- 风险为高时始终出 action 中最难的题型，PoW 难度也照常提高；风险为中时阶梯至少从第 2 档开始；
+- `invisible`（无感）只在 action 为自适应模式、风险为低时有效；action 为无感模式时前端指定被忽略；
+- 档位数、升降规则和有效期见 [API 文档](../../api/contract-v1.md)“前端指定题型”。
 
 ## 尺寸与外观（H5 / App WebView）
 

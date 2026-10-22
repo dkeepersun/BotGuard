@@ -105,6 +105,56 @@ func (s *State) RecordFailure(ctx context.Context, ipBucket string, window time.
 	return err
 }
 
+// ladderScript moves a client's rung on the kind ladder: up one on a failure
+// (resetting the pass streak), down one after ARGV[2] passes in a row.
+//
+// KEYS[1] ladder key; ARGV[1] "1" passed / "0" failed, ARGV[2] passes per
+// step down, ARGV[3] top rung, ARGV[4] ttl seconds
+const ladderScript = `
+local level = tonumber(redis.call('HGET', KEYS[1], 'level') or '0')
+local streak = tonumber(redis.call('HGET', KEYS[1], 'streak') or '0')
+if ARGV[1] == '1' then
+  streak = streak + 1
+  if streak >= tonumber(ARGV[2]) then
+    if level > 0 then level = level - 1 end
+    streak = 0
+  end
+else
+  level = math.min(level + 1, tonumber(ARGV[3]))
+  streak = 0
+end
+redis.call('HSET', KEYS[1], 'level', level, 'streak', streak)
+redis.call('EXPIRE', KEYS[1], ARGV[4])
+return level
+`
+
+func ladderKey(appID int64, ipBucket string) string {
+	return fmt.Sprintf("bg:{%d}:ladder:%s", appID, ipBucket)
+}
+
+// LadderLevel returns the client's rung on an app's kind ladder, 0 if none.
+func (s *State) LadderLevel(ctx context.Context, appID int64, ipBucket string) (int, error) {
+	v, err := s.rds.HgetCtx(ctx, ladderKey(appID, ipBucket), "level")
+	if errors.Is(err, redis.Nil) || (err == nil && v == "") {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(v)
+}
+
+// RecordLadder moves the client's rung after a solve; the state lives for
+// window after the last solve.
+func (s *State) RecordLadder(ctx context.Context, appID int64, ipBucket string, passed bool, passesPerStep, top int, window time.Duration) error {
+	ok := "0"
+	if passed {
+		ok = "1"
+	}
+	_, err := s.rds.EvalCtx(ctx, ladderScript, []string{ladderKey(appID, ipBucket)}, ok, max(1, passesPerStep), top, ceilSeconds(window))
+	return err
+}
+
 // Failures returns the recent failed solves for an IP bucket.
 func (s *State) Failures(ctx context.Context, ipBucket string) (int, error) {
 	v, err := s.rds.GetCtx(ctx, failKey(ipBucket))

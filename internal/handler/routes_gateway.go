@@ -169,6 +169,9 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 		Action   string        `json:"action"`
 		Signals  *risk.Signals `json:"signals"`
 		Fallback bool          `json:"fallback"`
+		// Kinds or Levels: the page's requested kinds, see logic.Selection.
+		Kinds  []string   `json:"kinds"`
+		Levels [][]string `json:"levels"`
 	}
 	if err := decode(w, r, &body); err != nil {
 		fail(w, err, rid)
@@ -177,6 +180,7 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 	out, origin, err := g.Logic.Issue(r.Context(), logic.IssueInput{
 		AppKey: body.AppKey, Action: body.Action, Origin: requestOrigin(r), ClientIP: g.IPs.Resolve(r),
 		HeaderUA: r.UserAgent(), Signals: body.Signals, Fallback: body.Fallback,
+		Select: logic.Selection{Kinds: body.Kinds, Levels: body.Levels},
 	})
 	cors(w, origin)
 	if err != nil {

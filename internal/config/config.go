@@ -157,6 +157,10 @@ type GatewayConfig struct {
 		FallbackDifficultyFactor int `json:",default=8"`
 		DegradedDifficultyFactor int `json:",default=8"`
 		FailureWindowSeconds     int `json:",default=600"`
+		// Kind ladder (the page's levels): passes in a row per step down,
+		// and how long a client's rung lasts after its last solve.
+		LadderDowngradePasses int `json:",default=3"`
+		LadderWindowSeconds   int `json:",default=1800"`
 	}
 	// PuzzlePool pre-generates PerKind puzzles of every interactive kind.
 	// Workers 0 means half the CPUs (at least one); PerKind 0 disables it.
@@ -245,6 +249,8 @@ func (c GatewayConfig) Validate() error {
 		inRange("PuzzlePool.PerKind", c.PuzzlePool.PerKind, 0, 1024),
 		inRange("PuzzlePool.Workers", c.PuzzlePool.Workers, 0, 256),
 		inRange("Risk.FailureWindowSeconds", c.Risk.FailureWindowSeconds, 60, 86400),
+		inRange("Risk.LadderDowngradePasses", c.Risk.LadderDowngradePasses, 1, 100),
+		inRange("Risk.LadderWindowSeconds", c.Risk.LadderWindowSeconds, 60, 86400),
 		inRange("Slider.Tolerance", c.Slider.Tolerance, 1, 20),
 		inRange("Rotate.ToleranceDegrees", c.Rotate.ToleranceDegrees, 2, 20),
 	)
