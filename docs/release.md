@@ -31,7 +31,7 @@
 | `botguard/php-sdk`、`botguard/laravel` | 0.1.0 | 之后只改了文档，没有发新版本 |
 | Go SDK（含 gin / go-zero 适配） | v0.1.0 | 三个模块的标签都在 `4b090c6` 上，proxy.golang.org 和 sum.golang.org 都已收录；在干净目录用默认设置 `go get` 并编译示例已验证 |
 
-- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置（只允许暂存发布）。`release-browser` 工作流改为暂存发布：推标签后版本进入暂存区，要人工批准才公开（见下文 npm 第 4 步）。改完后还没有实际发过一个版本。
+- npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置（只允许暂存发布）。`release-browser` 工作流改为暂存发布：推标签后版本进入暂存区，要人工批准才公开（见下文 npm 第 4 步）。改完后还没有实际发过一个版本：main 上的版本号已改为 0.2.1，代码与 0.2.0 相同，只用来第一次验证暂存发布。等 npm 当前的故障（Degraded Publish, Install, and View Package）恢复后，再推 `browser-v0.2.1` 并批准。
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
 - 镜像仓库：[botguard-php-sdk](https://github.com/dkeepersun/botguard-php-sdk)、[botguard-laravel](https://github.com/dkeepersun/botguard-laravel)。已关闭 issues 和 wiki；部署密钥已配置，私钥只保存在主仓库的 Actions secrets 里。
 - 软件源：<https://dkeepersun.github.io/BotGuard/>，签名密钥指纹 `BE49F7E6B91F729E10F3E24A0E7787FFB93E3231`，私钥在 Actions secret `REPO_GPG_PRIVATE_KEY` 里。GitHub Pages 已启用（Source：GitHub Actions）。
