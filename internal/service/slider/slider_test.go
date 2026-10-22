@@ -162,3 +162,15 @@ func TestCheck(t *testing.T) {
 		t.Errorf("straight touch is allowed: %q", got)
 	}
 }
+
+// One decoy always fits on the row, inside the answer range and clear of the
+// real slot, wherever that is.
+func TestDecoyFits(t *testing.T) {
+	r := seeded(3)
+	for x := minX; x < maxX; x++ {
+		d := decoyX(r, []int{x})
+		if d < minX || d >= maxX || overlaps(d, x) {
+			t.Fatalf("slot at %d: decoy at %d", x, d)
+		}
+	}
+}

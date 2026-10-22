@@ -29,6 +29,7 @@
 | 更换公开地址或监听地址 | `sudo botguard init --public-endpoint https://captcha.example.com --listen 127.0.0.1` |
 | gateway 前面有 nginx | `gateway.yaml` 的 `TrustedProxies` 填 nginx 的地址，同机时填 `127.0.0.1/32`，见下文「前置 nginx」 |
 | 使用其他机器上的 Redis | 两个 yaml 的 `Redis.Host` |
+| Redis 设了密码（`requirepass`） | `botguard.env` 的 `BOTGUARD_REDIS_PASSWORD`。Docker 部署由安装脚本自动生成；本机安装用的是系统自带的 Redis，脚本不改它的配置，和其他程序或其他用户共用时建议自己设上 |
 | 使用 MySQL | `botguard.env` 的 `BOTGUARD_DB_DRIVER='mysql'`、`BOTGUARD_DB_DSN='user:pass@tcp(host:3306)/botguard'`，再执行 `sudo botguard migrate` |
 | 调整限流、验证难度、数据保留天数 | `gateway.yaml` 的 `RateLimit`、`Risk`，`admin-web.yaml` 的 `Cleanup`，每一项都有注释 |
 

@@ -36,6 +36,9 @@ type Signals struct {
 // Facts are observed by the gateway itself.
 type Facts struct {
 	RecentFailures int
+	// PrefixFailures counts failed solves from the client's whole network
+	// prefix (IPv4 /24, IPv6 /48), which rotating addresses does not reset.
+	PrefixFailures int
 	NearRateLimit  bool
 	HeaderUA       string
 	Fallback       bool
@@ -72,6 +75,25 @@ const (
 	// client got harder PoW alone. Informational: the business server may
 	// require another check.
 	ReasonCapacityDegraded = "CAPACITY_DEGRADED"
+	// Signals came without any interaction telemetry: the widget always
+	// reports how long the page was open before activation.
+	ReasonNoInteraction = "NO_INTERACTION"
+	// A Windows or desktop Linux user agent claimed a touch or pen pointer,
+	// which relaxes the mouse-only checks.
+	ReasonDesktopTouch = "DESKTOP_TOUCH"
+	// Many failed solves from the client's network prefix.
+	ReasonPrefixFailures = "PREFIX_RECENT_FAILURES"
+	// The rest are observed by the gateway between issue and solve.
+	//
+	// The solve came from another network prefix than the issue: a relay to a
+	// solving farm, or a phone that switched networks.
+	ReasonIPChanged = "IP_CHANGED"
+	// An image challenge came back sooner after issue than a person can look
+	// at it and answer.
+	ReasonSolveTooFast = "SOLVE_TOO_FAST"
+	// The answer claimed touch or pen although the challenge was requested
+	// with another pointer; the mouse rules applied.
+	ReasonPointerMismatch = "POINTER_MISMATCH"
 )
 
 // Pointer types the widget reports. Anything else is treated as a mouse, the
@@ -111,6 +133,12 @@ var Weights = map[string]int{
 	ReasonIPHighRate:         15,
 	ReasonDesktopNoPlugins:   10,
 	ReasonKeyboardInput:      15,
+	ReasonNoInteraction:      20,
+	ReasonDesktopTouch:       10,
+	ReasonPrefixFailures:     15,
+	ReasonIPChanged:          15,
+	ReasonSolveTooFast:       25,
+	ReasonPointerMismatch:    15,
 	ReasonFallbackChosen:     0, // informational: the business server decides
 	ReasonTouchInput:         0, // informational
 	ReasonCapacityDegraded:   0, // informational
@@ -118,8 +146,11 @@ var Weights = map[string]int{
 
 const (
 	failureWeight = 10
-	failureCap    = 30
+	failureCap    = 40
 	fastClickMs   = 300
+	// prefixFailures failed solves from one network prefix within the
+	// failure window add ReasonPrefixFailures.
+	prefixFailures = 10
 )
 
 type Assessment struct {
@@ -165,6 +196,9 @@ func Assess(s *Signals, f Facts) Assessment {
 		// Touch taps and keyboard activation legitimately have no prior moves.
 		hit(NormalizePointer(s.PointerType) == PointerMouse && s.PointerMovesBeforeClick == 0, ReasonClickWithoutMove)
 		hit(s.MsToClick > 0 && s.MsToClick < fastClickMs, ReasonFastClick)
+		hit(s.MsToClick <= 0, ReasonNoInteraction)
+		pointer := NormalizePointer(s.PointerType)
+		hit((pointer == PointerTouch || pointer == PointerPen) && DesktopUA(f.HeaderUA), ReasonDesktopTouch)
 		// Both sides go through CleanUA: the header copy already has.
 		ua := CleanUA(s.UserAgent)
 		hit(ua != "" && f.HeaderUA != "" && ua != CleanUA(f.HeaderUA), ReasonUAHeaderMismatch)
@@ -173,6 +207,7 @@ func Assess(s *Signals, f Facts) Assessment {
 		hits = append(hits, ReasonIPRecentFailures)
 		extra += min(failureCap, f.RecentFailures*failureWeight)
 	}
+	hit(f.PrefixFailures >= prefixFailures, ReasonPrefixFailures)
 	hit(f.NearRateLimit, ReasonIPHighRate)
 	hit(f.Fallback, ReasonFallbackChosen)
 
@@ -199,6 +234,16 @@ func Level(score, medium, high int) string {
 	default:
 		return LevelLow
 	}
+}
+
+// DesktopUA reports a Windows or desktop Linux user agent. Macs are left out:
+// iPadOS Safari presents itself as a Mac, and ChromeOS devices often have
+// touch screens.
+func DesktopUA(ua string) bool {
+	if strings.Contains(ua, "Mobile") || strings.Contains(ua, "Android") || strings.Contains(ua, "CrOS") {
+		return false
+	}
+	return strings.Contains(ua, "Windows NT") || strings.Contains(ua, "X11; Linux") || strings.Contains(ua, "X11; Ubuntu")
 }
 
 // CleanUA bounds a client-reported user agent before comparison.

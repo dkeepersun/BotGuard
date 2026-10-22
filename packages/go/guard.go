@@ -6,7 +6,9 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -34,6 +36,8 @@ type Guard struct {
 	logger    *slog.Logger
 	// accept lists the step-up reasons let through (AllowFallback & co.).
 	accept map[string]bool
+	// origins, when set, are the page origins a pass must come from.
+	origins []string
 }
 
 // GuardOption configures a Guard.
@@ -84,6 +88,48 @@ func allow(reason string) GuardOption {
 	}
 }
 
+// WithAllowedOrigins lets a pass through only when the token was earned on
+// one of these page origins: exact ones such as https://shop.example.com, or
+// https://*.example.com for any subdomain (not example.com itself), matched
+// like the gateway's allowed origins. Use it when the app's allowed origins
+// in the gateway use a wildcard or *, so one app cannot stand in for another
+// site. Any other pass is rejected with ReasonOriginNotAllowed, including one
+// from a gateway too old to report the origin. NewGuard panics on a pattern
+// that is not scheme://host[:port] or scheme://*.host[:port].
+func WithAllowedOrigins(origins ...string) GuardOption {
+	return func(g *Guard) { g.origins = append(g.origins, origins...) }
+}
+
+// validOriginPattern accepts what WithAllowedOrigins documents, already
+// lower-case and without a trailing slash.
+func validOriginPattern(p string) bool {
+	u, err := url.Parse(strings.Replace(p, "://*.", "://x.", 1))
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http") && u.Host != "" &&
+		u.Path == "" && u.RawQuery == "" && u.Fragment == "" && u.User == nil &&
+		strings.Count(p, "*") <= 1 && (!strings.Contains(p, "*") || strings.Contains(p, "://*."))
+}
+
+// originAllowed matches origin against the patterns as the gateway does:
+// a pattern with "://*." matches any origin with that scheme and a longer
+// host ending in the rest.
+func originAllowed(patterns []string, origin string) bool {
+	origin = strings.ToLower(origin)
+	for _, p := range patterns {
+		scheme, suffix, wild := strings.Cut(p, "://*.")
+		if !wild {
+			if p == origin {
+				return true
+			}
+			continue
+		}
+		prefix, suffix := scheme+"://", "."+suffix
+		if len(origin) > len(prefix)+len(suffix) && strings.HasPrefix(origin, prefix) && strings.HasSuffix(origin, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
 // WithGuardAppKey verifies against this app instead of the client's WithAppKey.
 func WithGuardAppKey(appKey string) GuardOption { return func(g *Guard) { g.appKey = appKey } }
 
@@ -123,6 +169,13 @@ func NewGuard(client *Client, action string, opts ...GuardOption) *Guard {
 	if !actionPattern.MatchString(action) {
 		panic("botguard: action 格式错误：应为 [a-z0-9_]，1–32 个字符")
 	}
+	for i, o := range g.origins {
+		o = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(o)), "/")
+		if !validOriginPattern(o) {
+			panic("botguard: WithAllowedOrigins 的来源格式错误：" + g.origins[i] + "（应为 https://host[:port] 或 https://*.host[:port]）")
+		}
+		g.origins[i] = o
+	}
 	if g.onReject == nil {
 		g.onReject = defaultReject
 	}
@@ -142,14 +195,21 @@ func formOrHeader(r *http.Request, field string) string {
 // Check verifies the request's token. It returns a Result (passed or
 // rejected) or a *CallerError / *UnknownError, like Client.Verify.
 //
-// A pass that needs a step-up (Result.StepUp) and is not allowed by
-// AllowFallback, AllowDegraded or AllowHighRisk comes back rejected, with the
-// step-up reason and the gateway's risk fields kept for OnReject.
+// A pass from an origin outside WithAllowedOrigins comes back rejected with
+// ReasonOriginNotAllowed. A pass that needs a step-up (Result.StepUp) and is
+// not allowed by AllowFallback, AllowDegraded or AllowHighRisk comes back
+// rejected with the step-up reason. Either keeps the gateway's risk fields
+// for OnReject.
 func (g *Guard) Check(r *http.Request) (*Result, error) {
 	res, err := g.client.Verify(r.Context(), VerifyRequest{AppKey: g.appKey, Token: g.tokenFrom(r),
 		Action: g.action, RequestID: g.requestID(r)})
 	if err != nil {
 		return nil, err
+	}
+	if res.Passed && len(g.origins) > 0 && !originAllowed(g.origins, res.Origin) {
+		held := *res
+		held.Passed, held.Reason = false, ReasonOriginNotAllowed
+		return &held, nil
 	}
 	if why := res.StepUp(); why != "" && !g.accept[why] {
 		held := *res

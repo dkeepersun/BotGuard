@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
 	"github.com/dkeepersun/BotGuard/internal/service/click"
@@ -72,6 +73,8 @@ func (h *harness) issueFor(t *testing.T, action string, s *risk.Signals, fallbac
 
 func (h *harness) solveWith(c *IssueOutput, ans *SliderAnswer, s *risk.Signals) (*SolveOutput, error) {
 	nonces, _ := pow.Solve(c.Algorithm, c.ChallengeID, c.Params)
+	// A person takes a few seconds; an instant answer adds SOLVE_TOO_FAST.
+	h.clock = h.clock.Add(2 * time.Second)
 	out, _, err := h.g.Solve(context.Background(), SolveInput{AppKey: appA, Challenge: c.Challenge, Nonces: nonces,
 		Origin: originA, ClientIP: h.ip, Answer: ans, Signals: s})
 	return out, err

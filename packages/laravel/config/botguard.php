@@ -34,6 +34,14 @@ return [
     // high-risk client may be automation that solved the hardest picture.
     // botguard()->lastStepUp() tells why, so the page can offer an SMS code
     // instead. verify() always returns the gateway's result unchanged.
+    // Page origins a pass must come from, comma separated in the env:
+    // https://shop.example.com, or https://*.example.com for any subdomain.
+    // Set it when the app's allowed origins in the gateway use a wildcard or
+    // *, so a token earned on another site is refused. A pass from elsewhere,
+    // or from a gateway too old to report the origin, fails passes() and the
+    // validation rules. Empty checks nothing.
+    'origins' => array_values(array_filter(array_map('trim', explode(',', (string) env('BOTGUARD_ORIGINS', ''))))),
+
     'accept' => [
         'fallback' => env('BOTGUARD_ACCEPT_FALLBACK', false),
         'degraded' => env('BOTGUARD_ACCEPT_DEGRADED', false),

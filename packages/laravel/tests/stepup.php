@@ -37,6 +37,25 @@ $g = new BotGuard($client(',"challenge_kind":"slider","risk_level":"medium"'), n
 $check('ordinary pass', $g->passes('tok', 'login') === true && $g->lastStepUp() === null);
 $g = new BotGuard($client(''), new Log());
 $check('older gateway without risk fields', $g->passes('tok', 'login') === true);
+
+// botguard.origins
+$origins = ['https://shop.example.com', ' HTTPS://*.Example.org/ '];
+$want = [
+    'https://shop.example.com' => true, 'https://a.example.org' => true, 'https://a.b.example.org' => true,
+    'https://example.org' => false, 'https://evil-example.org' => false, 'https://a.example.org.evil.cn' => false,
+    'http://a.example.org' => false, 'https://a.example.org:8443' => false, 'https://other.example.com' => false,
+];
+foreach ($want as $origin => $ok) {
+    $g = new BotGuard($client(',"risk_level":"low","origin":"' . $origin . '"'), new Log(), [], $origins);
+    $check("origin $origin " . ($ok ? 'allowed' : 'refused'), $g->passes('tok', 'login') === $ok);
+}
+$g = new BotGuard($client(',"risk_level":"low"'), new Log(), [], $origins);
+$check('origin missing (older gateway) refused', $g->passes('tok', 'login') === false);
+$g = new BotGuard($client(',"origin":"https://any.example"'), new Log(), [], []);
+$check('no origins configured: not checked', $g->passes('tok', 'login') === true);
+$log = new Log();
+$g = new BotGuard($client(',"origin":"https://shop.example.com"'), $log, [], ['https://shop.example.com', 'shop.example.com/']);
+$check('malformed origins refuse every pass, logged', $g->passes('tok', 'login') === false && str_contains(implode("\n", $log->lines), 'error: '));
 echo $fails ? "$fails FAILED\n" : "all passed\n";
 exit($fails ? 1 : 0);
 }

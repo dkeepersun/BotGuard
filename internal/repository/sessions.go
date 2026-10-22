@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -14,7 +15,9 @@ import (
 
 // AdminSession is the server side of a console login. The cookie holds only
 // the random session id; Redis stores it under the id's SHA-256, so a Redis
-// dump cannot be replayed as cookies.
+// dump cannot be replayed as cookies. With a Key, each record also carries an
+// HMAC over its fields and its Redis key, so whoever can write to Redis still
+// cannot forge a session or move a real one under an id they chose.
 type AdminSession struct {
 	ID        string // cookie value; only set on creation
 	AdminID   int64
@@ -27,6 +30,26 @@ type Sessions struct {
 	rds *redis.Redis
 	// Idle ends a session after inactivity; Absolute caps its whole life.
 	Idle, Absolute time.Duration
+	// Key signs session records (SessionKey); nil leaves them unsigned.
+	Key []byte
+}
+
+// SessionKey derives the session-signing key from the KEK, so no extra
+// secret needs deploying. Changing the KEK ends every session.
+func SessionKey(kek []byte) []byte {
+	m := hmac.New(sha256.New, kek)
+	m.Write([]byte("botguard/admin-session/v1"))
+	return m.Sum(nil)
+}
+
+// mac signs a record's fields together with its Redis key.
+func (s *Sessions) mac(key, admin, version, csrf, created string) string {
+	m := hmac.New(sha256.New, s.Key)
+	for _, f := range []string{key, admin, version, csrf, created} {
+		m.Write([]byte(f))
+		m.Write([]byte{0})
+	}
+	return hex.EncodeToString(m.Sum(nil))
 }
 
 func NewSessions(rds *redis.Redis, idle, absolute time.Duration) *Sessions {
@@ -57,10 +80,14 @@ func (s *Sessions) Create(ctx context.Context, adminID, version int64, now time.
 		return nil, err
 	}
 	key := sessionKey(id)
-	err = s.rds.HmsetCtx(ctx, key, map[string]string{
+	fields := map[string]string{
 		"admin": strconv.FormatInt(adminID, 10), "version": strconv.FormatInt(version, 10),
 		"csrf": csrf, "created": strconv.FormatInt(now.Unix(), 10),
-	})
+	}
+	if s.Key != nil {
+		fields["mac"] = s.mac(key, fields["admin"], fields["version"], fields["csrf"], fields["created"])
+	}
+	err = s.rds.HmsetCtx(ctx, key, fields)
 	if err == nil {
 		err = s.rds.ExpireCtx(ctx, key, int(s.Idle/time.Second))
 	}
@@ -80,6 +107,12 @@ func (s *Sessions) Get(ctx context.Context, id string, now time.Time) (*AdminSes
 	m, err := s.rds.HgetallCtx(ctx, key)
 	if err != nil || len(m) == 0 {
 		return nil, err
+	}
+	// A record without a valid signature was not written by us (or predates
+	// signing): treat it as no session, and drop it.
+	if s.Key != nil && !hmac.Equal([]byte(m["mac"]), []byte(s.mac(key, m["admin"], m["version"], m["csrf"], m["created"]))) {
+		_, _ = s.rds.DelCtx(ctx, key)
+		return nil, nil
 	}
 	created, _ := strconv.ParseInt(m["created"], 10, 64)
 	if now.Sub(time.Unix(created, 0)) > s.Absolute {

@@ -22,6 +22,8 @@ Log:
 Redis:
   Host: 127.0.0.1:6379
   Type: node
+  # From the environment (botguard.env); empty means no password.
+  Pass: ${BOTGUARD_REDIS_PASSWORD}
   DisableIdentity: false
 
 # SQLite by default: the file and its tables are created on first start, no

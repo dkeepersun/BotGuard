@@ -125,6 +125,17 @@ guard := botguard.NewGuard(client, "login",
 ```
 
 `OnReject` 拿到的 `*Result` 保留了网关返回的题型、风险等级和原因码。直接调用 `client.Verify` 时不做这项判断，可以用 `res.StepUp()` 自己判断。
+
+### 限定来源
+
+应用在 gateway 里的允许来源用了通配（`https://*.example.com`）或 `*` 时，别的站点拿到的 token 也会通过。用 `WithAllowedOrigins` 列出自己的页面来源：
+
+```go
+guard := botguard.NewGuard(client, "login",
+	botguard.WithAllowedOrigins("https://shop.example.com", "https://*.example.com"))
+```
+
+通配只匹配子域名，不含 `example.com` 本身，规则与 gateway 的允许来源一致。名单外的来源、以及旧版 gateway 不返回 `origin` 的 token，按 `ORIGIN_NOT_ALLOWED` 拒绝（403 `BOTGUARD_REJECTED`）。格式不是 `scheme://host[:port]` 或 `scheme://*.host[:port]` 时 `NewGuard` 直接 panic。gin、go-zero 适配同样生效。需要核心包 v0.3.0 及以上。
 - `NewGuard` 在 app_key 缺失或 action 格式不对时直接 panic：这是启动时就该发现的配置错误。
 
 ## 本地校验

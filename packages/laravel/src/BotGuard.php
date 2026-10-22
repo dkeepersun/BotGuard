@@ -42,13 +42,30 @@ final class BotGuard
     /**
      * @param array{fallback?: bool, degraded?: bool, high_risk?: bool} $accept
      *   step-up classes passes() lets through; all off by default.
+     * @param list<string> $origins page origins a pass must come from, exact
+     *   (https://shop.example.com) or https://*.example.com for any
+     *   subdomain; empty checks nothing. See config('botguard.origins').
      */
     public function __construct(
         private Client|\Closure $client,
         private readonly LoggerInterface $log,
         private readonly array $accept = [],
+        array $origins = [],
     ) {
+        foreach ($origins as $o) {
+            $o = rtrim(strtolower(trim((string) $o)), '/');
+            if (self::validOriginPattern($o)) {
+                $this->origins[] = $o;
+            } else {
+                $this->badOrigins[] = (string) $o;
+            }
+        }
     }
+
+    /** @var list<string> */
+    private array $origins = [];
+    /** @var list<string> */
+    private array $badOrigins = [];
 
     /**
      * Full result: returns Passed/Rejected, throws CallerErrorException
@@ -90,6 +107,16 @@ final class BotGuard
             if (!$result->passed()) {
                 return false;
             }
+            if ($this->badOrigins !== []) {
+                $this->log->error('BotGuard config botguard.origins has malformed entries, every pass is refused: ' . implode(', ', $this->badOrigins), ['action' => $action]);
+                return false;
+            }
+            if ($this->origins !== [] && !self::originAllowed($this->origins, $result->origin)) {
+                $this->log->info('BotGuard pass from an origin outside botguard.origins, treated as a failure', [
+                    'action' => $action, 'origin' => $result->origin,
+                ]);
+                return false;
+            }
             $why = self::stepUp($result);
             if ($why !== null && !$this->accepts($why)) {
                 $this->log->info('BotGuard pass needs a step-up, treated as a failure: ' . $why, [
@@ -104,6 +131,42 @@ final class BotGuard
             ]);
             return false;
         }
+    }
+
+    /**
+     * Whether $origin matches one of $patterns as the gateway matches allowed
+     * origins: exact, or https://*.example.com for any longer host ending in
+     * .example.com (not example.com itself). A null origin (older gateways)
+     * matches nothing. Patterns must be lower case without a trailing slash.
+     *
+     * @param list<string> $patterns
+     */
+    public static function originAllowed(array $patterns, ?string $origin): bool
+    {
+        if ($origin === null || $origin === '') {
+            return false;
+        }
+        $origin = strtolower($origin);
+        foreach ($patterns as $p) {
+            $i = strpos($p, '://*.');
+            if ($i === false) {
+                if ($p === $origin) {
+                    return true;
+                }
+                continue;
+            }
+            $prefix = substr($p, 0, $i + 3);
+            $suffix = substr($p, $i + 4);
+            if (strlen($origin) > strlen($prefix) + strlen($suffix) && str_starts_with($origin, $prefix) && str_ends_with($origin, $suffix)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static function validOriginPattern(string $p): bool
+    {
+        return preg_match('~^https?://(\*\.)?[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$~', $p) === 1;
     }
 
     /**

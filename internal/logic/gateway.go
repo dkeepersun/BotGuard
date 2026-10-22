@@ -62,6 +62,10 @@ type Settings struct {
 	// client network prefix (IPv4 /24, IPv6 /48); beyond it issuing an image
 	// challenge answers 429. Zero disables it.
 	InteractivePerPrefixPerMinute int
+	// ChallengePerPrefixPerMinute bounds challenges per client network prefix
+	// (IPv4 /24, IPv6 /48) across apps; beyond it issuing answers 429. Zero
+	// disables it.
+	ChallengePerPrefixPerMinute int
 
 	// Risk thresholds and the PoW multipliers they trigger.
 	RiskMedium               int
@@ -75,6 +79,9 @@ type Settings struct {
 	// challenge, whatever the action's own.
 	DegradedMinDifficulty uint64
 	FailureWindow         time.Duration
+	// FailureBlockThreshold failed solves from one IP within FailureWindow
+	// make issuing answer 429 until they age out. Zero disables it.
+	FailureBlockThreshold int
 	// LadderDowngradePasses passes in a row move a client one rung down the
 	// kind ladder a page asked for; LadderWindow is how long the rung lasts
 	// after the client's last solve.
