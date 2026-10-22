@@ -96,6 +96,15 @@ func TestSolveObservations(t *testing.T) {
 		t.Fatalf("mouse then touch: %v", r)
 	}
 
+	// A replica whose clock runs behind the issuer's sees a negative gap:
+	// skew, not speed.
+	c = h.issueFor(t, "slide", clean(), false)
+	h.clock = h.clock.Add(-2 * time.Second)
+	if r := reasons(h.solveFrom(c, h.ip, drag, clean())); slices.Contains(r, risk.ReasonSolveTooFast) {
+		t.Fatalf("clock behind: %v", r)
+	}
+	h.clock = h.clock.Add(2 * time.Second)
+
 	// Invisible challenges are PoW only: no reading time to check.
 	inv := h.issueFor(t, "adaptive", clean(), false)
 	if inv.Kind != domain.KindInvisible {

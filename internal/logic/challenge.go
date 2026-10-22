@@ -720,7 +720,8 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if state.Prefix != "" && clientip.Prefix(in.ClientIP) != state.Prefix {
 		observed = append(observed, risk.ReasonIPChanged)
 	}
-	if interactive && state.IssuedMs > 0 && now.UnixMilli()-state.IssuedMs < minHumanSolve.Milliseconds() {
+	// A negative gap is clock skew between replicas, not a fast answer.
+	if elapsed := now.UnixMilli() - state.IssuedMs; interactive && state.IssuedMs > 0 && elapsed >= 0 && elapsed < minHumanSolve.Milliseconds() {
 		observed = append(observed, risk.ReasonSolveTooFast)
 	}
 	for _, r := range observed {
