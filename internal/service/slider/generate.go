@@ -1,10 +1,19 @@
 // Package slider generates jigsaw slider puzzles and checks answers.
 //
 // Backgrounds are procedural (layered random shapes and noise), so there are
-// no image licences to manage and no two puzzles repeat. A fainter decoy gap
-// and JPEG noise make simple template matching less reliable; none of this
-// stops a determined solver, which is why answers also need a human-looking
-// drag trajectory and every challenge still carries proof of work.
+// no image licences to manage and no two puzzles repeat.
+//
+// Each background has a decoy slot on the piece's row, inside the answer
+// range: the same shape, as deep, and filled with the same picture as the
+// real one. Matching the piece's pixels, its correlation or its outline
+// against the row then finds two equal candidates; only whether the slot
+// continues its surroundings tells them apart, which is also what a person
+// checks while dragging. The piece is cut from a colour-shifted, noisy copy,
+// and every slot's depth varies pixel by pixel, so neither equals the
+// background times a constant. This halves what cheap solvers get, no more:
+// the slider is a speed bump, which is why answers also need a human-looking
+// drag trajectory, every challenge carries proof of work, and high risk gets
+// a harder kind.
 package slider
 
 import (
@@ -27,6 +36,14 @@ const (
 	square = 40 // body of the piece inside the PieceSize box
 	margin = (PieceSize - square) / 2
 	knob   = 7.0
+
+	// Decoys is how many extra slots each background gets. One costs people
+	// a second look; more would cost them failed attempts.
+	Decoys = 1
+	// minX and maxX bound the answer: the piece starts at x=0, so the answer
+	// is always a real drag away.
+	minX = PieceSize + 20
+	maxX = Width - PieceSize - 4
 )
 
 // Puzzle is one generated challenge. X is the answer and must never reach
@@ -96,7 +113,9 @@ func newMask(s shape) *mask {
 }
 
 // cutGap darkens the masked area and lightens its outline, like a carved slot.
-func cutGap(img *image.RGBA, m *mask, ox, oy int, darken, outline float64) {
+// The depth varies by up to ±jitter per pixel, so the slot is not the
+// background times one constant.
+func cutGap(r *rand.Rand, img *image.RGBA, m *mask, ox, oy int, darken, outline, jitter float64) {
 	white := color.RGBA{255, 255, 255, 255}
 	black := color.RGBA{0, 0, 0, 255}
 	for y := 0; y < PieceSize; y++ {
@@ -107,10 +126,38 @@ func cutGap(img *image.RGBA, m *mask, ox, oy int, darken, outline float64) {
 			if m.border[y][x] {
 				imagegen.Blend(img, ox+x, oy+y, white, outline)
 			} else {
-				imagegen.Blend(img, ox+x, oy+y, black, darken)
+				imagegen.Blend(img, ox+x, oy+y, black, darken+(r.Float64()*2-1)*jitter)
 			}
 		}
 	}
+}
+
+// shift returns a channel value moved by gain, offset and noise, clamped.
+func shift(v uint8, gain, offset float64, noise int) uint8 {
+	return uint8(min(255, max(0, float64(v)*gain+offset+float64(noise))))
+}
+
+// overlaps reports whether slots starting at a and b come closer than 4 px.
+func overlaps(a, b int) bool { return a < b+PieceSize+4 && b < a+PieceSize+4 }
+
+// decoyX picks a left edge for a decoy inside the answer range, clear of the
+// slots already placed, or -1 when the row has no room left. One decoy always
+// fits beside the real slot.
+func decoyX(r *rand.Rand, taken []int) int {
+	var free []int
+	for x := minX; x < maxX; x++ {
+		clear := true
+		for _, t := range taken {
+			clear = clear && !overlaps(x, t)
+		}
+		if clear {
+			free = append(free, x)
+		}
+	}
+	if len(free) == 0 {
+		return -1
+	}
+	return free[r.IntN(len(free))]
 }
 
 // Generate builds a puzzle from r. Production callers seed r from crypto/rand;
@@ -119,10 +166,15 @@ func Generate(r *rand.Rand) (Puzzle, error) {
 	bg := imagegen.Background(r, Width, Height)
 	m := newMask(randomShape(r))
 
-	// The piece starts at x=0, so the answer is always a real drag away.
-	x := PieceSize + 20 + r.IntN(Width-2*PieceSize-24)
+	x := minX + r.IntN(maxX-minX)
 	y := 4 + r.IntN(Height-PieceSize-8)
 
+	// The piece is the background under the slot, shifted in colour and
+	// noised, so its pixels never equal the background's.
+	var gain, offset [3]float64
+	for c := range gain {
+		gain[c], offset[c] = 0.88+r.Float64()*0.24, r.Float64()*28-14
+	}
 	piece := image.NewRGBA(image.Rect(0, 0, PieceSize, PieceSize))
 	for py := 0; py < PieceSize; py++ {
 		for px := 0; px < PieceSize; px++ {
@@ -130,7 +182,9 @@ func Generate(r *rand.Rand) (Puzzle, error) {
 				continue
 			}
 			i, j := bg.PixOffset(x+px, y+py), piece.PixOffset(px, py)
-			copy(piece.Pix[j:j+3], bg.Pix[i:i+3])
+			for c := range 3 {
+				piece.Pix[j+c] = shift(bg.Pix[i+c], gain[c], offset[c], r.IntN(17)-8)
+			}
 			piece.Pix[j+3] = 255
 			if m.border[py][px] {
 				imagegen.Blend(piece, px, py, color.RGBA{255, 255, 255, 255}, 0.7)
@@ -138,18 +192,26 @@ func Generate(r *rand.Rand) (Puzzle, error) {
 		}
 	}
 
-	// A fainter decoy slot that does not overlap the real one.
-	decoy := newMask(randomShape(r))
-	var dx int
-	for {
-		dx = r.IntN(Width - PieceSize)
-		if dx+PieceSize < x-4 || dx > x+PieceSize+4 {
+	// Decoys: the real slot's picture copied onto the same row, then carved
+	// the same way.
+	taken := []int{x}
+	for range Decoys {
+		dx := decoyX(r, taken)
+		if dx < 0 {
 			break
 		}
+		taken = append(taken, dx)
+		for py := 0; py < PieceSize; py++ {
+			for px := 0; px < PieceSize; px++ {
+				if m.inside[py][px] {
+					i, j := bg.PixOffset(x+px, y+py), bg.PixOffset(dx+px, y+py)
+					copy(bg.Pix[j:j+3], bg.Pix[i:i+3])
+				}
+			}
+		}
+		cutGap(r, bg, m, dx, y, 0.5+r.Float64()*0.1, 0.4, 0.06)
 	}
-	dy := 4 + r.IntN(Height-PieceSize-8)
-	cutGap(bg, decoy, dx, dy, 0.28+r.Float64()*0.1, 0.2)
-	cutGap(bg, m, x, y, 0.5+r.Float64()*0.1, 0.4)
+	cutGap(r, bg, m, x, y, 0.5+r.Float64()*0.1, 0.4, 0.06)
 
 	var jb, pb bytes.Buffer
 	if err := jpeg.Encode(&jb, bg, &jpeg.Options{Quality: 60 + r.IntN(21)}); err != nil {
