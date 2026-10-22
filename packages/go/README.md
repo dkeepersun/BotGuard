@@ -138,6 +138,7 @@ server.AddRoutes(rest.WithMiddlewares([]rest.Middleware{login}, rest.Route{
 res.ChallengeKind // invisible / slider / click_text / click_shape / fallback ...（旧版 gateway 为空）
 res.RiskLevel     // low / medium / high
 res.RiskReasons   // 例如 [NO_SIGNALS IP_RECENT_FAILURES]
+res.Origin        // 签发 token 的页面来源，如 https://shop.example.com；应用允许来源用了通配或 * 时，在这里核对自己的域名（旧版 gateway 为空）
 ```
 
 这些字段不改变“通过”这一结论，只供业务方二次决策，例如高风险时追加短信验证。

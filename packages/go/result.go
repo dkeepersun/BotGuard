@@ -64,6 +64,10 @@ type Result struct {
 	RiskLevel string
 	// RiskReasons are codes such as NO_SIGNALS or CAPACITY_DEGRADED.
 	RiskReasons []string
+	// Origin is the page origin the token was earned on, such as
+	// https://shop.example.com; empty on older gateways. Check it against
+	// your own domains when the app allows wildcard or any origin.
+	Origin string
 }
 
 // Rejected reports whether the token was refused; ask the user to verify again.
