@@ -222,30 +222,31 @@ func (g *Gateway) generate(kind string) (any, error) {
 	}
 }
 
-// interactivePuzzle returns a puzzle of kind, or nil when the app is over its
-// interactive quota or generation is saturated; the caller then degrades.
+// interactivePuzzle returns a puzzle of kind, or nil and the degrade cause
+// when the app is over its interactive quota or generation is saturated; the
+// caller then degrades.
 // The quota counts across addresses and replicas, so a flood spread over many
 // IPs against one app cannot take the image capacity every app shares.
-func (g *Gateway) interactivePuzzle(ctx context.Context, appID int64, kind string) (any, error) {
+func (g *Gateway) interactivePuzzle(ctx context.Context, appID int64, kind string) (puzzle any, cause string, err error) {
 	if quota := g.Settings.InteractivePerAppPerMinute; quota > 0 {
 		ok, _, err := g.Limiter.Allow(ctx, dimAppInteractive, strconv.FormatInt(appID, 10), quota, rateWindow)
 		if err != nil {
 			logx.WithContext(ctx).Errorf("rate limiter %s: %v", dimAppInteractive, err)
-			return nil, errx.ErrUnavailable
+			return nil, "", errx.ErrUnavailable
 		}
 		if !ok {
-			return nil, nil
+			return nil, DegradeQuota, nil
 		}
 	}
 	v, err := g.puzzle(kind)
 	if errors.Is(err, errSaturated) {
-		return nil, nil
+		return nil, DegradeSaturated, nil
 	}
 	if err != nil {
 		logx.WithContext(ctx).Errorf("%s: %v", kind, err)
-		return nil, errx.ErrUnavailable
+		return nil, "", errx.ErrUnavailable
 	}
-	return v, nil
+	return v, "", nil
 }
 
 // Issue scores the request, picks the challenge kind and signs a challenge
@@ -332,10 +333,12 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	kind, factor := g.chooseKind(policy, level, in.Fallback, in.Select.candidates(policy, level, rung), rand.IntN)
 	var puzzle any
 	if domain.ValidInteractiveKind(kind) {
-		if puzzle, err = g.interactivePuzzle(ctx, app.ID, kind); err != nil {
+		var cause string
+		if puzzle, cause, err = g.interactivePuzzle(ctx, app.ID, kind); err != nil {
 			return nil, origin, err
 		}
 		if puzzle == nil {
+			g.Monitor.Degraded(cause)
 			// No image capacity for this app right now. Refusing would hand
 			// a flood its goal, so the client gets harder PoW instead and the
 			// business server sees why in risk_reasons.

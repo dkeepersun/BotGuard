@@ -95,6 +95,23 @@ sudo -u botguard sqlite3 /var/lib/botguard/botguard.db ".backup '/var/lib/botgua
 
 管理员的动态码（TOTP）密钥也用 KEK 加密。清空旧值之前，开启了动态码的管理员需要重新设置动态码，否则这些账号的动态码将无法验证。
 
+## 运行监控
+
+gateway 自己统计接口请求、错误码（限流 429、服务不可用 503 等）、图片题降级次数和题库余量，有两种看法：
+
+- **管理后台「数据分析 → 运行状况」**：每台 gateway 每分钟往 Redis 写一条摘要（保留 24 小时），页面显示近 60 分钟的趋势、各实例的最近上报时间（超过 3 分钟没有上报标为失联）和异常记录。多台 gateway 共用一个 Redis 即可，不用额外部署。
+- **Prometheus 指标**：`gateway.yaml` 的 `DevServer` 在 `127.0.0.1:6470/metrics` 导出 `botguard_gateway_requests_total`、`botguard_gateway_errors_total{code}`、`botguard_gateway_degraded_total{cause}`、`botguard_gateway_puzzle_pool_ready{kind}`，以及 go-zero 自带的 `http_server_requests_*` 和 Go 运行时指标。这个端口没有认证，只监听本机或内网地址；pprof 默认关闭。同一台机器跑多个 gateway 时给每个配不同端口。
+
+**异常记录**：某一分钟出现 503、出现降级，或限流拒绝达到 `Monitor.RateLimitedPerMinute`（默认 300）时，记一条异常，显示在「运行状况」页，并写入 gateway 的错误日志（日志目录下的 `error.log`，级别 `alert`，内容以 `health anomaly` 开头）。目前只记录，不发送通知。
+
+| 异常 | 常见原因 | 处理 |
+| --- | --- | --- |
+| 服务不可用（503） | Redis 或 MySQL 故障、连接数打满、慢查询 | 看「系统状态」的依赖检查和 gateway 日志 |
+| 容量降级 | 某个应用超过 `RateLimit.InteractivePerAppPerMinute`，或图片生成满载且题库为空 | 确认是否被攻击；正常流量就调高配额、调大 `PuzzlePool` 或加机器 |
+| 限流激增 | 单个 IP 刷接口，或 nginx 后面没配 `TrustedProxies`，所有用户共用一个 IP | 先检查 `TrustedProxies`；确认是攻击就在 nginx 或防火墙封 IP |
+
+实例名默认是 `主机名:端口`，可以用 `Monitor.Instance` 指定。
+
 ## 前置 nginx
 
 gateway 和 admin-web 建议都放在 nginx 后面，由 nginx 负责 TLS、慢速客户端和第一层限流。程序本身也有兜底：请求头必须在 5 秒内收完、整个请求 10 秒内收完、请求头不超过 64 KiB、空闲连接 120 秒后关闭；按 IP 的限流在 Redis 计数，已经超限的 IP 在本进程内直接拒绝，不再访问 Redis；库里不存在的 app_key 和 secret_id 每个进程每秒最多查 20 次数据库（每 10 秒从库里加载一次已有 key 的清单，新建的 key 最多 10 秒后可用，和应用缓存一致）。
