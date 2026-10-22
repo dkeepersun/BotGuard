@@ -2,6 +2,7 @@ package botguard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -141,5 +142,50 @@ func TestNewGuardPanics(t *testing.T) {
 			}()
 			f()
 		}()
+	}
+}
+
+// Passes earned cheaply (fallback, capacity-degraded) or at high risk need a
+// step-up by default; each can be allowed on its own.
+func TestGuardStepUp(t *testing.T) {
+	reply := func(extra string) func(int, map[string]string) (int, http.Header, string) {
+		return func(_ int, b map[string]string) (int, http.Header, string) {
+			return 200, nil, `{"code":"OK","data":{"success":true,"app_key":"` + b["app_key"] + `","action":"login","verified_at":1` + extra + `}}`
+		}
+	}
+	cases := []struct {
+		name, extra, reason string
+		allow               GuardOption
+	}{
+		{"fallback", `,"challenge_kind":"fallback","risk_level":"low","risk_reasons":["FALLBACK_CHOSEN"]`, ReasonStepUpFallback, AllowFallback()},
+		{"degraded", `,"challenge_kind":"invisible","risk_level":"low","risk_reasons":["CAPACITY_DEGRADED"]`, ReasonStepUpDegraded, AllowDegraded()},
+		{"high risk", `,"challenge_kind":"spatial","risk_level":"high","risk_reasons":["WEBDRIVER"]`, ReasonStepUpHighRisk, AllowHighRisk()},
+	}
+	for _, c := range cases {
+		gw := newGateway(t, reply(c.extra))
+		w, res := serve(NewGuard(newClient(t, gw), "login"), form("tok"))
+		var body map[string]string
+		_ = json.Unmarshal(w.Body.Bytes(), &body)
+		if w.Code != 403 || res != nil || body["code"] != "BOTGUARD_STEP_UP" || body["reason"] != c.reason {
+			t.Errorf("%s: %d %s", c.name, w.Code, w.Body)
+		}
+		if w, res := serve(NewGuard(newClient(t, gw), "login", c.allow), form("tok")); w.Code != 200 || res == nil || !res.Passed {
+			t.Errorf("%s allowed: %d %s", c.name, w.Code, w.Body)
+		}
+	}
+	// The held result keeps the gateway's fields for OnReject.
+	gw := newGateway(t, reply(cases[2].extra))
+	res, err := NewGuard(newClient(t, gw), "login").Check(form("tok"))
+	if err != nil || res.Passed || res.Reason != ReasonStepUpHighRisk || res.RiskLevel != "high" || res.ChallengeKind != "spatial" {
+		t.Fatalf("held result: %+v %v", res, err)
+	}
+	// An ordinary pass needs nothing more; Client.Verify never applies the policy.
+	gw = newGateway(t, reply(`,"challenge_kind":"slider","risk_level":"medium"`))
+	if w, _ := serve(NewGuard(newClient(t, gw), "login"), form("tok")); w.Code != 200 {
+		t.Fatalf("medium pass: %d", w.Code)
+	}
+	gw = newGateway(t, reply(cases[0].extra))
+	if res, err := newClient(t, gw).Verify(context.Background(), req("tok")); err != nil || !res.Passed || res.StepUp() != ReasonStepUpFallback {
+		t.Fatalf("client: %+v %v", res, err)
 	}
 }

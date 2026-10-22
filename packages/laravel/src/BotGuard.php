@@ -17,6 +17,18 @@ use Psr\Log\LoggerInterface;
  */
 final class BotGuard
 {
+    /**
+     * Step-up reasons. The gateway passed these tokens, but how they were
+     * earned is cheap for a bot: the accessible fallback and the
+     * capacity-degraded path are proof of work only, and a high-risk client
+     * may be automation that solved the hardest picture. passes() and the
+     * validation rules treat them as failures unless config('botguard.accept')
+     * allows them; verify() returns the gateway's result unchanged.
+     */
+    public const STEP_UP_FALLBACK = 'STEP_UP_FALLBACK';
+    public const STEP_UP_DEGRADED = 'STEP_UP_DEGRADED';
+    public const STEP_UP_HIGH_RISK = 'STEP_UP_HIGH_RISK';
+
     /** @var array<string, VerifyResult|BotGuardException> */
     private array $memo = [];
     private VerifyResult|BotGuardException|null $last = null;
@@ -27,9 +39,14 @@ final class BotGuard
      *   (NOT_CONFIGURED) when BotGuard is not configured, so booting the app
      *   and rendering pages never fail for that reason.
      */
+    /**
+     * @param array{fallback?: bool, degraded?: bool, high_risk?: bool} $accept
+     *   step-up classes passes() lets through; all off by default.
+     */
     public function __construct(
         private Client|\Closure $client,
         private readonly LoggerInterface $log,
+        private readonly array $accept = [],
     ) {
     }
 
@@ -69,13 +86,59 @@ final class BotGuard
     public function passes(mixed $token, string $action): bool
     {
         try {
-            return $this->verify($token, $action)->passed();
+            $result = $this->verify($token, $action);
+            if (!$result->passed()) {
+                return false;
+            }
+            $why = self::stepUp($result);
+            if ($why !== null && !$this->accepts($why)) {
+                $this->log->info('BotGuard pass needs a step-up, treated as a failure: ' . $why, [
+                    'action' => $action, 'challenge_kind' => $result->challengeKind, 'risk_level' => $result->riskLevel,
+                ]);
+                return false;
+            }
+            return true;
         } catch (BotGuardException $e) {
             $this->log->error('BotGuard verify failed: ' . $e->getMessage(), [
                 'exception' => $e::class, 'http_status' => $e->httpStatus, 'code' => $e->errorCode, 'action' => $action,
             ]);
             return false;
         }
+    }
+
+    /**
+     * The step-up reason a passed result carries, or null: fallback first,
+     * then capacity degradation, then high risk.
+     */
+    public static function stepUp(VerifyResult $result): ?string
+    {
+        return match (true) {
+            !$result->passed() => null,
+            $result->challengeKind === 'fallback' => self::STEP_UP_FALLBACK,
+            in_array('CAPACITY_DEGRADED', $result->riskReasons, true) => self::STEP_UP_DEGRADED,
+            $result->riskLevel === 'high' => self::STEP_UP_HIGH_RISK,
+            default => null,
+        };
+    }
+
+    /**
+     * Why the last passes() call failed although the gateway passed the
+     * token, e.g. to offer an SMS code instead of another captcha; null when
+     * it did not fail for a step-up.
+     */
+    public function lastStepUp(): ?string
+    {
+        if (!$this->last instanceof VerifyResult) {
+            return null;
+        }
+        $why = self::stepUp($this->last);
+        return $why !== null && !$this->accepts($why) ? $why : null;
+    }
+
+    private function accepts(string $why): bool
+    {
+        $key = [self::STEP_UP_FALLBACK => 'fallback', self::STEP_UP_DEGRADED => 'degraded', self::STEP_UP_HIGH_RISK => 'high_risk'][$why];
+        return ($this->accept[$key] ?? false) === true;
     }
 
     /** The last result or exception, e.g. to read riskLevel after a pass. */

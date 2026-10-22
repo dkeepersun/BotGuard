@@ -29,13 +29,18 @@ final class BotGuardToken implements ImplicitRule
         }
     }
 
+    private bool $stepUp = false;
+
     public function passes($attribute, $value): bool
     {
-        return Container::getInstance()->make(BotGuard::class)->passes($value, $this->action);
+        $guard = Container::getInstance()->make(BotGuard::class);
+        $ok = $guard->passes($value, $this->action);
+        $this->stepUp = !$ok && $guard->lastStepUp() !== null;
+        return $ok;
     }
 
     public function message(): string
     {
-        return '人机验证未通过，请重新验证';
+        return $this->stepUp ? '需要进一步验证' : '人机验证未通过，请重新验证';
     }
 }

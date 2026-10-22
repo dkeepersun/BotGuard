@@ -81,6 +81,27 @@ if ($result->passed() && $result->riskLevel === 'high') {
 }
 ```
 
+### 额外验证（step-up）
+
+有三类 token 网关判为通过，但拿到的成本对机器人很低。`passes()` 和两种验证规则**默认把它们当作未通过**：
+
+| 原因码 | 情况 | 放行开关（.env） |
+|---|---|---|
+| `STEP_UP_FALLBACK` | 用户选了无障碍备用路径，只有工作量证明 | `BOTGUARD_ACCEPT_FALLBACK=true` |
+| `STEP_UP_DEGRADED` | 网关图片题容量不足，降级为工作量证明（攻击者可以故意刷满配额触发） | `BOTGUARD_ACCEPT_DEGRADED=true` |
+| `STEP_UP_HIGH_RISK` | 风险等级为高，解出了最难的题但很可能是自动化 | `BOTGUARD_ACCEPT_HIGH_RISK=true` |
+
+被拦下时，`botguard()->lastStepUp()` 返回原因码，可以改为让用户做短信验证等额外检查，而不是再弹一次验证码；`BotGuardToken` 规则的错误信息会变成「需要进一步验证」。`verify()` 不做这项判断，原样返回网关的结果，`\BotGuard\Laravel\BotGuard::stepUp($result)` 可以自己判断。
+
+```php
+if (!botguard()->passes($request->input('botguard_token'), 'login')) {
+    if (botguard()->lastStepUp() !== null) {
+        return redirect()->route('login.sms');   // 通过了验证码，但还要再验证一次
+    }
+    return back()->withErrors(['botguard_token' => '验证失败']);
+}
+```
+
 ### token 什么时候被消耗
 
 规则一执行就会消耗 token。Laravel 在某个字段校验失败后，**仍会继续校验其余字段**（`bail` 只对同一个字段内的多条规则生效），所以把 `botguard` 规则写在数组最后并不能避免消耗：用户名写错时 token 照样被用掉，用户改完再提交只会得到“验证未通过”。两种做法：

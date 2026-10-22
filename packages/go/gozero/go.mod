@@ -2,7 +2,7 @@ module github.com/dkeepersun/BotGuard/packages/go/gozero
 
 go 1.22
 
-require github.com/dkeepersun/BotGuard/packages/go v0.1.0
+require github.com/dkeepersun/BotGuard/packages/go v0.2.0
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect

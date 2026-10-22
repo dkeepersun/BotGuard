@@ -30,6 +30,7 @@ gateway:
 
 test-sdk:
 	php packages/php/tests/run.php
+	php packages/laravel/tests/stepup.php
 	cd packages/go && go vet ./... ./gin/... ./gozero/... && go test ./... ./gin/... ./gozero/...
 	npm ci --prefix packages/browser --no-audit --no-fund
 	npm test --prefix packages/browser

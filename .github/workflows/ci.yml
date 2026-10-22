@@ -84,6 +84,7 @@ jobs:
           php-version: ${{ matrix.php }}
           extensions: curl
       - run: php packages/php/tests/run.php
+      - run: php packages/laravel/tests/stepup.php
       - run: find packages/php packages/laravel -name '*.php' -print0 | xargs -0 -n1 php -l
 
   # The installation methods end to end on a fresh runner (systemd, sudo, no

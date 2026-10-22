@@ -30,7 +30,7 @@ func fakeGateway(t *testing.T, status int, resp string) *botguard.Client {
 	return c
 }
 
-const passed = `{"code":"OK","data":{"success":true,"app_key":"app_test_1","action":"login","verified_at":1,"risk_level":"high"}}`
+const passed = `{"code":"OK","data":{"success":true,"app_key":"app_test_1","action":"login","verified_at":1,"risk_level":"medium"}}`
 
 func run(c *botguard.Client, opts ...Option) *httptest.ResponseRecorder {
 	gin.SetMode(gin.TestMode)
@@ -53,7 +53,7 @@ func run(c *botguard.Client, opts ...Option) *httptest.ResponseRecorder {
 }
 
 func TestProtect(t *testing.T) {
-	if w := run(fakeGateway(t, 200, passed)); w.Code != 200 || w.Body.String() != "ok high" {
+	if w := run(fakeGateway(t, 200, passed)); w.Code != 200 || w.Body.String() != "ok medium" {
 		t.Fatalf("pass: %d %s", w.Code, w.Body)
 	}
 	w := run(fakeGateway(t, 200, `{"code":"OK","data":{"success":false,"reason":"TOKEN_EXPIRED"}}`))
@@ -111,6 +111,29 @@ func TestCustomResponsesWithoutAbort(t *testing.T) {
 		r.ServeHTTP(w, req)
 		if ran || w.Code != tc.want {
 			t.Errorf("%s: handler ran=%v, status %d (want %d)", name, ran, w.Code, tc.want)
+		}
+	}
+}
+
+// The guard's step-up default reaches gin: a high-risk pass is held back
+// unless the guard allows it.
+func TestProtectStepUp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	high := strings.Replace(passed, `"medium"`, `"high"`, 1)
+	for _, allow := range []bool{false, true} {
+		var opts []botguard.GuardOption
+		if allow {
+			opts = append(opts, botguard.AllowHighRisk())
+		}
+		ran := false
+		r := gin.New()
+		r.POST("/login", Protect(botguard.NewGuard(fakeGateway(t, 200, high), "login", opts...)), func(c *gin.Context) { ran = true })
+		req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader("botguard_token=tok"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if allow != ran || (!allow && (w.Code != 403 || !strings.Contains(w.Body.String(), "BOTGUARD_STEP_UP"))) {
+			t.Errorf("allow=%v: ran=%v %d %s", allow, ran, w.Code, w.Body)
 		}
 	}
 }

@@ -27,4 +27,16 @@ return [
 
     // Form field the widget fills with the token.
     'field' => 'botguard_token',
+
+    // passes() and the botguard validation rules treat these passes as
+    // failures unless allowed here: the accessible fallback and the
+    // capacity-degraded path are proof of work only (cheap for bots), and a
+    // high-risk client may be automation that solved the hardest picture.
+    // botguard()->lastStepUp() tells why, so the page can offer an SMS code
+    // instead. verify() always returns the gateway's result unchanged.
+    'accept' => [
+        'fallback' => env('BOTGUARD_ACCEPT_FALLBACK', false),
+        'degraded' => env('BOTGUARD_ACCEPT_DEGRADED', false),
+        'high_risk' => env('BOTGUARD_ACCEPT_HIGH_RISK', false),
+    ],
 ];

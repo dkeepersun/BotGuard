@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 )
 
@@ -17,6 +18,25 @@ const (
 	ReasonAppMismatch      = "APP_MISMATCH"
 	ReasonActionMismatch   = "ACTION_MISMATCH"
 	ReasonOriginNotAllowed = "ORIGIN_NOT_ALLOWED"
+)
+
+// Step-up reasons. The gateway passed these tokens, but how they were earned
+// is cheap for a bot: the accessible fallback and the capacity-degraded path
+// are proof of work only, and a high-risk client may be automation that
+// solved the hardest picture. Guard rejects them by default with these
+// reasons, so the business can ask for something more (an SMS code, say);
+// AllowFallback, AllowDegraded and AllowHighRisk opt back in.
+const (
+	ReasonStepUpFallback = "STEP_UP_FALLBACK"
+	ReasonStepUpDegraded = "STEP_UP_DEGRADED"
+	ReasonStepUpHighRisk = "STEP_UP_HIGH_RISK"
+)
+
+// Gateway values the step-up policy reads.
+const (
+	KindFallback         = "fallback"
+	RiskHigh             = "high"
+	RiskCapacityDegraded = "CAPACITY_DEGRADED"
 )
 
 // VerifyRequest is one verify call. Keep RequestID stable for the whole
@@ -72,6 +92,30 @@ type Result struct {
 
 // Rejected reports whether the token was refused; ask the user to verify again.
 func (r *Result) Rejected() bool { return !r.Passed }
+
+// StepUp names the step-up reason a passed token carries, or "" for none:
+// ReasonStepUpFallback, ReasonStepUpDegraded or ReasonStepUpHighRisk, in
+// that order. Client.Verify leaves the decision to the caller; Guard applies
+// it.
+func (r *Result) StepUp() string {
+	switch {
+	case !r.Passed:
+		return ""
+	case r.ChallengeKind == KindFallback:
+		return ReasonStepUpFallback
+	case slices.Contains(r.RiskReasons, RiskCapacityDegraded):
+		return ReasonStepUpDegraded
+	case r.RiskLevel == RiskHigh:
+		return ReasonStepUpHighRisk
+	default:
+		return ""
+	}
+}
+
+// IsStepUp reports whether reason is one of the step-up reasons.
+func IsStepUp(reason string) bool {
+	return reason == ReasonStepUpFallback || reason == ReasonStepUpDegraded || reason == ReasonStepUpHighRisk
+}
 
 // CallerError is a mistake the caller has to fix in code or configuration:
 // a malformed app_key, action or request_id (Status 0, nothing sent), or any
