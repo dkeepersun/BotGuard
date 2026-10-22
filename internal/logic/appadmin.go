@@ -47,6 +47,11 @@ func validAppText(name, remark string) error {
 	if utf8.RuneCountInString(remark) > 255 {
 		return invalid("备注不能超过 255 个字符")
 	}
+	// Pages escape these, but a name is shown in many places (tabs, the app
+	// switcher, integration snippets); there is no reason to store markup.
+	if strings.ContainsAny(name+remark, "<>") {
+		return invalid("应用名称和备注不能包含 < 或 >")
+	}
 	return nil
 }
 

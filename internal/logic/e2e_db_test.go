@@ -226,3 +226,26 @@ func TestWrongKEKFailsClosed(t *testing.T) {
 		t.Fatal("secret key stored in plaintext")
 	}
 }
+
+// App names end up in console markup (tabs, the app switcher); markup in
+// them is refused outright, on top of the escaping at render time.
+func TestAppTextRejectsMarkup(t *testing.T) {
+	_, conn := testdb.Open(t)
+	ctx := context.Background()
+	admin := &AppAdmin{Repo: repository.NewAppAdmin(conn), Sealer: testSealer(t), Now: time.Now}
+	for _, name := range []string{"Shop<script>x</script>", "a > b"} {
+		if _, err := admin.CreateApp(ctx, name, ""); !errors.Is(err, ErrInvalid) {
+			t.Errorf("name %q: %v", name, err)
+		}
+	}
+	if _, err := admin.CreateApp(ctx, "Shop", "<img src=x>"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("remark: %v", err)
+	}
+	key, err := admin.CreateApp(ctx, "商城 & 积分", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.UpdateApp(ctx, key, "x<y", ""); !errors.Is(err, ErrInvalid) {
+		t.Errorf("update: %v", err)
+	}
+}

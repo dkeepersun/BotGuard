@@ -163,7 +163,8 @@ func TestConsoleEndToEnd(t *testing.T) {
 		t.Fatalf("signed out: %d %s", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	resp, body := b.get("/login")
-	if resp.StatusCode != 200 || !strings.Contains(body, "登录管理后台") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors 'self'") {
+	if resp.StatusCode != 200 || !strings.Contains(body, "登录管理后台") || !strings.Contains(resp.Header.Get("Content-Security-Policy"), "frame-ancestors 'self'") ||
+		strings.Contains(resp.Header.Get("Content-Security-Policy"), "unsafe-eval") {
 		t.Fatalf("login page: %d", resp.StatusCode)
 	}
 	if resp, body := b.post("/login", url.Values{"username": {"root"}, "password": {"wrong"}}); resp.StatusCode != 401 || !strings.Contains(body, "用户名或密码错误") {
