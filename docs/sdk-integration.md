@@ -28,7 +28,7 @@
 
 ## 首批接入约定
 
-浏览器组件、PHP SDK 和 Laravel 适配包已实现，并于 2026-10-22 发布 0.1.0（MIT，发布流程见 `docs/release.md`）。可运行示例见 `examples/demo`；Go SDK 仍是提案。
+浏览器组件、PHP SDK 和 Laravel 适配包已实现，并于 2026-10-22 发布 0.1.0（MIT，发布流程见 `docs/release.md`）。可运行示例见 `examples/demo`。Go SDK（含 gin、go-zero 适配）已实现，见 `packages/go/README.md`，尚未打标签发布。
 
 浏览器（`packages/browser`，已实现）：业务页引入 `<botguard-widget>` 并配置 endpoint/app-key/action；题型由服务端决定（无感 / 滑块 / 文字点选 / 图形点选 / 无障碍备用），组件自动处理，业务页不需要改；组件拿到 token 后交给业务表单的 `botguard_token` 字段。token 到期、业务拒绝、页面 reset 后清理；有效期以 solve 响应的相对时长 `expires_in` 为准（旧 gateway 退回 `expires_at`），不受客户端时钟偏差影响。Worker 不能冻结主线程；超时可取消，每轮验证只停止自己的 Worker 和定时器。`verify()` 必定有结果（成功、出错，或以 `CANCELLED` / `TOO_MANY_FAILURES` reject），并发调用共享同一个 Promise。`bindTo` 绑定表单内按钮时在表单 `submit` 事件拦截（覆盖回车和其他提交按钮），只提交一次。模块可在 SSR 环境 import。不能只隐藏提交按钮作为防护。
 
@@ -46,7 +46,7 @@
 - 429 的 `Retry-After` 透传给调用方。
 - 通过结果携带 `challenge_kind`、`risk_level`、`risk_reasons`（可能缺失，按空处理）。它们不改变“通过”这一结论，供业务方对高风险或 fallback 追加验证（如短信）。
 
-Go（待实现）：`client.Verify(ctx, VerifyRequest{AppKey, Token, Action, RequestID})` 返回 `(Result, error)`：Passed 与 Rejected 通过 `Result` 返回，`error == nil`；CallerError 与 Unknown 通过可用 `errors.As` 区分的类型化 error 返回。创建 client 时注入 HTTPS endpoint、secret_id/secret_key、超时；每次请求（含重试）都重新签名；固定超时上限、不跟随重定向、限制响应体。除非调用方明确指定原 request_id，不自动重试。
+Go（`packages/go`，已实现，见其 README）：`client.Verify(ctx, VerifyRequest{AppKey, Token, Action, RequestID})` 返回 `(*Result, error)`：Passed 与 Rejected 通过 `Result` 返回，`error == nil`；CallerError 与 Unknown 分别为 `*CallerError`、`*UnknownError`，可用 `errors.As` 区分，ProtocolError 是 `UnknownError.Protocol == true`。创建 client 时注入 endpoint、secret_id/secret_key、超时；每次请求（含重试）都重新签名；固定超时上限（默认 3 秒，下限 50 ms）、不跟随重定向、响应体上限 64 KiB。本地校验与 PHP SDK 相同。默认不自动重试；`WithRetries(n)` 只对网络错误和 5xx 用原 request_id 重新签名重试。只依赖标准库，要求 Go ≥ 1.22。另有 net/http 中间件 `NewGuard(client, action).Middleware`，以及独立模块的 gin（`packages/go/gin`）和 go-zero（`packages/go/gozero`）适配，默认拒绝为 403、配置错误为 500、未知为 503，后两者写 error 日志。
 
 PHP（`packages/php`，已实现，见其 README）：`Client::verify(VerifyRequest): VerifyResult`，按 BG1-HMAC-SHA256 签名，传输可注入，可选按原 request_id 重新签名重试（只重试网络错误和 5xx）。Passed 与 Rejected 通过 `VerifyResult` 返回；CallerError 与 Unknown 抛出不同的异常类型（ProtocolError 为 Unknown 异常的子类，SDK 不自动重试）。发请求前按网关规则本地校验：token 不是 `[A-Za-z0-9._-]`、1–256 字节的字符串时直接返回 Rejected（`TOKEN_INVALID`），不发请求；app_key/action/request_id 格式不对抛 CallerError（`INVALID_REQUEST`）。除 429 外的 3xx/4xx 一律为 CallerError；响应体超过 64 KiB 为 ProtocolError 并保留状态码；`Retry-After` 支持秒数和 HTTP-date。超时为空、0 或负数时取默认值，并有 50 ms 下限，不会出现不限时。secret_key 由业务服务器配置注入，不进入 Blade/JavaScript/HTML；参数标记 `#[\SensitiveParameter]`，`Client` 的调试输出不含 secret_key。
 
@@ -59,7 +59,12 @@ composer require botguard/php-sdk
 # Laravel 项目安装适配包，会一并装上 php-sdk：
 composer require botguard/laravel
 ```
-Go SDK 仍是提案，尚未发布。
+Go SDK 已实现，尚未发布；发布后的安装命令：
+```sh
+go get github.com/dkeepersun/BotGuard/packages/go
+go get github.com/dkeepersun/BotGuard/packages/go/gin     # gin 项目
+go get github.com/dkeepersun/BotGuard/packages/go/gozero  # go-zero 项目
+```
 
 ## 发布流水线计划
 

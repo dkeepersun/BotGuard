@@ -1,6 +1,6 @@
 # 发布清单
 
-服务端程序和三个 SDK 包分开发版，各用各的标签：
+服务端程序和各个 SDK 包分开发版，各用各的标签：
 
 | 内容 | 渠道 | 标签 | 安装方式 |
 |---|---|---|---|
@@ -8,8 +8,9 @@
 | `@botguard/browser` | npm | `browser-vX.Y.Z` | `npm install @botguard/browser` |
 | `botguard/php-sdk` | Packagist | `php-vX.Y.Z` | `composer require botguard/php-sdk` |
 | `botguard/laravel` | Packagist | `laravel-vX.Y.Z` | `composer require botguard/laravel` |
+| Go SDK 及 gin / go-zero 适配 | Go Modules（直接取本仓库） | `packages/go/vX.Y.Z`、`packages/go/gin/vX.Y.Z`、`packages/go/gozero/vX.Y.Z` | `go get github.com/dkeepersun/BotGuard/packages/go` |
 
-服务端的发布步骤见文末「四、服务端发布」。下面先是三个 SDK 包。
+服务端的发布步骤见文末「四、服务端发布」，Go SDK 见「五、Go SDK」。下面先是 npm 和 Composer 的包。
 
 | 包 | 渠道 | 安装命令 |
 |---|---|---|
@@ -28,6 +29,7 @@
 | 服务端 | v0.2.1 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布。v0.2.1 与 v0.2.0 代码相同，只是 rpm 改为签名发布 |
 | `@botguard/browser` | 0.2.0 | 0.1.0、0.2.0 都是在本机手动发布的，没有 provenance |
 | `botguard/php-sdk`、`botguard/laravel` | 0.1.0 | 之后只改了文档，没有发新版本 |
+| Go SDK（含 gin / go-zero 适配） | 未发布 | 代码在 `packages/go`，发布步骤见「五、Go SDK」 |
 
 - npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置，但工作流发布仍然失败（403，见下文“发版排错”）。
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
@@ -170,3 +172,44 @@ botguard_0.3.0_linux_amd64/
 第一次发版建议先推 `v0.3.0-rc.1` 这样的预发布标签，确认工作流、附件、镜像和 `upgrade` 都正常后再发正式版。标签一旦推送就不要移动或复用；发错了就发下一个版本号。
 
 `vX.Y.Z` 标签同时也是 Go 模块版本，所以 `go install github.com/dkeepersun/BotGuard/cmd/gateway@v0.3.0` 也能装上对应版本（这样编译的程序版本号显示为模块版本）。
+
+## 五、Go SDK
+
+Go 模块不需要注册中心：`go get` 通过 Go 模块代理直接从本仓库按标签取代码，所以发布就是推标签。三个模块在同一个仓库的子目录里，标签要带目录前缀（[Go 多模块仓库的规则](https://go.dev/doc/modules/managing-source#multiple-module-source)）：
+
+| 模块 | 目录 | 标签 |
+|---|---|---|
+| `github.com/dkeepersun/BotGuard/packages/go` | `packages/go` | `packages/go/vX.Y.Z` |
+| `github.com/dkeepersun/BotGuard/packages/go/gin` | `packages/go/gin` | `packages/go/gin/vX.Y.Z` |
+| `github.com/dkeepersun/BotGuard/packages/go/gozero` | `packages/go/gozero` | `packages/go/gozero/vX.Y.Z` |
+
+适配包的 `go.mod` 里 `require` 的是核心包的**已发布版本**；`packages/go/go.work` 里的 `replace` 只在本仓库开发和 CI 时让它们用本目录的代码，用户 `go get` 时不会读到。所以：
+
+1. **先发核心包**，确认 main 上的 CI 通过后：
+
+   ```bash
+   git fetch origin
+   git tag -a packages/go/v0.1.0 origin/main -m "BotGuard Go SDK v0.1.0"
+   git push origin packages/go/v0.1.0
+   ```
+
+2. **再发适配包**。适配包 require 的核心版本必须已经有标签，否则用户 `go get` 时会报 `unknown revision`：
+
+   ```bash
+   git tag -a packages/go/gin/v0.1.0 origin/main -m "BotGuard Go SDK gin adapter v0.1.0"
+   git tag -a packages/go/gozero/v0.1.0 origin/main -m "BotGuard Go SDK go-zero adapter v0.1.0"
+   git push origin packages/go/gin/v0.1.0 packages/go/gozero/v0.1.0
+   ```
+
+3. **发布后验证**：在一个干净目录里，不带 `go.work`，确认能从模块代理装上：
+
+   ```bash
+   mkdir /tmp/bg-go && cd /tmp/bg-go && go mod init example.com/try
+   go get github.com/dkeepersun/BotGuard/packages/go@v0.1.0 \
+          github.com/dkeepersun/BotGuard/packages/go/gin@v0.1.0 \
+          github.com/dkeepersun/BotGuard/packages/go/gozero@v0.1.0
+   ```
+
+   模块代理第一次被请求时才去抓取标签，<https://pkg.go.dev/github.com/dkeepersun/BotGuard/packages/go> 也要等有人请求过才会出现文档页。
+
+以后升级核心包、并让适配包依赖新版本时：先发核心包新标签，再把适配包 `go.mod` 的 require 和 `go.work` 里 `replace` 的版本号一起改成新版本，合并后再给适配包打标签。只改适配包时不用动核心包。标签推送后不要移动或删除：模块代理和校验和数据库（sum.golang.org）会永久记住第一次看到的内容，同一个版本号换了代码，用户会遇到校验和不匹配。

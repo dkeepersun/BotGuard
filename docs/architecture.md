@@ -154,7 +154,7 @@ PoW 只增加自动化成本，不证明“真人”。MVP 无法替代成熟厂
 2. 管理员创建/登录/注销、密码安全、Redis 会话撤销、CSRF/Origin、权限路由、审计；登录限流和会话固定攻击测试。
 3. 应用、origin、action、密钥对创建/吊销/轮换（已由 botguard-ctl 完成）；规则只先支持名单+限流+按 action 配置的 `sha256-target-v1` 多题 PoW（k 与难度可配）。
 4. 无状态签名 challenge（含签名密钥配置与 kid 轮换）→ solve（一次提交标记）→ token → verify；严格版本契约、verify Lua 原子性、按契约的 verify 结果语义与 SDK 分类、缓存失效。
-5. browser Web Component、PHP core 与普通 PHP 演示已完成（`examples/demo`）；Go SDK 与 Go 处理器示例待做。
+5. browser Web Component、PHP core 与普通 PHP 演示已完成（`examples/demo`）；Go SDK（含 net/http、gin、go-zero 中间件）已完成，Go 处理器示例待做。
 6. CI：根服务、各 SDK、共享契约 fixtures；隔离 MySQL + 真实 Redis 集成测试。部署依赖只有 Redis/MySQL。
 
 退出：两条后端语言接入均成功；无浏览器 secret；过期/篡改签名 challenge/重复提交 challenge/跨应用/跨 action 被拒；签发接口不产生 per-challenge Redis 写入；PoW fixtures 在浏览器与服务端一致；所有 token 类失败均为 200 + `success:false`，SDK 不把拒绝误判为异常；并发消费唯一成功；同请求丢响应恢复；Redis 故障不放行；禁用应用/密钥在规定时间内生效；无管理员越权。
