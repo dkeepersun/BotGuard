@@ -37,9 +37,18 @@ func Readiness(w http.ResponseWriter, r *http.Request) {
 	response.JSON(w, http.StatusServiceUnavailable, map[string]string{"status": "not_ready", "reason": "preview_only"})
 }
 
+// Route names in the health counters.
+const (
+	routeChallenges = "challenges"
+	routeSolutions  = "solutions"
+	routeVerify     = "verify"
+)
+
 type Gateway struct {
 	Logic *logic.Gateway
 	IPs   *clientip.Resolver
+	// Monitor counts requests and error codes; nil counts nothing.
+	Monitor *logic.Monitor
 	// Ready returns "" when ready, otherwise a reason code for the probe.
 	Ready func(ctx context.Context) string
 }
@@ -115,11 +124,13 @@ func decodeBytes(body []byte, v any) error {
 	return nil
 }
 
-func fail(w http.ResponseWriter, err error, requestID string) {
+// fail answers with the contract error and counts it for route.
+func (g *Gateway) fail(w http.ResponseWriter, route string, err error, requestID string) {
 	var e *errx.Error
 	if !errors.As(err, &e) {
 		e = errx.ErrUnavailable
 	}
+	g.Monitor.Fail(route, e.Code)
 	response.Fail(w, e.Status, e.Code, e.Message, requestID, e.RetryAfter)
 }
 
@@ -163,6 +174,7 @@ func preflight(w http.ResponseWriter, r *http.Request) {
 }
 
 func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
+	g.Monitor.Request(routeChallenges)
 	rid := newRequestID()
 	var body struct {
 		AppKey   string        `json:"app_key"`
@@ -174,7 +186,7 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 		Levels [][]string `json:"levels"`
 	}
 	if err := decode(w, r, &body); err != nil {
-		fail(w, err, rid)
+		g.fail(w, routeChallenges, err, rid)
 		return
 	}
 	out, origin, err := g.Logic.Issue(r.Context(), logic.IssueInput{
@@ -184,13 +196,14 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 	})
 	cors(w, origin)
 	if err != nil {
-		fail(w, err, rid)
+		g.fail(w, routeChallenges, err, rid)
 		return
 	}
 	response.OK(w, out, rid)
 }
 
 func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {
+	g.Monitor.Request(routeSolutions)
 	rid := newRequestID()
 	var body struct {
 		AppKey    string              `json:"app_key"`
@@ -200,7 +213,7 @@ func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {
 		Signals   *risk.Signals       `json:"signals"`
 	}
 	if err := decodeLimit(w, r, &body, maxSolveBody); err != nil {
-		fail(w, err, rid)
+		g.fail(w, routeSolutions, err, rid)
 		return
 	}
 	out, origin, err := g.Logic.Solve(r.Context(), logic.SolveInput{
@@ -210,13 +223,14 @@ func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {
 	})
 	cors(w, origin)
 	if err != nil {
-		fail(w, err, rid)
+		g.fail(w, routeSolutions, err, rid)
 		return
 	}
 	response.OK(w, out, rid)
 }
 
 func (g *Gateway) verify(w http.ResponseWriter, r *http.Request) {
+	g.Monitor.Request(routeVerify)
 	var body struct {
 		AppKey    string `json:"app_key"`
 		Token     string `json:"token"`
@@ -228,7 +242,7 @@ func (g *Gateway) verify(w http.ResponseWriter, r *http.Request) {
 		err = decodeBytes(raw, &body)
 	}
 	if err != nil {
-		fail(w, err, "")
+		g.fail(w, routeVerify, err, "")
 		return
 	}
 	out, err := g.Logic.Verify(r.Context(), logic.VerifyInput{
@@ -241,7 +255,7 @@ func (g *Gateway) verify(w http.ResponseWriter, r *http.Request) {
 		AppKey:    body.AppKey, Token: body.Token, Action: body.Action, RequestID: body.RequestID,
 	})
 	if err != nil {
-		fail(w, err, body.RequestID)
+		g.fail(w, routeVerify, err, body.RequestID)
 		return
 	}
 	response.OK(w, out, body.RequestID)

@@ -26,10 +26,12 @@
 
 | 内容 | 最新版本 | 说明 |
 |---|---|---|
-| 服务端 | v0.2.1 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布。v0.2.1 与 v0.2.0 代码相同，只是 rpm 改为签名发布 |
+| 服务端 | v0.3.0 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布（用 `publish` 工作流发版）。新增：允许来源支持子域名通配和 `*`，verify 返回 `origin`；按应用的图片题配额、预生成题库、容量不足时降级为 PoW；连接超时、本地限流影子、未知 key 查询预算 |
 | `@botguard/browser` | 0.2.0 | 0.1.0、0.2.0 都是在本机手动发布的，没有 provenance |
-| `botguard/php-sdk`、`botguard/laravel` | 0.1.0 | 之后只改了文档，没有发新版本 |
-| Go SDK（含 gin / go-zero 适配） | v0.1.0 | 三个模块的标签都在 `4b090c6` 上，proxy.golang.org 和 sum.golang.org 都已收录；在干净目录用默认设置 `go get` 并编译示例已验证 |
+| `botguard/php-sdk` | 0.1.1 | `VerifyResult` 新增 `origin` |
+| `botguard/laravel` | 0.1.0 | 依赖 `botguard/php-sdk: ^0.1`，composer 更新时自动用上 php-sdk 0.1.1，不用另发 |
+| Go SDK 核心包 | v0.1.1 | `Result` 新增 `Origin`；标签在 `5dd9b5a` 上，proxy.golang.org 和 sum.golang.org 都已收录 |
+| Go SDK gin / go-zero 适配 | v0.1.0 | 标签在 `4b090c6` 上；依赖核心包 v0.1.0，用户 `go get .../packages/go@v0.1.1` 即可用上新核心包，适配包不用另发 |
 
 - npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置（只允许暂存发布）。`release-browser` 工作流改为暂存发布：推标签后版本进入暂存区，要人工批准才公开（见下文 npm 第 4 步）。改完后还没有实际发过一个版本：main 上的版本号已改为 0.2.1，代码与 0.2.0 相同（README 多了不经过 npm 的安装方式），用来第一次验证暂存发布，以及把同一个 tgz 放进 GitHub Release 草稿。等 npm 当前的故障（Degraded Publish, Install, and View Package）恢复后，再推 `browser-v0.2.1` 并批准。
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。

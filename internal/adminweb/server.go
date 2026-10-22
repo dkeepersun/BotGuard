@@ -34,7 +34,9 @@ type Server struct {
 	Apps    *logic.AppAdmin
 	Repo    *repository.AppAdmin
 	Stats   *repository.Stats
-	IPs     *clientip.Resolver
+	// Health holds the gateways' per-minute summaries.
+	Health *repository.HealthStore
+	IPs    *clientip.Resolver
 	// Checks reports the state of each dependency for the system page and
 	// /readyz: name -> "" when healthy, otherwise a reason.
 	Checks func(ctx context.Context) []Check
@@ -97,6 +99,10 @@ func (s *Server) funcs() template.FuncMap {
 		"ms": func(ms int64) string {
 			return time.UnixMilli(ms).In(cst).Format("01-02 15:04:05")
 		},
+		"unix": func(sec int64) string {
+			return time.Unix(sec, 0).In(cst).Format("01-02 15:04")
+		},
+		"anomaly": func(kind string) string { return anomalyLabels[kind] },
 		"num":     formatNum,
 		"pct":     formatPct,
 		"json":    func(v any) template.JS { b, _ := json.Marshal(v); return template.JS(b) },
@@ -270,6 +276,7 @@ func (s *Server) Register(srv *rest.Server) error {
 
 		get("/stats", s.page(logic.PermView, s.statsPage)),
 		get("/events", s.page(logic.PermView, s.eventsPage)),
+		get("/health", s.page(logic.PermView, s.healthPage)),
 		get("/api/events", s.page(logic.PermView, s.eventsAPI)),
 		get("/preview", s.page(logic.PermView, s.previewPage)),
 		get("/api/preview", s.page(logic.PermView, s.previewAPI)),
@@ -421,6 +428,7 @@ func (s *Server) menus(w http.ResponseWriter, r *http.Request, p *logic.Principa
 		{ID: "analysis", Title: "数据分析", Type: 0, Icon: "layui-icon layui-icon-chart", Children: []menu{
 			item("stats", "统计报表", "layui-icon-chart-screen", "/stats"),
 			item("events", "实时事件", "layui-icon-list", "/events"),
+			item("health", "运行状况", "layui-icon-chart", "/health"),
 		}},
 		item("preview", "题型预览", "layui-icon-picture", "/preview"),
 	}

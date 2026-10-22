@@ -182,3 +182,36 @@ func TestConsumeMatchesOriginPatternsLikeDomain(t *testing.T) {
 		}
 	}
 }
+
+func TestHealthStore(t *testing.T) {
+	s, _ := newState(t)
+	h := NewHealthStore(s.rds)
+	h.Minutes, h.MaxAnomalies = 2, 2
+	ctx := context.Background()
+	base := time.Now().Truncate(time.Minute).Add(-5 * time.Minute)
+	for i := range 3 {
+		at := base.Add(time.Duration(i) * time.Minute).Unix()
+		m := HealthMinute{At: at, Instance: "gw-a:8090", Requests: map[string]int64{"verify": int64(i)}}
+		if err := h.Put(ctx, m, []HealthAnomaly{{At: at, Instance: "gw-a:8090", Kind: AnomalyDegraded, Detail: fmt.Sprint(i)}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.Put(ctx, HealthMinute{At: base.Unix(), Instance: "gw-b:8090"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	ins, err := h.Instances(ctx, base.Add(-time.Hour))
+	if err != nil || len(ins) != 2 || ins[0].Name != "gw-a:8090" || ins[0].LastSeen.Unix() != base.Add(2*time.Minute).Unix() {
+		t.Fatalf("instances: %+v %v", ins, err)
+	}
+	if ins, _ := h.Instances(ctx, base.Add(time.Minute)); len(ins) != 1 {
+		t.Fatalf("since filter: %+v", ins)
+	}
+	got, err := h.Recent(ctx, "gw-a:8090", 10)
+	if err != nil || len(got) != 2 || got[0].Requests["verify"] != 2 || got[1].Requests["verify"] != 1 {
+		t.Fatalf("recent (capped at 2, newest first): %+v %v", got, err)
+	}
+	an, err := h.Anomalies(ctx, 10)
+	if err != nil || len(an) != 2 || an[0].Detail != "2" {
+		t.Fatalf("anomalies: %+v %v", an, err)
+	}
+}

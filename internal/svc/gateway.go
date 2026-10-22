@@ -4,7 +4,9 @@ package svc
 import (
 	"context"
 	"crypto/sha256"
+	"os"
 	"runtime"
+	"strconv"
 	"sync/atomic"
 	"time"
 
@@ -19,10 +21,11 @@ import (
 )
 
 type Gateway struct {
-	Logic *logic.Gateway
-	IPs   *clientip.Resolver
-	rds   *redis.Redis
-	db    *store.DB
+	Logic   *logic.Gateway
+	IPs     *clientip.Resolver
+	Monitor *logic.Monitor
+	rds     *redis.Redis
+	db      *store.DB
 	// schema is the migration version this binary needs; schemaOK latches
 	// once the database has it, since migrations only move forward.
 	schema   int
@@ -115,6 +118,18 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 		workers = max(1, runtime.NumCPU()/2)
 	}
 	gw.Logic.StartPuzzlePool(context.Background(), c.PuzzlePool.PerKind, workers)
+	instance := c.Monitor.Instance
+	if instance == "" {
+		host, err := os.Hostname()
+		if err != nil {
+			host = c.Host
+		}
+		instance = host + ":" + strconv.Itoa(c.Port)
+	}
+	gw.Monitor = &logic.Monitor{Instance: instance, Store: repository.NewHealthStore(rds),
+		RateLimitedPerMinute: int64(c.Monitor.RateLimitedPerMinute), Pool: gw.Logic.PoolLevels}
+	gw.Logic.Monitor = gw.Monitor
+	go gw.Monitor.Run(context.Background())
 	return gw, nil
 }
 
