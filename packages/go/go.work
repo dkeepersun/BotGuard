@@ -1,0 +1,13 @@
+// Local development and CI for the Go SDK and its adapters. The adapters
+// require the published core version; until packages/go/vX.Y.Z is tagged,
+// the replace below points that requirement at this directory. Consumers
+// never see this file: go get ignores go.work.
+go 1.22
+
+use (
+	.
+	./gin
+	./gozero
+)
+
+replace github.com/dkeepersun/BotGuard/packages/go v0.1.0 => ./

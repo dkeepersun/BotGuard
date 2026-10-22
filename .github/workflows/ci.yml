@@ -52,6 +52,25 @@ jobs:
       - run: composer validate --strict --no-check-publish packages/laravel/composer.json
       - run: cd packages/browser && npm publish --dry-run
 
+  # The Go SDK promises Go >= 1.22; the main job runs the server's Go only.
+  # The adapters resolve the core through packages/go/go.work.
+  go-sdk:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ["1.22", "stable"]
+    defaults:
+      run:
+        working-directory: packages/go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: packages/go/**/go.sum
+      - run: go vet ./... ./gin/... ./gozero/...
+      - run: go test -race ./... ./gin/... ./gozero/...
+
   # The PHP SDK promises PHP >= 8.1; the main job runs 8.2 only.
   php:
     runs-on: ubuntu-latest

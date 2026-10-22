@@ -10,7 +10,7 @@ BotGuard 是一个可以自己部署的人机验证服务，用来防止机器�
 - **安全的接入协议**：一次性 token、HMAC 签名核验、密钥加密存储，支持多个应用和密钥轮换
 - **管理后台**：应用与策略管理、统计报表、实时事件、审计日志、动态码登录
 - **开箱即用**：内置 SQLite 数据库，唯一依赖是 Redis；一条命令完成安装
-- **SDK**：浏览器组件、PHP、Laravel
+- **SDK**：浏览器组件、PHP、Laravel、Go（含 gin / go-zero 中间件）
 
 ## 快速开始
 
@@ -71,6 +71,7 @@ if (!$result->passed()) {
 | 浏览器组件 | `npm install @botguard/browser`，或直接引用 gateway 上的脚本 | [packages/browser](packages/browser/README.md) |
 | PHP | `composer require botguard/php-sdk` | [packages/php](packages/php/README.md) |
 | Laravel | `composer require botguard/laravel` | [packages/laravel](packages/laravel/README.md) |
+| Go（net/http、gin、go-zero） | `go get github.com/dkeepersun/BotGuard/packages/go` | [packages/go](packages/go/README.md) |
 
 其他语言可以按 [API 文档](api/contract-v1.md) 直接调用 `/v1/verify`。
 
