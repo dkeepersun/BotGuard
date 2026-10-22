@@ -209,6 +209,9 @@ type VerifyOutput struct {
 	ChallengeKind string   `json:"challenge_kind,omitempty"`
 	RiskLevel     string   `json:"risk_level,omitempty"`
 	RiskReasons   []string `json:"risk_reasons,omitempty"`
+	// Origin is the page origin the token was earned on. Apps allowing
+	// wildcard or any origin can check it against their own list.
+	Origin string `json:"origin,omitempty"`
 }
 
 // authenticate checks a BG1-HMAC-SHA256 signature. Cheap format and clock
@@ -344,18 +347,22 @@ func (g *Gateway) Verify(ctx context.Context, in VerifyInput) (out *VerifyOutput
 		return nil, errx.ErrUnavailable
 	}
 	if rest, ok := strings.CutPrefix(outcome, repository.PassPrefix); ok {
-		// verified_at:kind:level:reasons (kind and later may be empty for old tokens).
-		parts := strings.SplitN(rest, ":", 4)
+		// verified_at:kind:level:reasons:origin. Older stored results stop
+		// after reasons or verified_at, and kind and later may be empty.
+		parts := strings.SplitN(rest, ":", 5)
 		at, err := strconv.ParseInt(parts[0], 10, 64)
 		if err != nil {
 			return nil, errx.ErrUnavailable
 		}
 		out := &VerifyOutput{Success: true, AppKey: app.AppKey, Action: in.Action, VerifiedAt: at}
-		if len(parts) == 4 {
+		if len(parts) >= 4 {
 			out.ChallengeKind, out.RiskLevel = parts[1], parts[2]
 			if parts[3] != "" {
 				out.RiskReasons = strings.Split(parts[3], ",")
 			}
+		}
+		if len(parts) == 5 {
+			out.Origin = parts[4]
 		}
 		return out, nil
 	}

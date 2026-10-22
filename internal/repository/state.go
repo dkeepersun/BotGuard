@@ -31,7 +31,11 @@ var ErrIdempotencyConflict = errors.New("request_id reused with a different requ
 //
 // KEYS[1] result key, KEYS[2] token key
 // ARGV[1] request digest, ARGV[2] now, ARGV[3] result ttl, ARGV[4] action,
-// ARGV[5] forced rejection reason or ”, ARGV[6..] allowed origins
+// ARGV[5] forced rejection reason or ”, ARGV[6..] allowed origin patterns,
+// matched as domain.OriginMatches does
+//
+// A pass is PASS:verified_at:kind:level:reasons:origin; origin is last since
+// it contains colons.
 const verifyScript = `
 local prior = redis.call('GET', KEYS[1])
 if prior then
@@ -51,13 +55,20 @@ if not t[1] then return finish('TOKEN_INVALID') end
 if t[4] == '1' then return finish('TOKEN_CONSUMED') end
 if tonumber(t[3]) <= tonumber(ARGV[2]) then return finish('TOKEN_EXPIRED') end
 if t[1] ~= ARGV[4] then return finish('ACTION_MISMATCH') end
+local function matches(p, o)
+  if p == '*' then return true end
+  local i = string.find(p, '://*.', 1, true)
+  if not i then return p == o end
+  local prefix, suffix = string.sub(p, 1, i + 2), string.sub(p, i + 4)
+  return #o > #prefix + #suffix and string.sub(o, 1, #prefix) == prefix and string.sub(o, -#suffix) == suffix
+end
 local allowed = false
 for i = 6, #ARGV do
-  if ARGV[i] == t[2] then allowed = true break end
+  if matches(ARGV[i], t[2]) then allowed = true break end
 end
 if not allowed then return finish('ORIGIN_NOT_ALLOWED') end
 redis.call('HSET', KEYS[2], 'consumed', '1')
-return finish('PASS:' .. ARGV[2] .. ':' .. (t[5] or '') .. ':' .. (t[6] or '') .. ':' .. (t[7] or ''))
+return finish('PASS:' .. ARGV[2] .. ':' .. (t[5] or '') .. ':' .. (t[6] or '') .. ':' .. (t[7] or '') .. ':' .. t[2])
 `
 
 const putTokenScript = `

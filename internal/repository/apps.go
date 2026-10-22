@@ -101,7 +101,7 @@ func (r *SQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, err
 		Actions:       make(map[string]domain.ActionPolicy, len(actions)),
 	}
 	for _, o := range origins {
-		n, ok := domain.NormalizeOrigin(o)
+		n, ok := domain.NormalizeOriginPattern(o)
 		if !ok || n != o {
 			// Admin writes normalized origins; anything else is ignored, not guessed at.
 			logx.WithContext(ctx).Errorf("app %d has non-normalized origin, ignored", row.ID)

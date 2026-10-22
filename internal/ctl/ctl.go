@@ -48,7 +48,7 @@ const usage = `用法：botguard-ctl <命令> [参数]
   app show    -app app_key                          查看应用的来源、action 和密钥对
   app enable  -app app_key                          启用应用
   app disable -app app_key                          停用应用
-  origin add    -app app_key -origin URL            添加允许来源，如 https://example.com；App 用 app://包名
+  origin add    -app app_key -origin URL            添加允许来源，如 https://example.com；子域名通配 https://*.example.com；全部允许 *；App 用 app://包名
   origin remove -app app_key -origin URL            移除允许来源
   action set -app app_key -action 名称 [-mode adaptive] [-kinds slider,rotate,click_text,click_shape]
              [-enabled=true] [-puzzles 8] [-difficulty 2000]

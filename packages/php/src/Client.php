@@ -225,6 +225,7 @@ final class Client
         return VerifyResult::ofPass($data['app_key'], $data['action'], $data['verified_at'], $request->requestId,
             is_string($data['challenge_kind'] ?? null) ? $data['challenge_kind'] : null,
             is_string($data['risk_level'] ?? null) ? $data['risk_level'] : null,
-            $reasons);
+            $reasons,
+            is_string($data['origin'] ?? null) ? $data['origin'] : null);
     }
 }

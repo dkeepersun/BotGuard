@@ -87,7 +87,7 @@ BotGuard/
 | 表 | 主要字段与约束 |
 |---|---|
 | `botguard_app` | id、app_key UNIQUE（对应易盾 captchaId，公开）、name、status、active_policy_version、timestamps |
-| `botguard_app_origin` | id、app_id、origin；UNIQUE(app_id, origin)；精确 scheme+host+port，不允许含糊后缀匹配 |
+| `botguard_app_origin` | id、app_id、origin；UNIQUE(app_id, origin)；精确 scheme+host+port，或子域名通配 `scheme://*.domain[:port]`、全部允许 `*`（见契约），不做其他含糊的后缀匹配 |
 | `botguard_app_action` | app_id、action、enabled、challenge_mode（invisible / interactive / adaptive）、challenge_kinds（slider、rotate、click_text、click_shape 的逗号列表；0003、0004 加入）、pow_puzzles、pow_difficulty（每题期望尝试次数）；UNIQUE(app_id, action) |
 | `botguard_app_secret` | id、app_id、secret_id UNIQUE、secret_ciphertext（AES-256-GCM，附加数据为 secret_id）、kek_id、status、expires_at、rotated_from；secret_key 仅创建时展示一次 |
 | `botguard_policy_version` | id、app_id、version、schema_version、rules_json、status、created_by；UNIQUE(app_id, version) |
@@ -127,7 +127,7 @@ Redis 异步复制故障切换可能丢失刚写入的消费标记。MVP 不承�
 
 ## 7. 风控与防护边界
 
-MVP 使用可解释规则：app/action 启停、精确 Origin 允许列表、可信代理解析的 IP/CIDR 拦截、应用与 IP 限流、失败次数、挑战与消费速率。决策为 allow/challenge/deny；allow 仍签发短期凭证并走后端 verify，不能让前端自行跳过核验。
+MVP 使用可解释规则：app/action 启停、Origin 允许列表（精确、子域名通配或全部允许）、可信代理解析的 IP/CIDR 拦截、应用与 IP 限流、失败次数、挑战与消费速率。决策为 allow/challenge/deny；allow 仍签发短期凭证并走后端 verify，不能让前端自行跳过核验。
 
 PoW 采用“多题 + 数值阈值”结构：一个 challenge 含 k 道独立子题（建议默认 8，上限 32），每道子题要求哈希值小于服务端给定的 256 位 target。多题把求解耗时的 p99 从平均的约 4.6 倍（单题）压到约 2.0 倍（k=8），避免少数用户长时间等待；子题还可以分给多个 Worker 并行求解。数值阈值让难度可以任意细调，不受 2 倍一档的限制。
 
