@@ -26,11 +26,12 @@
 
 | 内容 | 最新版本 | 说明 |
 |---|---|---|
-| 服务端 | v0.4.0 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布（用 `publish` 工作流发版，标签在 `1bffcb5` 上）。安全修复第一批：管理后台 XSS、登录跳转与锁定、高风险不给 fallback、图片题按 IP 段限额与降级工作量下限、页面指定题型改为 action 开关（默认关闭，迁移 0007）；另有运行监控页和 Prometheus 指标 |
+| 服务端 | v0.5.0 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布（用 `publish` 工作流发版，标签在 `d1fbb28` 上）。安全修复第二批：风险评分加入服务端观察（签发与解题的网络、时间、指针类型，按网段计数）、按网段限流与连续失败封禁、滑块同形状干扰缺口、管理后台会话记录签名、Redis 密码（`BOTGUARD_REDIS_PASSWORD`），`SOLVE_TOO_FAST` 不再把副本间的时钟偏差算进去。没有新迁移。v0.4.0：安全修复第一批（管理后台 XSS、登录跳转与锁定、高风险不给 fallback、图片题按 IP 段限额与降级工作量下限、页面指定题型改为 action 开关，默认关闭，迁移 0007）、运行监控页和 Prometheus 指标 |
 | `@botguard/browser` | 0.2.1 | 0.2.1 起由 release-browser 工作流暂存发布、人工批准，带 provenance，GitHub Release 附同一个 tgz；0.1.0、0.2.0 是在本机手动发布的，没有 provenance |
 | `botguard/php-sdk` | 0.1.1 | `VerifyResult` 新增 `origin` |
-| `botguard/laravel` | 0.2.0 | 默认拒绝需要额外验证的 token（fallback、容量降级、高风险），可用 `accept` 配置放开；仍依赖 `botguard/php-sdk: ^0.1` |
-| Go SDK（核心包、gin、go-zero） | v0.2.0 | 三个模块同时发布，标签都在 `1bffcb5` 上。中间件默认拒绝需要额外验证的 token（`AllowFallback` 等选项放开），gin 适配在回调后一定中止。干净目录 `go get` 验证通过，go.sum 与 sum.golang.org 一致 |
+| `botguard/laravel` | 0.3.0 | 新增来源白名单 `botguard.origins`（应用的允许来源用了通配或 `*` 时，只放行自己页面上拿到的 token）；依赖提到 `botguard/php-sdk: ^0.1.1`（`origin` 字段从 0.1.1 开始才有）。0.2.0：默认拒绝需要额外验证的 token（fallback、容量降级、高风险），可用 `accept` 配置放开 |
+| Go SDK 核心包 | v0.3.0 | 标签在 `d1fbb28` 上。新增 `WithAllowedOrigins` 来源白名单。干净目录 `go get` 并编译验证通过，sum.golang.org 已有记录 |
+| Go SDK gin、go-zero 适配 | v0.2.0 | 与核心包 v0.2.0 同时发布，标签在 `1bffcb5` 上；之后没有改动。仍依赖核心包 v0.2.0，要用来源白名单时在项目里 `go get .../packages/go@v0.3.0`。v0.2.0：中间件默认拒绝需要额外验证的 token（`AllowFallback` 等选项放开），gin 适配在回调后一定中止 |
 
 - npm：[@botguard/browser](https://www.npmjs.com/package/@botguard/browser)，组织 `botguard`（所有者 dksun）。Trusted Publisher 已配置（只允许暂存发布）。`release-browser` 工作流改为暂存发布：推标签后版本进入暂存区，要人工批准才公开（见下文 npm 第 4 步）。0.2.1（2026-10-22）是改完后发的第一个版本，整套流程已验证：工作流暂存成功，npm 上暂存的 shasum 与 GitHub Release 的 tgz 一致；在 npmjs.com 的 Staged Packages 页面批准后公开，带 provenance；GitHub Release 以 `--latest=false` 发布，`releases/latest` 仍指向服务端版本。
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
