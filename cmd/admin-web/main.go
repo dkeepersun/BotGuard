@@ -151,7 +151,7 @@ func main() {
 	defer server.Stop()
 	web := &adminweb.Server{Console: console, Apps: app, Repo: repo, Stats: repository.NewStats(rds), Health: repository.NewHealthStore(rds), IPs: ips, Checks: checks,
 		PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), CookieSecure: c.CookieSecure, SessionTTL: absolute, Info: info,
-		Version: version.String()}
+		Version: version.String(), Started: time.Now()}
 	if c.Update.Check {
 		u := c.Update.URL
 		if u == "" {

@@ -18,7 +18,10 @@ type healthInstance struct {
 	// Stale: no summary in the last few minutes, so the gateway is probably
 	// down or cannot reach Redis.
 	Stale bool
-	Last  repository.HealthMinute
+	// Pending: no summary since the console started, so Last.Version may be
+	// the replaced process's (see Server.awaitingReport).
+	Pending bool
+	Last    repository.HealthMinute
 	// Totals over the charted window.
 	Requests, RateLimited, Unavailable, Degraded int64
 	PoolMin, PoolSize                            int
@@ -65,7 +68,8 @@ func (s *Server) healthPage(w http.ResponseWriter, r *http.Request, p *logic.Pri
 			s.serverError(w, r, err)
 			return
 		}
-		hi := healthInstance{Name: in.Name, LastSeen: in.LastSeen, Stale: now.Sub(in.LastSeen) > 3*time.Minute, PoolMin: -1}
+		hi := healthInstance{Name: in.Name, LastSeen: in.LastSeen, Stale: now.Sub(in.LastSeen) > 3*time.Minute,
+			Pending: s.awaitingReport(in.LastSeen), PoolMin: -1}
 		if len(minutes) > 0 {
 			hi.Last = minutes[0]
 		}

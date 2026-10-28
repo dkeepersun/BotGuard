@@ -50,6 +50,11 @@ type Server struct {
 	// Version is this console's version.String(); Updates looks for newer
 	// releases and is nil when Update.Check is off.
 	Version string
+	// Started is when this console started. A gateway whose latest summary
+	// covers a minute that ended before it is awaiting its first report since
+	// then (most often: both were just restarted by an upgrade), so its
+	// version is not compared yet. Zero compares every gateway.
+	Started time.Time
 	Updates *update.Checker
 	// Upgrader hands one-click upgrades to the root-owned updater; nil
 	// when the console runs where none can be installed (Docker).

@@ -20,8 +20,9 @@
         {{else}}<span class="muted">还没有检查成功</span>{{end}}</dd>
       {{if $u.Enabled}}<dt>上次检查</dt><dd>{{time $u.State.CheckedAt}}{{if $u.State.Err}} <span class="bad-text">失败：{{$u.State.Err}}</span>{{end}}</dd>{{end}}
       <dt>gateway</dt><dd>{{range $u.Gateways}}<div><span class="mono">{{or .Version "未上报版本（v0.5.0 及更早）"}}</span>
-          {{if .Same}}<span class="badge ok">与管理后台一致</span>{{else}}<span class="badge warn">与管理后台不同</span>{{end}} <span class="cell-sub">{{join .Instances "、"}}</span></div>
-        {{else}}<span class="muted">最近 3 分钟没有 gateway 上报（见运行状况）</span>{{end}}</dd>
+          {{if .Same}}<span class="badge ok">与管理后台一致</span>{{else}}<span class="badge warn">与管理后台不同</span>{{end}} <span class="cell-sub">{{join .Instances "、"}}</span></div>{{end}}
+        {{if $u.Pending}}<div><span class="badge plain">等待上报</span> <span class="cell-sub">{{join $u.Pending "、"}}：管理后台启动后还没有上报。gateway 每分钟上报一次，刚升级或重启时一两分钟内会显示版本</span></div>{{end}}
+        {{if and (not $u.Gateways) (not $u.Pending)}}<span class="muted">最近 3 分钟没有 gateway 上报（见运行状况）</span>{{end}}</dd>
       <dt>一键升级</dt><dd>{{with $u.Upgrade}}<span class="badge ok">可用</span> <span class="cell-sub">{{if eq .Method "package"}}deb / rpm 包安装，通过 dnf / apt 升级{{else}}发布包安装，通过 botguard upgrade 升级{{end}}</span>
           {{if or (eq .State "succeeded") (eq .State "failed") (eq .State "running")}}<div class="cell-sub">上次：{{.From}} → {{.To}} ·
             {{if eq .State "succeeded"}}<span class="ok-text">成功</span>{{else if eq .State "failed"}}<span class="bad-text">失败</span>{{else}}进行中{{end}} · {{.Message}}
