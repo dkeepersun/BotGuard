@@ -20,15 +20,15 @@
 
 另外，不想用 npm 的页面可以直接引用 gateway 托管的脚本，和易盾的 `load.min.js` 一样：`<script src="https://你的gateway/sdk/v1/load.js">`。
 
-## 当前状态（2026-10-22）
+## 当前状态（2026-10-28）
 
 许可证均为 MIT。
 
 | 内容 | 最新版本 | 说明 |
 |---|---|---|
-| 服务端 | v0.5.0 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布（用 `publish` 工作流发版，标签在 `d1fbb28` 上）。安全修复第二批：风险评分加入服务端观察（签发与解题的网络、时间、指针类型，按网段计数）、按网段限流与连续失败封禁、滑块同形状干扰缺口、管理后台会话记录签名、Redis 密码（`BOTGUARD_REDIS_PASSWORD`），`SOLVE_TOO_FAST` 不再把副本间的时钟偏差算进去。没有新迁移。v0.4.0：安全修复第一批（管理后台 XSS、登录跳转与锁定、高风险不给 fallback、图片题按 IP 段限额与降级工作量下限、页面指定题型改为 action 开关，默认关闭，迁移 0007）、运行监控页和 Prometheus 指标 |
-| `@botguard/browser` | 0.2.1 | 0.2.1 起由 release-browser 工作流暂存发布、人工批准，带 provenance，GitHub Release 附同一个 tgz；0.1.0、0.2.0 是在本机手动发布的，没有 provenance |
-| `botguard/php-sdk` | 0.1.1 | `VerifyResult` 新增 `origin` |
+| 服务端 | v0.6.0 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布（用 `publish` 工作流发版，标签在 `401fba6` 上）。管理后台新版本提示与一键升级（#27–#29）；背景图改为多层随机组合，点选题加干扰笔画与成图扰动（#30）；新题型时钟读数 `clock`、九宫格计数 `grid_count`、镜像辨别 `mirror`（#31、#32）；新建 action 默认不勾这三种题型，后台统计并提醒仍在使用的 0.3.0 之前的浏览器组件（#33）。没有新迁移。v0.5.0：安全修复第二批：风险评分加入服务端观察（签发与解题的网络、时间、指针类型，按网段计数）、按网段限流与连续失败封禁、滑块同形状干扰缺口、管理后台会话记录签名、Redis 密码（`BOTGUARD_REDIS_PASSWORD`），`SOLVE_TOO_FAST` 不再把副本间的时钟偏差算进去。没有新迁移。v0.4.0：安全修复第一批（管理后台 XSS、登录跳转与锁定、高风险不给 fallback、图片题按 IP 段限额与降级工作量下限、页面指定题型改为 action 开关，默认关闭，迁移 0007）、运行监控页和 Prometheus 指标 |
+| `@botguard/browser` | 0.3.0 | 支持 `clock`、`grid_count`、`mirror`，签发请求带 `widget` 版本号。2026-10-28 由 release-browser 工作流暂存、在本机批准后公开，带 provenance；npm 与 GitHub Release 的 tgz shasum 一致（`5cdc6d81…`），GitHub Release 以 `--latest=false` 发布。npm 安装的旧组件不能显示这三种新题型，见 `docs/challenge-catalog.md` §7.5。0.2.1 起都走这套流程；0.1.0、0.2.0 是在本机手动发布的，没有 provenance |
+| `botguard/php-sdk` | 0.1.1 | `VerifyResult` 新增 `origin`。v0.6.0 新增的题型只是新的 `challengeKind` 取值，不需要发新版 |
 | `botguard/laravel` | 0.3.0 | 新增来源白名单 `botguard.origins`（应用的允许来源用了通配或 `*` 时，只放行自己页面上拿到的 token）；依赖提到 `botguard/php-sdk: ^0.1.1`（`origin` 字段从 0.1.1 开始才有）。0.2.0：默认拒绝需要额外验证的 token（fallback、容量降级、高风险），可用 `accept` 配置放开 |
 | Go SDK 核心包 | v0.3.0 | 标签在 `d1fbb28` 上。新增 `WithAllowedOrigins` 来源白名单。干净目录 `go get` 并编译验证通过，sum.golang.org 已有记录 |
 | Go SDK gin、go-zero 适配 | v0.2.0 | 与核心包 v0.2.0 同时发布，标签在 `1bffcb5` 上；之后没有改动。仍依赖核心包 v0.2.0，要用来源白名单时在项目里 `go get .../packages/go@v0.3.0`。v0.2.0：中间件默认拒绝需要额外验证的 token（`AllowFallback` 等选项放开），gin 适配在回调后一定中止 |
