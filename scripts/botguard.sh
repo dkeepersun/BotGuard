@@ -35,7 +35,8 @@ else
   ETC_DIR=/etc/botguard
   DATA_DIR=/var/lib/botguard
 fi
-AGENT_DIR="$HOME/Library/LaunchAgents"
+# systemd 服务（例如 botguard-update）里没有 HOME。
+AGENT_DIR="${HOME:-}/Library/LaunchAgents"
 PLIST_TEMPLATE="$ROOT_DIR/deploy/launchd/botguard.plist.tmpl"
 
 # 有 go.mod 是源码目录；发布包里只有编译好的二进制和 VERSION 文件。
@@ -97,6 +98,7 @@ usage() {
   install-systemd [--user 用户] [--group 组] [--no-start]
                         Linux：安装 systemd 服务并设为开机自启，默认装完立即（重新）启动
   uninstall-systemd     停止、禁用并删除 systemd 服务（不删二进制、配置和日志）
+  self-update           执行管理后台提交的升级请求；由 botguard-update.service 以 root 调用，不要手动执行
   install-launchd [--no-start]
                         macOS：安装 launchd 服务（当前用户登录后自动运行），默认立即（重新）启动
   uninstall-launchd     停止并删除 launchd 服务（不删二进制、配置和日志）
@@ -566,6 +568,162 @@ upgrade() {
   restart "$ALL_SERVICES"
 }
 
+# ---------- 管理后台一键升级（docs/admin.md「一键升级」） ----------
+# 管理后台以服务的运行用户把升级请求写到 UPDATE_REQUEST；botguard-update.path 发现后以 root
+# 启动 botguard-update.service，执行 self-update。请求里只用到版本号，而且它必须是 GitHub 上
+# 的最新正式版本、比当前版本新。进度写在 root 所有的 UPDATE_DIR，管理后台只能读。
+UPDATE_REQUEST="$DATA_DIR/update-request"
+UPDATE_DIR=/var/lib/botguard-update
+UPDATE_UNIT=botguard-update
+
+install_method() {
+  if [[ -f "$ROOT_DIR/PACKAGED" ]]; then echo package; else echo binary; fi
+}
+
+now_utc() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+
+# JSON 字符串。值都由本脚本生成或已校验，这里再去掉引号、反斜杠和控制字符。
+json_str() {
+  printf '"%s"' "$(printf '%s' "$1" | tr -d '"\\' | tr -d '\000-\037')"
+}
+
+# update_status <state> <from> <to> <requested_by> <message> <started_at> <finished_at>
+# 先写临时文件再改名，管理后台不会读到半个文件。
+update_status() {
+  local group="$UPDATE_GROUP" tmp
+  tmp="$(mktemp "$UPDATE_DIR/.status.XXXXXX")"
+  printf '{"state":%s,"method":%s,"from":%s,"to":%s,"requested_by":%s,"message":%s,"started_at":%s,"finished_at":%s}\n' \
+    "$(json_str "$1")" "$(json_str "$(install_method)")" "$(json_str "$2")" "$(json_str "$3")" "$(json_str "$4")" \
+    "$(json_str "$5")" "$(json_str "$6")" "$(json_str "$7")" > "$tmp"
+  chmod 0640 "$tmp"
+  chgrp "$group" "$tmp"
+  mv -f "$tmp" "$UPDATE_DIR/status.json"
+}
+
+# target（正式版本）是否比 current 新；current 可能是 v0.6.0-rc.1 这样的预发布。
+version_newer() {
+  local t="${1#v}" c="${2#v}" core
+  core="${c%%-*}"
+  if [[ "$t" == "$core" ]]; then
+    [[ "$c" == *-* ]]
+    return
+  fi
+  [[ "$(printf '%s\n%s\n' "$t" "$core" | sort -V | tail -n 1)" == "$t" ]]
+}
+
+self_update() {
+  local user raw target="" by current latest started log rc=0 installed svc
+  [[ "$OS" == Linux && "$(id -u)" -eq 0 ]] || die "self-update 由 botguard-update.service 以 root 执行"
+  [[ "$FROM_SOURCE" -eq 0 ]] || die "源码部署不支持一键升级，用 botguard update"
+  user="$(service_user)" || die "没有安装 systemd 服务"
+  UPDATE_GROUP="$(id -gn "$user")"
+  install -d -m 0750 -o root -g "$UPDATE_GROUP" "$UPDATE_DIR"
+  log="$UPDATE_DIR/update.log"
+  : > "$log"
+  chmod 0640 "$log"
+  chgrp "$UPDATE_GROUP" "$log"
+
+  # 以运行用户的身份读取请求：文件由它写入，换成符号链接也读不到它本来读不到的内容。
+  raw="$(runuser -u "$user" -- head -c 512 "$UPDATE_REQUEST" 2>/dev/null || true)"
+  rm -f "$UPDATE_REQUEST"
+  target="$(printf '%s\n' "$raw" | sed -n 's/^version=//p' | head -n 1)"
+  by="$(printf '%s\n' "$raw" | sed -n 's/^requested_by=//p' | head -n 1 | tr -cd 'a-z0-9_.-' | cut -c 1-32)"
+  current="$(cat "$ROOT_DIR/VERSION" 2>/dev/null || echo 未知)"
+  started="$(now_utc)"
+
+  update_fail() {
+    echo "失败: $1" >> "$log"
+    update_status failed "$current" "$target" "$by" "$1" "$started" "$(now_utc)"
+    exit 1
+  }
+  [[ "$target" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+    target=""
+    update_fail "升级请求无效"
+  }
+  update_status running "$current" "$target" "$by" "正在确认版本" "$started" ""
+  echo "== $(date '+%Y-%m-%d %H:%M:%S') 升级 $current → $target（$(install_method)），请求人 ${by:-未知}" >> "$log"
+
+  # 只装 GitHub 上的最新正式版本，管理后台被攻破也不能指定旧版本或预发布。
+  latest="$(curl -fsSIL -m 30 -o /dev/null -w '%{url_effective}' "$RELEASE_BASE/latest" 2>/dev/null || true)"
+  latest="${latest##*/}"
+  [[ "$latest" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || latest=""
+  [[ "$latest" == "$target" ]] || update_fail "$target 不是 GitHub 上的最新正式版本（最新：${latest:-查询失败}）"
+  version_newer "$target" "$current" || update_fail "$target 不比当前的 $current 新"
+
+  update_status running "$current" "$target" "$by" "正在安装 $target，完成后会重启服务" "$started" ""
+  if [[ "$(install_method)" == package ]]; then
+    # 包的安装后脚本会迁移数据库并重启服务。
+    if command -v dnf >/dev/null 2>&1; then
+      dnf -y --refresh --setopt=install_weak_deps=False install "botguard-${target#v}" >> "$log" 2>&1 || rc=$?
+    elif command -v apt-get >/dev/null 2>&1; then
+      { apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --only-upgrade \
+        -o Dpkg::Options::=--force-confold "botguard=${target#v}*"; } >> "$log" 2>&1 || rc=$?
+    else
+      update_fail "找不到 dnf 或 apt-get"
+    fi
+  else
+    # 子 shell：upgrade 出错时只退出它，这里还能记下失败。
+    (upgrade "$target") >> "$log" 2>&1 || rc=$?
+  fi
+  [[ "$rc" -eq 0 ]] || update_fail "安装失败（退出码 $rc），见日志"
+  installed="$(cat "$ROOT_DIR/VERSION" 2>/dev/null || echo 未知)"
+  [[ "$installed" == "$target" ]] || update_fail "安装后版本是 ${installed}，不是 $target"
+  for svc in $ALL_SERVICES; do
+    wait_healthy "$svc" >> "$log" 2>&1 || update_fail "$svc 升级后没有正常启动，查看: journalctl -u $(unit_name "$svc") -n 50"
+  done
+  echo "完成: 已升级到 $target" >> "$log"
+  update_status succeeded "$current" "$target" "$by" "已升级到 $target" "$started" "$(now_utc)"
+}
+
+# install-systemd 时安装：只有发布包和 deb/rpm 安装支持一键升级。
+install_updater() {
+  local group="$1" tmp
+  tmp="$(mktemp)"
+  cat > "$tmp" <<UNIT
+# 由 botguard install-systemd 生成。管理后台写入升级请求时，以 root 执行一键升级。
+[Unit]
+Description=BotGuard upgrade requests from the admin console
+
+[Path]
+PathExists=$UPDATE_REQUEST
+Unit=$UPDATE_UNIT.service
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+  $SUDO install -m 0644 "$tmp" "$UNIT_DIR/$UPDATE_UNIT.path"
+  cat > "$tmp" <<UNIT
+# 由 botguard install-systemd 生成，由 $UPDATE_UNIT.path 启动，见 docs/admin.md「一键升级」。
+[Unit]
+Description=BotGuard upgrade requested from the admin console
+
+[Service]
+Type=oneshot
+ExecStart=$ROOT_DIR/scripts/botguard.sh self-update
+# 不论成败都删掉请求，否则 path 单元会反复触发，直到撞上启动次数限制。
+ExecStopPost=/bin/rm -f $UPDATE_REQUEST
+TimeoutStartSec=20min
+UNIT
+  $SUDO install -m 0644 "$tmp" "$UNIT_DIR/$UPDATE_UNIT.service"
+  rm -f "$tmp"
+  $SUDO install -d -m 0750 -o root -g "$group" "$UPDATE_DIR"
+  # 已有状态（例如上次升级的结果）保留；没有时写 ready，管理后台据此显示「升级」按钮。
+  if ! $SUDO test -f "$UPDATE_DIR/status.json"; then
+    printf '{"state":"ready","method":%s}\n' "$(json_str "$(install_method)")" | $SUDO tee "$UPDATE_DIR/status.json" >/dev/null
+    $SUDO chmod 0640 "$UPDATE_DIR/status.json"
+    $SUDO chgrp "$group" "$UPDATE_DIR/status.json"
+  fi
+  echo "已安装 $UNIT_DIR/$UPDATE_UNIT.path（管理后台一键升级）"
+}
+
+uninstall_updater() {
+  [[ -f "$UNIT_DIR/$UPDATE_UNIT.path" ]] || return 0
+  $SUDO systemctl disable --now "$UPDATE_UNIT.path" >/dev/null 2>&1 || true
+  $SUDO rm -f "$UNIT_DIR/$UPDATE_UNIT.path" "$UNIT_DIR/$UPDATE_UNIT.service"
+  $SUDO rm -rf "$UPDATE_DIR"
+  echo "已停止并删除 $UPDATE_UNIT"
+}
+
 status() {
   local svc pid state
   if [[ -x "$BIN_DIR/gateway" ]]; then
@@ -913,10 +1071,16 @@ install_systemd() {
     $SUDO install -m 0644 "$tmp" "$UNIT_DIR/$unit.service"
     echo "已安装 $UNIT_DIR/$unit.service"
   done
+  if [[ "$FROM_SOURCE" -eq 0 ]]; then install_updater "$run_group"; fi
   $SUDO systemctl daemon-reload
   for svc in $ALL_SERVICES; do
     $SUDO systemctl enable "$(unit_name "$svc")" >/dev/null 2>&1
   done
+  if [[ "$FROM_SOURCE" -eq 0 ]]; then
+    # 重新安装能把撞上启动次数限制而停下的 path 单元恢复过来。
+    $SUDO systemctl reset-failed "$UPDATE_UNIT.path" "$UPDATE_UNIT.service" >/dev/null 2>&1 || true
+    $SUDO systemctl enable --now "$UPDATE_UNIT.path" >/dev/null 2>&1
+  fi
   echo "代码目录 ${ROOT_DIR}，运行用户 $run_user:$run_group"
   echo "配置目录 ${BOTGUARD_CONF_DIR}，环境变量 $BOTGUARD_ENV_FILE"
   echo "已设为开机自启"
@@ -929,6 +1093,7 @@ install_systemd() {
 uninstall_systemd() {
   local svc unit
   require_systemd
+  uninstall_updater
   for svc in $(reverse_words "$ALL_SERVICES"); do
     unit="$(unit_name "$svc")"
     if [[ ! -f "$UNIT_DIR/$unit.service" ]]; then
@@ -1035,6 +1200,7 @@ main() {
       [[ $# -eq 1 ]] || die "run 需要指定服务: gateway 或 admin-web"
       run_service "$1"
       ;;
+    self-update) self_update ;;
     install-systemd) install_systemd "$@" ;;
     install-launchd) install_launchd "$@" ;;
     uninstall-launchd) uninstall_launchd ;;

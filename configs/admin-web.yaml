@@ -71,6 +71,10 @@ Cleanup:
 # (docs/admin.md 版本更新). Only a version number is fetched; nothing about
 # this install is sent. Set Check: false where the server cannot or must not
 # reach api.github.com; URL may point at a mirror of the same API.
+# OneClick shows an upgrade button where install-systemd set up the updater
+# (deb/rpm and release-tarball installs); the button only writes a request,
+# the root-owned botguard-update service installs it. See docs/admin.md.
 Update:
   Check: true
   IntervalHours: 6
+  OneClick: true

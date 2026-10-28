@@ -45,6 +45,7 @@
 | `GET /audit` | 审计日志 | audit.view |
 | `GET /admins`、`POST /admins/*` | 管理员 | admins.manage |
 | `POST /system/update-check` | 立即检查新版本 | system.manage（仅超级管理员） |
+| `POST /system/upgrade`、`GET /system/upgrade`、`GET /api/upgrade` | 一键升级：提交请求（需再次输入密码）、查看进度 | system.manage（仅超级管理员） |
 | `GET /profile`、`POST /profile/*` | 个人设置 | 已登录 |
 
 | 页面 | 内容 |
@@ -68,7 +69,26 @@
 - gateway 每分钟上报运行状况时带上自己的版本，系统状态和运行状况页列出各实例的版本；有实例与管理后台版本不同时，控制台提示超级管理员。v0.5.0 及更早的 gateway 不上报版本，显示为“未上报”。
 - 源码编译的开发构建没有正式版本号，不和发布版本比较。
 - 服务器不能或不应访问 GitHub 时，在 `admin-web.yaml` 里设 `Update.Check: false`；`Update.URL` 可以改为同一 API 的镜像地址。
-- 管理后台只负责提示，不会自己升级：它以普通用户运行，没有替换程序和重启服务的权限。升级方法见 [deploy.md](deploy.md)「升级」。
+- 升级方法见 [deploy.md](deploy.md)「升级」；deb/rpm 和发布包安装可以一键升级（下一节）。
+
+### 一键升级
+
+deb/rpm 包和发布包安装的 Linux 服务器（systemd），「系统状态 → 版本更新」有「升级到 vX.Y.Z」按钮，超级管理员再次输入密码后提交。之后自动完成：下载并校验、替换程序、迁移数据库、重启 gateway 和管理后台，进度页实时显示状态和日志；整个过程通常一分钟以内，期间验证服务短暂不可用。每次提交记一条审计日志（操作「一键升级」）。
+
+管理后台本身不升级：它以 `botguard` 用户运行，没有替换程序和重启服务的权限。分工如下：
+
+1. 管理后台把请求（只有版本号和操作人）写到 `/var/lib/botguard/update-request`；
+2. `botguard-update.path` 发现文件后，以 root 启动 `botguard-update.service`，执行 `botguard self-update`；
+3. `self-update` 以 `botguard` 用户的身份读取并删除请求，只接受 GitHub 上的最新正式版本、而且比当前版本新的版本号，管理后台被攻破也不能指定旧版本、预发布或其他内容；
+4. deb/rpm 安装用 `dnf` / `apt-get` 升级（包管理器校验 GPG 签名，包的安装后脚本负责迁移和重启）；发布包安装用 `botguard upgrade`（校验 `checksums.txt`）；
+5. 状态和日志写在 `/var/lib/botguard-update/`（root 所有，`botguard` 组只读），管理后台据此显示进度。服务重启后，进度页自动恢复并显示新版本。
+
+说明：
+
+- 这两个单元由 `botguard install-systemd` 安装（deb/rpm 包安装和升级时会自动执行）；源码、Docker 和 macOS 安装没有一键升级，页面上显示升级命令。不想提供按钮时，在 `admin-web.yaml` 设 `Update.OneClick: false`。
+- 按钮只升级管理后台所在的这台服务器；其他运行 gateway 的服务器，在各自服务器上执行升级命令。
+- 迁移只能向前，升级后不能退回旧版本。升级失败时进度页显示原因和日志末尾，`/var/lib/botguard-update/update.log` 是完整日志。
+- 提交后 2 分钟没有被处理，说明服务器上的 `botguard-update.path` 没有运行，页面会提示。可以用 `sudo systemctl status botguard-update.path` 查看，或重新执行 `sudo botguard install-systemd --user botguard` 恢复。
 
 ## 4. 统计数据从哪来
 

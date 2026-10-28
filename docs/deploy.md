@@ -14,6 +14,9 @@
 | `/etc/botguard/botguard.env` | 密钥和数据库连接，权限 0600，格式见 `deploy/botguard.env.example` |
 | `/var/lib/botguard/botguard.db` | SQLite 数据库，只有 `botguard` 用户可读写 |
 | `/etc/systemd/system/botguard-gateway.service`、`botguard-admin-web.service` | systemd 服务，由 `deploy/systemd/botguard.service.tmpl` 生成 |
+| `/etc/systemd/system/botguard-update.path`、`botguard-update.service` | 管理后台一键升级（deb/rpm 和发布包安装），见 [admin.md](admin.md)「一键升级」 |
+| `/var/lib/botguard/update-request` | 管理后台提交的升级请求，处理后即删除 |
+| `/var/lib/botguard-update/` | 一键升级的状态 `status.json` 和最近一次的日志 `update.log`，root 所有，`botguard` 组只读 |
 | journald | 日志：`botguard logs gateway` 或 `journalctl -u botguard-gateway` |
 
 两个服务都以 `botguard` 系统用户运行。`botguard ctl` 也会切换到这个用户执行，因此用 root 运行命令不会产生服务读写不了的文件。
@@ -80,7 +83,7 @@ sudo -u botguard sqlite3 /var/lib/botguard/botguard.db ".backup '/var/lib/botgua
 | 源码 | `sudo botguard update`（git pull、编译、迁移、重启） |
 | Docker | `docker compose pull && docker compose up -d` |
 
-有新版本时，管理后台的控制台会提示超级管理员，「系统状态」页列出管理后台和各 gateway 的版本（见 [admin.md](admin.md)「版本更新」）。
+有新版本时，管理后台的控制台会提示超级管理员，「系统状态」页列出管理后台和各 gateway 的版本（见 [admin.md](admin.md)「版本更新」）。deb/rpm 和发布包安装的服务器还可以在「系统状态」页一键升级，效果和下表的命令相同，见 [admin.md](admin.md)「一键升级」。
 
 升级会自动完成：校验下载文件、替换程序、迁移数据库、重启服务。配置和数据保持不变。新版本需要修改配置时，会写在 Release 说明里。
 

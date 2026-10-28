@@ -60,6 +60,9 @@ type AdminConfig struct {
 		Check         bool   `json:",default=true"`
 		URL           string `json:",optional"`
 		IntervalHours int    `json:",default=6"`
+		// OneClick offers the upgrade button where the updater units are
+		// installed (deb/rpm and release-tarball installs under systemd).
+		OneClick bool `json:",default=true"`
 	}
 }
 

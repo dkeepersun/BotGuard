@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/dkeepersun/BotGuard/internal/logic"
+	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/update"
+	"github.com/zeromicro/go-zero/core/logx"
 )
 
 // gatewayVersion groups the live gateways by the version they report.
@@ -29,6 +31,15 @@ type updateView struct {
 	Gateways []gatewayVersion
 	// Mixed: the live gateways do not all run this console's version.
 	Mixed bool
+	// Upgrade is the one-click updater's progress; nil where it is not
+	// installed (source and Docker installs, macOS).
+	Upgrade *update.Progress
+	// Busy: an upgrade request waits or runs.
+	Busy bool
+	// Stalled: a request was not picked up; the updater is not running.
+	Stalled bool
+	// CanUpgrade: a newer release is known and the updater is idle.
+	CanUpgrade bool
 }
 
 // gatewayStale matches the health page: no summary for this long and the
@@ -39,6 +50,15 @@ func (s *Server) versions(ctx context.Context) (updateView, error) {
 	v := updateView{Enabled: s.Updates != nil, Running: s.Version}
 	if s.Updates != nil {
 		v.State = s.Updates.State()
+	}
+	if s.Upgrader != nil {
+		p, err := s.Upgrader.Progress()
+		if err != nil {
+			// Unreadable status: offer the commands instead of the button.
+			logx.WithContext(ctx).Errorf("read upgrade status: %v", err)
+		}
+		v.Upgrade, v.Busy, v.Stalled = p, s.Upgrader.Busy(p), s.Upgrader.Stalled(p)
+		v.CanUpgrade = p != nil && !v.Busy && v.State.Newer
 	}
 	if s.Health == nil {
 		return v, nil
@@ -92,4 +112,82 @@ func (s *Server) updateCheck(w http.ResponseWriter, r *http.Request, p *logic.Pr
 		return "发现新版本 " + st.Latest.Tag, nil
 	}
 	return "已检查，最新正式版本是 " + st.Latest.Tag, nil
+}
+
+// One-click upgrade (docs/admin.md 一键升级). The console only writes a
+// request; the root-owned updater installs, migrates and restarts.
+
+// upgradeStart asks the updater to install the latest release, after the
+// owner has entered their password again.
+func (s *Server) upgradeStart(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error) {
+	if s.Upgrader == nil || s.Updates == nil {
+		return "", fmt.Errorf("%w: 这台服务器不支持一键升级，请用命令升级", logic.ErrInvalid)
+	}
+	if err := s.Console.ConfirmPassword(p, r.PostFormValue("password")); err != nil {
+		return "", err
+	}
+	st := s.Updates.State()
+	target := r.PostFormValue("version")
+	if !st.Newer || st.Latest == nil || st.Latest.Tag != target {
+		return "", fmt.Errorf("%w: 版本信息已变化，请刷新页面后重试", logic.ErrInvalid)
+	}
+	if err := s.Upgrader.Request(target, p.Admin.Username); err != nil {
+		if errors.Is(err, update.ErrBusy) {
+			return "", fmt.Errorf("%w: %s", logic.ErrInvalid, err.Error())
+		}
+		return "", err
+	}
+	if err := s.Repo.RecordAudit(r.Context(), repository.AuditEntry{Actor: p.Actor(), Operation: "system.upgrade", Target: "botguard",
+		Detail: map[string]any{"from": st.Current, "to": target}, IP: s.clientIP(r)}); err != nil {
+		logx.WithContext(r.Context()).Errorf("audit system.upgrade: %v", err)
+	}
+	return "", errRedirect{"/system/upgrade"}
+}
+
+type upgradeView struct {
+	Progress *update.Progress
+	Busy     bool
+	Stalled  bool
+	Running  string
+	Log      []string
+}
+
+// upgradeLines is how much of the updater's log the console shows.
+const upgradeLines = 60
+
+func (s *Server) upgradeState() (upgradeView, error) {
+	v := upgradeView{Running: s.Version}
+	if s.Upgrader == nil {
+		return v, nil
+	}
+	p, err := s.Upgrader.Progress()
+	if err != nil {
+		return v, err
+	}
+	v.Progress, v.Busy, v.Stalled, v.Log = p, s.Upgrader.Busy(p), s.Upgrader.Stalled(p), s.Upgrader.Log(upgradeLines)
+	return v, nil
+}
+
+func (s *Server) upgradePage(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
+	v, err := s.upgradeState()
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	s.render(w, r, "upgrade.html", View{Title: "一键升级", Active: "sysinfo", Me: p, Data: v})
+}
+
+// upgradeAPI feeds the progress page. While the updater restarts this
+// console the request fails; the page keeps polling until it is back.
+func (s *Server) upgradeAPI(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
+	v, err := s.upgradeState()
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	out := map[string]any{"running": v.Running, "busy": v.Busy, "stalled": v.Stalled, "log": v.Log}
+	if pr := v.Progress; pr != nil {
+		out["state"], out["pending"], out["message"], out["from"], out["to"] = pr.State, pr.Pending, pr.Message, pr.From, pr.To
+	}
+	s.json(w, out)
 }

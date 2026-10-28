@@ -163,6 +163,9 @@ textarea.input { height: auto; min-height: 72px; padding: 8px 12px; }
 .secret-box span { flex: 1; }
 
 /* Alerts */
+/* Elements toggled with the hidden attribute must stay hidden even when a
+   class gives them a display value. */
+[hidden] { display: none !important; }
 .alert { display: flex; gap: 10px; padding: 12px 14px; border-radius: 10px; border: 1px solid; margin-bottom: 16px; }
 .alert.info { background: var(--primary-soft); border-color: #c9d8ff; color: #1e3a8a; }
 .alert.warn { background: var(--warn-soft); border-color: #fbd38d; color: #92400e; }

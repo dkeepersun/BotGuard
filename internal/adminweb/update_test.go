@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -102,5 +104,154 @@ func TestUpdateCheckOff(t *testing.T) {
 	_, body := owner.get("/system")
 	if !strings.Contains(body, "已关闭检查") || strings.Contains(body, "立即检查") || !strings.Contains(body, "最近 3 分钟没有 gateway 上报") {
 		t.Fatalf("system page: %.3000s", body)
+	}
+}
+
+// newUpgradeEnv is a console that knows v0.6.0 is out and has the updater
+// installed (status ready) in temporary directories.
+func newUpgradeEnv(t *testing.T) (*env, *update.Upgrader) {
+	t.Helper()
+	e := newEnv(t)
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v0.6.0"}`))
+	}))
+	t.Cleanup(gh.Close)
+	e.web.Version = "v0.5.0 (d1fbb28)"
+	e.web.Updates = &update.Checker{URL: gh.URL, Current: "v0.5.0"}
+	if err := e.web.Updates.Check(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	u := &update.Upgrader{RequestFile: filepath.Join(t.TempDir(), "update-request"), Dir: t.TempDir()}
+	if err := os.WriteFile(filepath.Join(u.Dir, "status.json"), []byte(`{"state":"ready","method":"binary"}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	e.web.Upgrader = u
+	return e, u
+}
+
+func TestOneClickUpgrade(t *testing.T) {
+	e, u := newUpgradeEnv(t)
+	owner := e.signIn("root", logic.RoleOwner)
+	if _, body := owner.get("/console"); !strings.Contains(body, "去升级") {
+		t.Fatal("dashboard offers no upgrade")
+	}
+	_, body := owner.get("/system")
+	for _, want := range []string{"升级到 v0.6.0", `id="dlg-upgrade"`, `name="version" value="v0.6.0"`, "发布包安装", "其他服务器的升级方法"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("system page lacks %q", want)
+		}
+	}
+	token := owner.csrf("/system")
+	post := func(form url.Values) string {
+		t.Helper()
+		form.Set("_csrf", token)
+		resp, _ := owner.post("/system/upgrade", form)
+		if resp.StatusCode != http.StatusSeeOther {
+			t.Fatalf("upgrade post: %d", resp.StatusCode)
+		}
+		return resp.Header.Get("Location")
+	}
+	// A wrong password or a version the console does not offer writes nothing.
+	post(url.Values{"version": {"v0.6.0"}, "password": {"wrong"}})
+	if _, body := owner.get("/system"); !strings.Contains(body, "当前密码不正确") {
+		t.Fatal("wrong password not reported")
+	}
+	post(url.Values{"version": {"v0.4.0"}, "password": {"Strong-Pass-2026"}})
+	if _, body := owner.get("/system"); !strings.Contains(body, "版本信息已变化") {
+		t.Fatal("stale version not reported")
+	}
+	if _, err := os.Stat(u.RequestFile); !os.IsNotExist(err) {
+		t.Fatalf("request written: %v", err)
+	}
+
+	if loc := post(url.Values{"version": {"v0.6.0"}, "password": {"Strong-Pass-2026"}}); loc != "/system/upgrade" {
+		t.Fatalf("upgrade redirect %q", loc)
+	}
+	b, err := os.ReadFile(u.RequestFile)
+	if err != nil || !strings.HasPrefix(string(b), "version=v0.6.0\nrequested_by=root\n") {
+		t.Fatalf("request %q %v", b, err)
+	}
+	if _, body := owner.get("/system/upgrade"); !strings.Contains(body, "已提交，等待升级服务启动") || !strings.Contains(body, "data-upgrade-poll") {
+		t.Fatalf("progress page: %.1500s", body)
+	}
+	if _, body := owner.get("/api/upgrade"); !strings.Contains(body, `"busy":true`) || !strings.Contains(body, `"pending":true`) {
+		t.Fatalf("progress api: %s", body)
+	}
+	if _, body := owner.get("/audit"); !strings.Contains(body, "一键升级") || !strings.Contains(body, "v0.6.0") {
+		t.Fatal("upgrade not audited")
+	}
+	// While a request waits there is no second one, and the page says so.
+	post(url.Values{"version": {"v0.6.0"}, "password": {"Strong-Pass-2026"}})
+	if _, body := owner.get("/system"); !strings.Contains(body, "已有一个升级正在进行") || !strings.Contains(body, "查看进度") || strings.Contains(body, `id="dlg-upgrade"`) {
+		t.Fatal("busy updater still offers an upgrade")
+	}
+
+	// The updater's result and log show on the progress page.
+	_ = os.Remove(u.RequestFile)
+	if err := os.WriteFile(filepath.Join(u.Dir, "status.json"), []byte(`{"state":"failed","method":"binary","from":"v0.5.0","to":"v0.6.0","requested_by":"root","message":"安装失败（退出码 1），见日志","started_at":"2026-10-28T08:00:00Z","finished_at":"2026-10-28T08:01:00Z"}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(u.Dir, "update.log"), []byte("下载失败 <b>x</b>\n失败: 安装失败\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	_, body = owner.get("/system/upgrade")
+	if !strings.Contains(body, "安装失败（退出码 1），见日志") || !strings.Contains(body, "下载失败 &lt;b&gt;x&lt;/b&gt;") || !strings.Contains(body, "v0.5.0 → v0.6.0") {
+		t.Fatalf("failed run: %.3000s", body)
+	}
+
+	// Operators can neither start an upgrade nor watch one.
+	ops := e.signIn("ops", logic.RoleOperator)
+	if resp, _ := ops.get("/system/upgrade"); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("operator progress page: %d", resp.StatusCode)
+	}
+	if _, body := ops.get("/system"); strings.Contains(body, "dlg-upgrade") {
+		t.Fatal("operator sees the upgrade dialog")
+	}
+	token = ops.csrf("/profile")
+	if resp, _ := ops.post("/system/upgrade", url.Values{"_csrf": {token}, "version": {"v0.6.0"}, "password": {"Strong-Pass-2026"}}); resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("operator upgrade: %d", resp.StatusCode)
+	}
+}
+
+// Without the updater (source or Docker installs) the page gives commands only.
+func TestOneClickUpgradeUnavailable(t *testing.T) {
+	e, u := newUpgradeEnv(t)
+	_ = os.Remove(filepath.Join(u.Dir, "status.json"))
+	owner := e.signIn("root", logic.RoleOwner)
+	_, body := owner.get("/system")
+	if !strings.Contains(body, "这台服务器不可用") || strings.Contains(body, "dlg-upgrade") || !strings.Contains(body, "sudo botguard upgrade") {
+		t.Fatalf("system page: %.3000s", body)
+	}
+	token := owner.csrf("/system")
+	owner.post("/system/upgrade", url.Values{"_csrf": {token}, "version": {"v0.6.0"}, "password": {"Strong-Pass-2026"}})
+	if _, err := os.Stat(u.RequestFile); !os.IsNotExist(err) {
+		t.Fatal("request written without an updater")
+	}
+}
+
+// A request the updater never picked up is reported, and can be submitted again.
+func TestOneClickUpgradeStalled(t *testing.T) {
+	e, u := newUpgradeEnv(t)
+	if err := u.Request("v0.6.0", "root"); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-5 * time.Minute)
+	if err := os.Chtimes(u.RequestFile, old, old); err != nil {
+		t.Fatal(err)
+	}
+	owner := e.signIn("root", logic.RoleOwner)
+	_, body := owner.get("/system")
+	if !strings.Contains(body, "botguard-update.path") || !strings.Contains(body, `id="dlg-upgrade"`) {
+		t.Fatalf("system page: %.3000s", body)
+	}
+	if _, body := owner.get("/api/upgrade"); !strings.Contains(body, `"stalled":true`) || !strings.Contains(body, `"busy":false`) {
+		t.Fatalf("api: %s", body)
+	}
+	token := owner.csrf("/system")
+	if resp, _ := owner.post("/system/upgrade", url.Values{"_csrf": {token}, "version": {"v0.6.0"}, "password": {"Strong-Pass-2026"}}); resp.Header.Get("Location") != "/system/upgrade" {
+		t.Fatalf("resubmit: %s", resp.Header.Get("Location"))
+	}
+	if st, err := os.Stat(u.RequestFile); err != nil || time.Since(st.ModTime()) > time.Minute {
+		t.Fatalf("request not replaced: %v", err)
 	}
 }
