@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/dkeepersun/BotGuard/internal/domain"
 	"github.com/dkeepersun/BotGuard/internal/logic"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/password"
@@ -275,6 +276,21 @@ func TestConsoleEndToEnd(t *testing.T) {
 	}
 	if _, body := b.get("/api/preview?kind=rotate"); !strings.Contains(body, `"disc":"data:image/png;base64,`) {
 		t.Fatal("rotate preview")
+	}
+
+	// New actions start without the kinds that need widget 0.3.0; once an
+	// outdated widget calls the app, the actions tab warns, and flags an
+	// action offering those kinds.
+	_, body = b.get("/apps/" + key + "?tab=actions")
+	if !strings.Contains(body, `data-fill-kinds="`+strings.Join(domain.DefaultKinds, ",")+`"`) || strings.Contains(body, "仍有旧版浏览器组件") {
+		t.Fatal("new action defaults or premature warning")
+	}
+	b.post("/apps/"+key+"/actions/save", url.Values{"_csrf": {token}, "action": {"pay"}, "enabled": {"1"}, "mode": {"interactive"},
+		"kinds": {"rotate", "clock"}, "puzzles": {"8"}, "difficulty": {"4000"}})
+	_ = e.stats.Record(context.Background(), app.ID, time.Now(), []string{logic.FieldWidgetOutdated, logic.FieldWidgetCurrent, logic.FieldWidgetCurrent, logic.FieldWidgetCurrent}, nil)
+	_, body = b.get("/apps/" + key + "?tab=actions")
+	if !strings.Contains(body, "仍有旧版浏览器组件") || !strings.Contains(body, "25.0%") || strings.Count(body, "含新题型，旧版组件会失败") != 1 {
+		t.Fatalf("outdated widget warning: %.300s", body)
 	}
 
 	// The audit log has the whole story, and no secret.

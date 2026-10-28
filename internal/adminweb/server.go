@@ -117,10 +117,15 @@ func (s *Server) funcs() template.FuncMap {
 		"join":    strings.Join,
 		"has":     func(list []string, v string) bool { return contains(list, v) },
 		"kinds":   func() []string { return domain.InteractiveKinds },
-		"add":     func(a, b int) int { return a + b },
-		"sub64":   func(a, b int64) int64 { return a - b },
-		"opName":  opName,
-		"pointer": func(p string) string { return pointerNames[p] },
+		// defaultKinds pre-ticks a new action; newWidget marks the kinds that
+		// need widget domain.MinWidget.
+		"defaultKinds":  func() []string { return domain.DefaultKinds },
+		"newWidget":     domain.NeedsNewWidget,
+		"usesNewWidget": UsesNewWidget,
+		"add":           func(a, b int) int { return a + b },
+		"sub64":         func(a, b int64) int64 { return a - b },
+		"opName":        opName,
+		"pointer":       func(p string) string { return pointerNames[p] },
 		// asset appends a content hash so a new release is never served
 		// from a stale browser cache.
 		"asset": func(path string) string {

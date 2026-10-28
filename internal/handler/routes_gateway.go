@@ -184,6 +184,9 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 		// Kinds or Levels: the page's requested kinds, see logic.Selection.
 		Kinds  []string   `json:"kinds"`
 		Levels [][]string `json:"levels"`
+		// Widget is the browser widget's version, for the console's count
+		// of outdated widgets; it changes nothing about the challenge.
+		Widget string `json:"widget"`
 	}
 	if err := decode(w, r, &body); err != nil {
 		g.fail(w, routeChallenges, err, rid)
@@ -192,7 +195,7 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 	out, origin, err := g.Logic.Issue(r.Context(), logic.IssueInput{
 		AppKey: body.AppKey, Action: body.Action, Origin: requestOrigin(r), ClientIP: g.IPs.Resolve(r),
 		HeaderUA: r.UserAgent(), Signals: body.Signals, Fallback: body.Fallback,
-		Select: logic.Selection{Kinds: body.Kinds, Levels: body.Levels},
+		Select: logic.Selection{Kinds: body.Kinds, Levels: body.Levels}, Widget: body.Widget,
 	})
 	cors(w, origin)
 	if err != nil {

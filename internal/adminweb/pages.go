@@ -142,7 +142,7 @@ func (s *Server) appCreate(w http.ResponseWriter, r *http.Request, p *logic.Prin
 	}
 	// New apps start with the recommended login action, so the snippets work
 	// as soon as an origin and a secret pair are added.
-	_ = s.Apps.SetAction(ctx, key, "login", domain.ActionPolicy{Enabled: true, Mode: domain.ModeAdaptive, Kinds: domain.InteractiveKinds,
+	_ = s.Apps.SetAction(ctx, key, "login", domain.ActionPolicy{Enabled: true, Mode: domain.ModeAdaptive, Kinds: domain.DefaultKinds,
 		Puzzles: logic.DefaultPuzzles, Difficulty: logic.DefaultDifficulty})
 	// Back to the list, which opens the new app in its own tab: every app
 	// lives in a tab of its own and the list stays where it was.

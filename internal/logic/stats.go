@@ -7,7 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/netip"
+	"strconv"
+	"strings"
 
+	"github.com/dkeepersun/BotGuard/internal/domain"
 	"github.com/dkeepersun/BotGuard/internal/errx"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
@@ -55,4 +58,51 @@ func reasonFields(prefix string, reasons []string) []string {
 		out = append(out, prefix+r)
 	}
 	return out
+}
+
+// Stats fields counting the widget versions behind issued challenges, so
+// the console can say whether widgets older than domain.MinWidget (which
+// cannot show domain.WidgetKinds) are still in use.
+const (
+	FieldWidgetCurrent  = "widget:current"
+	FieldWidgetOutdated = "widget:outdated"
+)
+
+// widgetCurrent reports whether a reported widget version is at least
+// domain.MinWidget. Anything unparsable counts as outdated.
+func widgetCurrent(v string) bool {
+	got, ok := semver(v)
+	if !ok {
+		return false
+	}
+	want, _ := semver(domain.MinWidget)
+	for i := range got {
+		if got[i] != want[i] {
+			return got[i] > want[i]
+		}
+	}
+	return true
+}
+
+// semver parses "X.Y.Z", ignoring a pre-release or build suffix.
+func semver(v string) ([3]int, bool) {
+	var out [3]int
+	if len(v) == 0 || len(v) > 32 {
+		return out, false
+	}
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) != 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
 }

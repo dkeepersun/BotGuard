@@ -73,8 +73,8 @@ yarn、pnpm 装的也是 npm 上的同一个包。npm 出故障或访问慢时�
 
 | 方式 | 写法 | 说明 |
 |---|---|---|
-| GitHub Release | `npm install https://github.com/dkeepersun/BotGuard/releases/download/browser-v0.2.1/botguard-browser-0.2.1.tgz --allow-remote=root` | 与 npm 上的同版本是同一个文件，release 里附有 SHA-256；npm、pnpm、yarn 都支持。从 0.2.1 开始提供。npm 12 起默认拒绝从网址安装（`EALLOWREMOTE`），要加 `--allow-remote=root`，之后的 `npm install` / `npm ci` 也要带上，建议在项目 `.npmrc` 里写 `allow-remote=root`；npm 11 及以下、pnpm、yarn 不需要 |
-| jsDelivr（直接取 GitHub 标签） | `https://cdn.jsdelivr.net/gh/dkeepersun/BotGuard@browser-v0.2.1/packages/browser/src/botguard.js` | 用 `<script type="module">` 引入，或下载到项目里；不经过 npm。只有 `src/` 源码，webpack 4 用的 `dist/` 构建产物不在仓库里，请用 GitHub Release 的包 |
+| GitHub Release | `npm install https://github.com/dkeepersun/BotGuard/releases/download/browser-v0.3.0/botguard-browser-0.3.0.tgz --allow-remote=root` | 与 npm 上的同版本是同一个文件，release 里附有 SHA-256；npm、pnpm、yarn 都支持。从 0.2.1 开始提供。npm 12 起默认拒绝从网址安装（`EALLOWREMOTE`），要加 `--allow-remote=root`，之后的 `npm install` / `npm ci` 也要带上，建议在项目 `.npmrc` 里写 `allow-remote=root`；npm 11 及以下、pnpm、yarn 不需要 |
+| jsDelivr（直接取 GitHub 标签） | `https://cdn.jsdelivr.net/gh/dkeepersun/BotGuard@browser-v0.3.0/packages/browser/src/botguard.js` | 用 `<script type="module">` 引入，或下载到项目里；不经过 npm。只有 `src/` 源码，webpack 4 用的 `dist/` 构建产物不在仓库里，请用 GitHub Release 的包 |
 | 国内镜像 | `npm install @botguard/browser --registry=https://registry.npmmirror.com` | 国内更快；已同步过去的版本在 npm 出问题时也能装 |
 | gateway 托管 | `<script src="https://你的gateway/sdk/v1/load.js">` | 见上文第 1 种方式，版本始终与 gateway 一致 |
 
@@ -82,6 +82,8 @@ yarn、pnpm 装的也是 npm 上的同一个包。npm 出故障或访问慢时�
 import { init } from '@botguard/browser';
 init({ element: '#captcha', endpoint, appKey, action: 'login', onVerify(err, ret) { /* ... */ } });
 ```
+
+**版本与服务端题型**：npm 装的组件不会随 gateway 升级。时钟读数 `clock`、镜像辨别 `mirror`、九宫格计数 `grid_count` 需要组件 0.3.0 及以上，旧版组件抽到这三种题会直接验证失败。组件在每次签发请求里带上自己的版本（`widget` 字段，`import { VERSION } from '@botguard/browser'`）；管理后台在应用的「验证策略」页统计旧版组件的请求，仍有旧组件时给出提醒。新建 action 默认不勾选这三种题型，升级组件后再勾选。
 
 组件用打包工具能识别的写法 `new Worker(new URL('./worker.js', import.meta.url), { type: 'module' })` 创建 Worker，Vite、webpack 5、Parcel 会自动把 `worker.js` 及其依赖 `solver.js` 打进产物，不需要手工复制。Vite 开发模式下依赖预构建会破坏这种写法，请把本包加入 `optimizeDeps.exclude: ['@botguard/browser']`。万一 Worker 加载失败或 5 秒内没有任何响应，组件会自动改在主线程计算（较慢，但不会卡死）。
 
@@ -120,7 +122,7 @@ init({ element: '#captcha', endpoint, appKey, action: 'login', onVerify(err, ret
 
 | 事件 | 说明 |
 |---|---|
-| `botguard:challenge` | 服务端决定的题型：`invisible` / `slider` / `click_text` / `click_shape` / `fallback` |
+| `botguard:challenge` | 服务端决定的题型：`invisible`、`fallback`，或交互题型 `slider`、`rotate`、`jigsaw`、`click_text`、`click_order`、`click_icon`、`mirror`、`click_shape`、`clock`、`grid_count`、`spatial` |
 | `botguard:verified` | 验证通过：token、过期时间、题型、哈希次数、用时 |
 | `botguard:expired` | token 过期，组件已清空 |
 | `botguard:error` | 出错：错误码和信息 |

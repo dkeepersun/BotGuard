@@ -37,6 +37,9 @@ const EXPIRY_MARGIN_MS = 3_000;
 const DEFAULT_TTL_S = 60;
 const MAX_TTL_S = 600;
 const MAX_FAILURES = 3;
+// VERSION travels with every challenge request so the console can count
+// widgets too old for the newest kinds; keep it equal to package.json.
+export const VERSION = '0.3.0';
 const COOLDOWN_MS = 10_000;
 const MAX_POINTS = 400; // the gateway's slider.MaxPoints
 const MAX_GRID_CLICKS = 24; // the gateway's grid.MaxClicks
@@ -539,7 +542,7 @@ export class BotGuardWidget extends ElementBase {
       if (!round.live) return;
       const signals = { ...(env || {}), ...(interaction ? interaction.snapshot(trigger) : {}) };
       const t0 = performance.now();
-      const ch = await postJSON(`${endpoint}/v1/challenges`, { app_key: appKey, action, signals, fallback, ...selection(this) }, this.transport);
+      const ch = await postJSON(`${endpoint}/v1/challenges`, { app_key: appKey, action, signals, fallback, widget: VERSION, ...selection(this) }, this.transport);
       if (!round.live) return;
       const perPuzzle = expectedAttempts(ch.params.target);
       this.#emit('botguard:challenge', { kind: ch.kind });

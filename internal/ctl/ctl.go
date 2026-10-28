@@ -55,7 +55,9 @@ const usage = `用法：botguard-ctl <命令> [参数]
                                                     新增或修改 action；只修改显式给出的参数。
                                                     mode：invisible（无感）、interactive（每次从 kinds 随机出题）、
                                                     adaptive（按风险出题，新建 action 的默认值）；slider 等同
-                                                    interactive 且只出滑块。kinds：可出的交互题型，默认全部。
+                                                    interactive 且只出滑块。kinds：可出的交互题型，默认为任何版本
+                                                    的浏览器组件都能显示的 8 种；mirror、clock、grid_count 需要
+                                                    组件 0.3.0 及以上，要显式加上
                                                     client-kinds：是否采纳页面请求里的 kinds / levels，默认否
   secret create -app app_key [-ttl 0]               生成密钥对（secret_id + secret_key），secret_key 只显示这一次
   secret revoke -secret secret_id                   吊销密钥对
@@ -464,7 +466,7 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 	puzzles := fs.Int("puzzles", logic.DefaultPuzzles, "")
 	difficulty := fs.Uint64("difficulty", logic.DefaultDifficulty, "")
 	mode := fs.String("mode", domain.ModeAdaptive, "")
-	kinds := fs.String("kinds", strings.Join(domain.InteractiveKinds, ","), "")
+	kinds := fs.String("kinds", strings.Join(domain.DefaultKinds, ","), "")
 	clientKinds := fs.Bool("client-kinds", false, "")
 	if err := parse(fs, args, "app", "action"); err != nil {
 		return err
@@ -483,7 +485,7 @@ func (a *App) actionSet(ctx context.Context, args []string) error {
 		return err
 	}
 	// Start from the stored policy so unspecified flags keep their values.
-	p := domain.ActionPolicy{Enabled: true, Mode: domain.ModeAdaptive, Kinds: domain.InteractiveKinds,
+	p := domain.ActionPolicy{Enabled: true, Mode: domain.ModeAdaptive, Kinds: domain.DefaultKinds,
 		Puzzles: logic.DefaultPuzzles, Difficulty: logic.DefaultDifficulty}
 	for _, x := range d.Actions {
 		if x.Action == *action {

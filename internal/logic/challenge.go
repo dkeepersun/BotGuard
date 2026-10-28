@@ -97,6 +97,10 @@ type IssueInput struct {
 	// Select is the page's requested kinds or ladder; zero leaves the
 	// choice to the action policy.
 	Select Selection
+	// Widget is the version the browser widget reports, empty before 0.3.0.
+	// It only feeds the console's count of outdated widgets: a script can
+	// leave it out as easily as an old widget, so it never picks the kind.
+	Widget string
 }
 
 type SliderRender struct {
@@ -340,6 +344,15 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 			return
 		}
 		fields := append([]string{"issue", "issue:" + st.kind, "risk:" + st.level}, reasonFields("reason:", st.reasons)...)
+		// Only requests with signals came through a widget; bare API calls
+		// would count as outdated widgets forever.
+		if in.Signals != nil {
+			if widgetCurrent(in.Widget) {
+				fields = append(fields, FieldWidgetCurrent)
+			} else {
+				fields = append(fields, FieldWidgetOutdated)
+			}
+		}
 		g.record(ctx, st.appID, fields, nil)
 	}()
 	origin, ok := domain.NormalizeOrigin(in.Origin)

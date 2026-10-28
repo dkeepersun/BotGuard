@@ -126,6 +126,7 @@ textarea.input { height: auto; min-height: 72px; padding: 8px 12px; }
 .chip:has(input:checked) { border-color: var(--primary); background: var(--primary-soft); color: var(--primary-2); }
 .chip:has(input:focus-visible) { box-shadow: 0 0 0 3px rgba(37, 99, 235, .2); }
 .chip .k-level { font-size: 11px; color: var(--muted); }
+.chip .k-new { font-size: 10px; line-height: 1; padding: 2px 4px; border-radius: 4px; background: var(--warn-soft); color: #92400e; }
 .radio-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 @media (max-width: 720px) { .radio-cards { grid-template-columns: minmax(0, 1fr); } }
 .radio-card { position: relative; border: 1px solid #d5dbe6; border-radius: 10px; padding: 10px 12px; cursor: pointer; background: #fff; }

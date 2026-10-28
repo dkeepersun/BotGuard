@@ -1,6 +1,7 @@
 // node --test packages/browser/test/*.test.mjs
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { challenges, flush, init, setup, teardown, widget } from './harness.mjs';
 
 beforeEach(setup);
@@ -38,4 +39,11 @@ test('init() takes kinds and levels as arrays', async () => {
     levels: [['invisible'], ['slider', 'rotate'], ['spatial']] });
   assert.equal(b.element.getAttribute('levels'), 'invisible;slider,rotate;spatial');
   assert.deepEqual((await firstBody(b.element)).levels, [['invisible'], ['slider', 'rotate'], ['spatial']]);
+});
+
+test('every challenge request carries the widget version, equal to package.json', async () => {
+  const { VERSION } = await import('../src/botguard.js');
+  const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+  assert.equal(VERSION, pkg.version);
+  assert.equal((await firstBody(widget())).widget, VERSION);
 });
