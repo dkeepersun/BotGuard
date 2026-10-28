@@ -92,6 +92,32 @@ sudo -u botguard sqlite3 /var/lib/botguard/botguard.db ".backup '/var/lib/botgua
 - SQLite 部署在服务启动时自动迁移。MySQL 部署由 `upgrade` / `update` 先执行 `botguard-ctl migrate up`，再重启服务；库结构落后时 gateway 的 `/readyz` 返回 `schema_outdated`，不会接收流量。确定没有新迁移时，可以设 `BOTGUARD_SKIP_MIGRATE=1` 跳过。
 - 多台 gateway 共用一个 MySQL 时，先迁移，再逐台替换 gateway。迁移完成到旧 gateway 下线之间，旧版本可能不认识新的配置值（例如旧版会把 `interactive` 模式当作无感处理），这段时间应尽量短。
 
+### 从 v0.3.x 升级到 v0.6.0
+
+可以直接升级，不用逐个版本升。v0.3 的管理后台还没有新版本提示和一键升级，这一次在服务器上执行命令：
+
+| 安装方式（有 `/opt/botguard/PACKAGED` 的是 deb/rpm 包） | 命令 |
+|---|---|
+| deb 包 | `sudo apt-get update && sudo apt-get install --only-upgrade botguard` |
+| rpm 包 | `sudo dnf upgrade botguard` |
+| 发布包 | `sudo botguard upgrade v0.6.0`，然后 `sudo botguard install-systemd --user botguard` |
+| Docker | `.env` 里写死了 `BOTGUARD_VERSION=0.3.0` 时改成 `0.6.0`（或删掉这一行），再 `docker compose pull && docker compose up -d` |
+
+- **发布包要多执行一步**：v0.3 的 `upgrade` 只替换文件，不会安装一键升级用的 `botguard-update.path` / `botguard-update.service`。升级后执行一次 `install-systemd`（`--user` 是服务的运行用户，安装脚本默认 `botguard`，可以用 `systemctl show -p User botguard-gateway` 查看），以后就能在「系统状态」页一键升级。deb/rpm 包的安装后脚本会自动执行这一步。
+- **迁移**：这段区间只有 0007（action 的「允许页面指定题型」开关）。SQLite 在启动时自动迁移，MySQL 由升级命令先执行 `migrate up`。
+- **配置不用改**：v0.4–v0.6 新增的配置项（按网段限流、连续失败封禁、降级工作量下限、`Update`）都有默认值，`/etc/botguard` 里的旧配置照常可用。Redis 设了密码时，在 `botguard.env` 加 `BOTGUARD_REDIS_PASSWORD`，没设就不用管。
+- **验证**：`sudo botguard status` 显示 v0.6.0、两个服务就绪；管理后台「系统状态」列出各 gateway 的版本。
+
+升级后行为上的变化：
+
+1. **页面上的 `kinds` / `levels` 默认不生效**（v0.4）：被忽略，改按 action 策略出题。需要的 action 在后台勾选「允许页面指定题型」（`botguard ctl action set -client-kinds`）。这个开关谁都能用，打开后机器人也能每次只要最简单的题型。
+2. **高风险请求不再给无障碍备用路径**（v0.4），照样出列表中最难的题型。
+3. **按网段限流和连续失败封禁**（v0.5）：同一网段（IPv4 /24、IPv6 /48）每个应用每分钟最多 300 道图片题，跨应用每分钟最多签发 1200 次，同一 IP 在 10 分钟内失败 20 次后签发返回 429。大量用户共用出口 IP（公司、学校、运营商 NAT）时，按需调高 `gateway.yaml` 的 `RateLimit.InteractivePerPrefixPerMinute`、`RateLimit.ChallengePerPrefixPerMinute`、`Risk.FailureBlockThreshold`。
+4. **新题型要手动开启**（v0.6）：已有 action 的题型不变，新建 action 默认只勾 8 种。时钟读数、镜像辨别、九宫格计数需要浏览器组件 0.3.0 及以上：用 gateway 托管脚本（`/sdk/v1/`）的页面随服务端升级；用 npm 安装组件的先升级到 `@botguard/browser@0.3.0` 再勾选。仍有旧组件请求时，应用的「验证策略」页会提醒。见 [challenge-catalog.md](challenge-catalog.md) §7.5。
+5. **以后的升级**（v0.6）：管理后台提示新版本；deb/rpm 包和发布包（做了上面的 `install-systemd`）可以在「系统状态」页一键升级。按钮只升级管理后台所在的服务器，其他运行 gateway 的服务器在各自机器上执行升级命令。
+
+PHP、Laravel、Go SDK 不需要跟着升级。
+
 ### 更换 KEK
 
 1. 生成新值：`echo "k1:$(openssl rand -base64 32)"`（`k1` 换成新的编号，例如 `k2`）。
