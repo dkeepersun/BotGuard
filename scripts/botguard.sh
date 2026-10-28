@@ -641,7 +641,7 @@ self_update() {
     update_fail "升级请求无效"
   }
   update_status running "$current" "$target" "$by" "正在确认版本" "$started" ""
-  echo "== $(date '+%Y-%m-%d %H:%M:%S') 升级 $current → $target（$(install_method)），请求人 ${by:-未知}" >> "$log"
+  echo "== $(date '+%Y-%m-%d %H:%M:%S') 升级 $current → ${target}（$(install_method)），请求人 ${by:-未知}" >> "$log"
 
   # 只装 GitHub 上的最新正式版本，管理后台被攻破也不能指定旧版本或预发布。
   latest="$(curl -fsSIL -m 30 -o /dev/null -w '%{url_effective}' "$RELEASE_BASE/latest" 2>/dev/null || true)"
@@ -650,7 +650,7 @@ self_update() {
   [[ "$latest" == "$target" ]] || update_fail "$target 不是 GitHub 上的最新正式版本（最新：${latest:-查询失败}）"
   version_newer "$target" "$current" || update_fail "$target 不比当前的 $current 新"
 
-  update_status running "$current" "$target" "$by" "正在安装 $target，完成后会重启服务" "$started" ""
+  update_status running "$current" "$target" "$by" "正在安装 ${target}，完成后会重启服务" "$started" ""
   if [[ "$(install_method)" == package ]]; then
     # 包的安装后脚本会迁移数据库并重启服务。
     if command -v dnf >/dev/null 2>&1; then
@@ -665,7 +665,7 @@ self_update() {
     # 子 shell：upgrade 出错时只退出它，这里还能记下失败。
     (upgrade "$target") >> "$log" 2>&1 || rc=$?
   fi
-  [[ "$rc" -eq 0 ]] || update_fail "安装失败（退出码 $rc），见日志"
+  [[ "$rc" -eq 0 ]] || update_fail "安装失败（退出码 ${rc}），见日志"
   installed="$(cat "$ROOT_DIR/VERSION" 2>/dev/null || echo 未知)"
   [[ "$installed" == "$target" ]] || update_fail "安装后版本是 ${installed}，不是 $target"
   for svc in $ALL_SERVICES; do
