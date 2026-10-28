@@ -79,3 +79,19 @@ func TestAddAndLevel(t *testing.T) {
 		}
 	}
 }
+
+// A widget that started on its own (inline mode) has no click to judge.
+func TestAutoStartSkipsClickRules(t *testing.T) {
+	s := human()
+	s.MsToClick, s.PointerMovesBeforeClick, s.Activation = 120, 0, ActivationAuto
+	if a := Assess(s, Facts{HeaderUA: ua}); a.Score != 0 {
+		t.Fatalf("auto start: %+v", a)
+	}
+	s.Activation = ""
+	if a := Assess(s, Facts{HeaderUA: ua}); a.Score == 0 {
+		t.Fatal("the same signals from a click must score")
+	}
+	if (*Signals)(nil).AutoStart() {
+		t.Fatal("no signals is not an auto start")
+	}
+}

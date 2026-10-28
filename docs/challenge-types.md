@@ -156,6 +156,7 @@
 | `click_without_move` | 点击前没有任何指针移动或键盘焦点变化 |
 | `untrusted_event` | 事件 `isTrusted` 为 false（脚本伪造的事件） |
 | `pointer_type` | mouse / touch / pen / keyboard；其他值一律按 mouse（最严格）处理 |
+| `activation` | `auto` 表示组件没有点击就自动开始（嵌入式 `mode="inline"`，以及拼图过期前自动换题）。这时不计 `CLICK_WITHOUT_MOVE` 和 `FAST_CLICK`，但这次验证不会无感通过：低风险也按中风险出交互题（记录的风险等级不变）。声称自动开始会让分数少掉这两条规则的分（最多 35），但这两条只看客户端上报的 `pointer_moves_before_click`、`ms_to_click`，机器人不声称自动开始、直接填一个正常值也能避开，还保留无感通过的机会；声称自动开始反而失去无感通过。所以它没有给机器人新的绕过手段。`auto` 属性不带这个字段，按旧规则评判。2026-10-29 加入 |
 
 **服务端信号**（攻击者无法伪造）：
 

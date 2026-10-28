@@ -110,8 +110,8 @@ init({ element: '#captcha', endpoint, appKey, action: 'login', onVerify(err, ret
 | `app-key` | 应用的公开 key |
 | `action` | 场景名，须在应用中启用，并与服务端核验时写死的 action 一致 |
 | `field-name` | 隐藏字段名，默认 `botguard_token` |
-| `mode` | `embed`（默认，嵌入页面）或 `popup`（弹出层，配合 `verify()` 或 `bindTo`） |
-| `auto` | 页面加载后自动开始验证，不用点击 |
+| `mode` | 展示形式：`embed`（默认）、`float`（触发式）、`inline`（嵌入式）、`popup`（弹出式），见下文“展示形式” |
+| `auto` | 页面加载后自动开始验证，不用点击；风险评分与旧版相同（按点击规则评判，低风险仍可能无感通过）。要拼图常驻页面请用 `mode="inline"` |
 | `nonce` | CSP nonce，见下文“内容安全策略（CSP）”；`init()` 中对应 `nonce` 选项 |
 | `kinds` | 指定题型，逗号分隔：`slider` 固定、`slider,rotate` 随机、`*` 全部随机；见下文“指定题型” |
 | `levels` | 难度阶梯，档之间用 `;` 分隔：`invisible; slider,rotate; spatial`；与 `kinds` 同时设置时以 `levels` 为准 |
@@ -170,6 +170,31 @@ init({ element: '#captcha', endpoint, appKey, action: 'login',
 - 风险为高时始终出 action 中最难的题型，PoW 难度也照常提高；风险为中时阶梯至少从第 2 档开始；
 - `invisible`（无感）只在 action 为自适应模式、风险为低时有效；action 为无感模式时前端指定被忽略；
 - 档位数、升降规则和有效期见 [API 文档](../../api/contract-v1.md)“前端指定题型”。
+
+## 展示形式（0.5.0 起支持 float、inline）
+
+对应易盾的触发式、嵌入式、弹出式：
+
+| `mode` | 形式 | 效果 |
+|---|---|---|
+| `embed`（默认） | 点击展开 | 页面上是“点击进行人机验证”的入口框，点击后开始验证，需要做题时在入口框下方展开，会把下面的内容往下推 |
+| `float` | 触发式 | 鼠标移到入口框上（或键盘聚焦、触屏点一下）时开始验证，拼图浮在入口框上方显示，上方放不下时改到下方，不挤动页面布局；鼠标移开 0.3 秒后收起（拖动中不会收起），按 Esc 也会收起，回来时还是同一道题；触屏点页面其他地方收起。调用 `verify()`（包括 `bindTo` 绑定的按钮）时会直接显示 |
+| `inline` | 嵌入式 | 组件出现在屏幕上、且页面在前台时自动开始验证，拼图常驻在表单里；`reset()` 后（例如表单提交后）、连错三次的冷却结束后、凭证过期后都会自动加载下一道题 |
+| `popup` | 弹出式 | 弹出层，由 `verify()` 或 `bindTo` 绑定的提交按钮打开，见上文 |
+
+```js
+init({ element: '#captcha', mode: 'float', endpoint, appKey, action: 'login' });   // 触发式
+init({ element: '#captcha', mode: 'inline', endpoint, appKey, action: 'login' });  // 嵌入式
+init({ mode: 'popup', bindTo: '#submit', endpoint, appKey, action: 'login' });     // 弹出式
+```
+
+几点说明：
+
+- **嵌入式一定要做题**：`inline` 是在没有点击的情况下开始的，组件会在签发请求里标明（`activation: "auto"`），gateway 不再用“点击前没有鼠标移动”“点击过快”这两条规则加分，但这样开始的验证不会无感通过，至少出一道交互题。所以 `inline` 适合登录、注册这类本来就要做题的页面。拼图在页面上放久了，组件会在过期前 10 秒自动换一道（`float` 也一样）。
+- **`float` 的浮层**是相对入口框绝对定位的：入口框放在 `overflow: hidden` 的容器里时，浮层会被容器裁掉，这时给容器留出空间，或改用 `embed` / `popup`。
+- **运行中可以切换**：修改 `mode` 属性立即生效，正在做的题保留；切到 `inline` 时如果组件空闲，会自动开始。
+- **签发量**：`inline` 每次打开页面都会签发一道题（组件不在屏幕上时不签发），比点击才开始的形式多；`float` 在鼠标经过时签发。
+- 旧版 gateway 不认识 `activation`，`inline` 仍能用，只是会按原规则给“点击过快”等加分。
 
 ## 语言、主题与文案（0.4.0 起）
 

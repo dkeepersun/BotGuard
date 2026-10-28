@@ -9,6 +9,8 @@ use Illuminate\View\Component;
 
 /**
  * <x-botguard action="login" />                              embedded widget
+ * <x-botguard action="login" mode="float" />                 trigger: the puzzle floats over the page on hover
+ * <x-botguard action="login" mode="inline" />                embedded, the puzzle loads with the page
  * <x-botguard action="login" bind="#submit" />               popup, verify when the button is clicked
  * <x-botguard action="login" mode="embed" bind="#submit" />  embedded, and the button verifies first if needed
  * <x-botguard action="login" mode="popup" />                 popup widget, opened from your own JS via verify()
@@ -27,7 +29,7 @@ final class Widget extends Component
     public string $endpoint;
     public string $appKey;
     public string $field;
-    /** Effective mode: "embed" or "popup". */
+    /** Effective mode: "embed", "float", "inline" or "popup". */
     public string $mode;
     public ?string $bind;
 
@@ -46,8 +48,8 @@ final class Widget extends Component
         $this->field = (string) $config->get('botguard.field', 'botguard_token');
         $this->bind = $bind === '' ? null : $bind;
         $mode = $mode === null || $mode === '' ? ($this->bind !== null ? 'popup' : 'embed') : strtolower($mode);
-        if (!in_array($mode, ['embed', 'popup'], true)) {
-            throw new \InvalidArgumentException('<x-botguard> 的 mode 只能是 embed 或 popup');
+        if (!in_array($mode, ['embed', 'float', 'inline', 'popup'], true)) {
+            throw new \InvalidArgumentException('<x-botguard> 的 mode 只能是 embed、float、inline 或 popup');
         }
         $this->mode = $mode;
     }
