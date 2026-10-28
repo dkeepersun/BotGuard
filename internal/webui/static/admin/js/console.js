@@ -428,6 +428,48 @@
     kinds.forEach(([k]) => load(k));
   }
 
+  // ---------- One-click upgrade progress ----------
+  // The updater restarts this console mid-way: failed requests mean
+  // "restarting", and polling goes on until the run is over.
+  const up = $('[data-upgrade-poll]');
+  if (up) {
+    const badge = $('[data-upgrade-badge]', up), msg = $('[data-upgrade-message]', up), running = $('[data-upgrade-running]', up),
+      restart = $('[data-upgrade-restart]', up), stalled = $('[data-upgrade-stalled]', up), log = $('[data-upgrade-log]', up);
+    const labels = { succeeded: ['ok', '成功'], failed: ['bad', '失败'], ready: ['plain', '空闲'] };
+    let done = false;
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/upgrade', { credentials: 'same-origin', headers: { Accept: 'application/json' }, cache: 'no-store' });
+        if (res.redirected) {
+          done = true;
+          msg.textContent = '登录已过期，请重新登录后查看结果';
+          return;
+        }
+        if (!res.ok) throw new Error(String(res.status));
+        const d = await res.json();
+        restart.hidden = true;
+        const [cls, text] = d.busy ? ['warn', '进行中'] : (labels[d.state] || ['plain', d.state || '—']);
+        const b = document.createElement('span');
+        b.className = 'badge ' + cls;
+        b.textContent = text;
+        badge.replaceChildren(b);
+        stalled.hidden = !d.stalled;
+        msg.textContent = d.stalled ? '请求没有被处理，见下方提示' : d.pending ? '已提交，等待升级服务启动…' : (d.message || '—');
+        running.textContent = d.running;
+        log.textContent = d.log && d.log.length ? d.log.join('\n') : '（还没有日志）';
+        log.scrollTop = log.scrollHeight;
+        done = !d.busy;
+      } catch {
+        restart.hidden = false;
+      }
+    };
+    const tick = async () => {
+      await poll();
+      if (!done) setTimeout(tick, 2000);
+    };
+    tick();
+  }
+
   // Inside the shell, a full-page redirect to the login form means the
   // session ended: send the whole window there.
   if (document.body.classList.contains('login') && window.top !== window.self) window.top.location.href = '/login';

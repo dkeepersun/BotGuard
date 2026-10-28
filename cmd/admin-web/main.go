@@ -160,6 +160,9 @@ func main() {
 		web.Updates = &update.Checker{URL: u, Current: version.Version, Interval: time.Duration(c.Update.IntervalHours) * time.Hour,
 			Client: &http.Client{Timeout: 15 * time.Second}}
 		go web.Updates.Run(context.Background())
+		if c.Update.OneClick {
+			web.Upgrader = &update.Upgrader{RequestFile: update.DefaultRequestFile, Dir: update.DefaultDir}
+		}
 	}
 	if err := web.Register(server); err != nil {
 		log.Fatal(err)

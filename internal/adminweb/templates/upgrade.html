@@ -1,0 +1,24 @@
+{{template "head" .}}{{$d := .Data}}
+<div class="wrap">
+  <div class="page-head"><div><div class="crumb"><a href="/system">系统状态</a> /</div><h1>一键升级</h1><div class="sub">升级由服务器上的 botguard-update 服务以 root 执行，管理后台只提交请求和显示进度</div></div></div>
+  {{with $d.Progress}}
+  <div class="card" data-upgrade-poll>
+    <div class="card-head"><h2>{{if .From}}{{.From}} → {{.To}}{{else}}升级{{end}}</h2><span data-upgrade-badge>
+      {{if $d.Busy}}<span class="badge warn">进行中</span>{{else if eq .State "succeeded"}}<span class="badge ok">成功</span>{{else if eq .State "failed"}}<span class="badge bad">失败</span>{{else}}<span class="badge plain">空闲</span>{{end}}</span></div>
+    <div class="card-body">
+      <dl class="kv">
+        <dt>状态</dt><dd data-upgrade-message>{{if $d.Stalled}}请求没有被处理，见下方提示{{else if .Pending}}已提交，等待升级服务启动…{{else}}{{or .Message "—"}}{{end}}</dd>
+        <dt>管理后台版本</dt><dd class="mono" data-upgrade-running>{{$d.Running}}</dd>
+        {{if .RequestedBy}}<dt>操作人</dt><dd>{{.RequestedBy}}</dd>{{end}}
+        {{if not .Started.IsZero}}<dt>开始</dt><dd>{{time .Started}}</dd>{{end}}
+        {{if not .Finished.IsZero}}<dt>结束</dt><dd>{{time .Finished}}</dd>{{end}}
+      </dl>
+      <div class="alert warn mt" data-upgrade-stalled {{if not $d.Stalled}}hidden{{end}}><span>升级请求 2 分钟内没有被处理，服务器上的升级服务（botguard-update.path）可能没有运行。请在服务器上执行 <code>sudo systemctl status botguard-update.path</code> 查看，或重新执行 <code>sudo botguard install-systemd --user botguard</code> 恢复，然后重新提交。</span></div>
+      <div class="alert info mt" data-upgrade-restart hidden><span>管理后台正在重启，恢复后这里会自动更新。</span></div>
+      <h3 class="mt">日志</h3>
+      <pre class="snippet" data-upgrade-log>{{if $d.Log}}{{join $d.Log "\n"}}{{else}}（还没有日志）{{end}}</pre>
+    </div>
+  </div>
+  {{else}}<div class="card"><div class="card-body"><div class="empty">这台服务器没有安装一键升级（源码、Docker 或 macOS 安装），请用命令升级，见系统状态页。</div></div></div>{{end}}
+</div>
+{{template "foot" .}}

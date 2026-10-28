@@ -51,6 +51,9 @@ type Server struct {
 	// releases and is nil when Update.Check is off.
 	Version string
 	Updates *update.Checker
+	// Upgrader hands one-click upgrades to the root-owned updater; nil
+	// when the console runs where none can be installed (Docker).
+	Upgrader *update.Upgrader
 
 	tpl *template.Template
 }
@@ -148,7 +151,7 @@ func (s *Server) funcs() template.FuncMap {
 	}
 }
 
-var opGroups = map[string]string{"app.": "应用", "origin.": "允许来源", "action.": "验证策略", "secret.": "密钥对", "admin.": "管理员", "auth.": "登录"}
+var opGroups = map[string]string{"app.": "应用", "origin.": "允许来源", "action.": "验证策略", "secret.": "密钥对", "admin.": "管理员", "auth.": "登录", "system.": "系统"}
 
 var opNames = map[string]string{
 	"app.create": "创建应用", "app.update": "修改应用", "app.enable": "启用应用", "app.disable": "停用应用",
@@ -158,6 +161,7 @@ var opNames = map[string]string{
 	"admin.password_reset": "重置密码", "admin.password_change": "修改密码", "admin.profile": "修改资料",
 	"admin.totp_enable": "开启动态码", "admin.totp_disable": "关闭动态码",
 	"auth.login": "登录", "auth.logout": "退出", "auth.login_failed": "登录失败",
+	"system.upgrade": "一键升级",
 }
 
 func opName(op string) string {
@@ -302,6 +306,9 @@ func (s *Server) Register(srv *rest.Server) error {
 
 		get("/system", s.page(logic.PermView, s.systemPage)),
 		post("/system/update-check", s.action(logic.PermSystem, s.updateCheck)),
+		post("/system/upgrade", s.action(logic.PermSystem, s.upgradeStart)),
+		get("/system/upgrade", s.page(logic.PermSystem, s.upgradePage)),
+		get("/api/upgrade", s.page(logic.PermSystem, s.upgradeAPI)),
 	})
 	static := webui.StaticHandler()
 	for _, path := range webui.Paths() {

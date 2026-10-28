@@ -8,7 +8,7 @@
     </div>
   </div>
   {{with $d.Update}}
-    {{if .State.Newer}}<div class="alert info alert-act"><span><b>BotGuard {{.State.Latest.Tag}} 已发布</b>，当前运行 {{.State.Current}}。{{if .State.Latest.URL}}<a href="{{.State.Latest.URL}}" target="_blank" rel="noopener noreferrer">查看更新说明</a>{{end}}</span><a class="btn sm primary" href="/system" data-tab-open="sysinfo" data-title="系统状态">查看升级方法</a></div>{{end}}
+    {{if .State.Newer}}<div class="alert info alert-act"><span><b>BotGuard {{.State.Latest.Tag}} 已发布</b>，当前运行 {{.State.Current}}。{{if .State.Latest.URL}}<a href="{{.State.Latest.URL}}" target="_blank" rel="noopener noreferrer">查看更新说明</a>{{end}}</span><a class="btn sm primary" href="/system" data-tab-open="sysinfo" data-title="系统状态">{{if .CanUpgrade}}去升级{{else}}查看升级方法{{end}}</a></div>{{end}}
     {{if .Mixed}}<div class="alert warn alert-act"><span><b>gateway 版本不一致。</b>有 gateway 实例运行的版本与管理后台（{{.Running}}）不同。</span><a class="btn sm" href="/system" data-tab-open="sysinfo" data-title="系统状态">查看</a></div>{{end}}
   {{end}}
 

@@ -449,6 +449,15 @@ func (c *Console) ConfirmTOTP(ctx context.Context, p *Principal, ip, code string
 	return nil
 }
 
+// ConfirmPassword checks the admin's own password again before a sensitive
+// action (installing a release): a stolen session alone must not start it.
+func (c *Console) ConfirmPassword(p *Principal, current string) error {
+	if !password.Verify(p.Admin.PasswordHash, current) {
+		return invalid("当前密码不正确")
+	}
+	return nil
+}
+
 // DisableTOTP needs the password again: a stolen session alone must not be
 // able to remove the second factor.
 func (c *Console) DisableTOTP(ctx context.Context, p *Principal, ip, current string) error {

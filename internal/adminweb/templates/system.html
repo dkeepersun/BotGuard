@@ -22,9 +22,19 @@
       <dt>gateway</dt><dd>{{range $u.Gateways}}<div><span class="mono">{{or .Version "未上报版本（v0.5.0 及更早）"}}</span>
           {{if .Same}}<span class="badge ok">与管理后台一致</span>{{else}}<span class="badge warn">与管理后台不同</span>{{end}} <span class="cell-sub">{{join .Instances "、"}}</span></div>
         {{else}}<span class="muted">最近 3 分钟没有 gateway 上报（见运行状况）</span>{{end}}</dd>
+      <dt>一键升级</dt><dd>{{with $u.Upgrade}}<span class="badge ok">可用</span> <span class="cell-sub">{{if eq .Method "package"}}deb / rpm 包安装，通过 dnf / apt 升级{{else}}发布包安装，通过 botguard upgrade 升级{{end}}</span>
+          {{if or (eq .State "succeeded") (eq .State "failed") (eq .State "running")}}<div class="cell-sub">上次：{{.From}} → {{.To}} ·
+            {{if eq .State "succeeded"}}<span class="ok-text">成功</span>{{else if eq .State "failed"}}<span class="bad-text">失败</span>{{else}}进行中{{end}} · {{.Message}}
+            {{if can $.Me "system.manage"}} · <a href="/system/upgrade">查看日志</a>{{end}}</div>{{end}}
+        {{else}}<span class="muted">这台服务器不可用（源码、Docker 或 macOS 安装），请用下方命令升级</span>{{end}}</dd>
     </dl>
+    {{if can .Me "system.manage"}}
+      {{if $u.Stalled}}<div class="alert warn mt"><span>升级请求 2 分钟内没有被处理，服务器上的升级服务（botguard-update.path）可能没有运行。请在服务器上执行 <code>sudo systemctl status botguard-update.path</code> 查看，或重新执行 <code>sudo botguard install-systemd --user botguard</code> 恢复，然后重新提交。</span></div>{{end}}
+      {{if $u.Busy}}<div class="alert info alert-act mt"><span><b>升级进行中。</b>完成后服务会自动重启。</span><a class="btn sm primary" href="/system/upgrade">查看进度</a></div>
+      {{else if $u.CanUpgrade}}<div class="alert info alert-act mt"><span>可以一键升级到 <b>{{$u.State.Latest.Tag}}</b>：下载、校验、迁移数据库，然后重启 gateway 和管理后台（约 1 分钟，期间验证服务短暂中断）。</span><button class="btn sm primary" data-open="dlg-upgrade">升级到 {{$u.State.Latest.Tag}}</button></div>{{end}}
+    {{end}}
     {{if and $u.Enabled (not $u.State.Current)}}<div class="alert info mt">这是开发构建（源码编译），没有正式版本号，不和发布版本比较；源码部署用 <code>sudo botguard update</code> 升级。</div>{{end}}
-    {{if or $u.State.Newer $u.Mixed}}<div class="alert info mt"><span>升级方法：deb / rpm 安装执行 <code>sudo dnf upgrade botguard</code> 或 <code>sudo apt upgrade</code>；发布包安装执行 <code>sudo botguard upgrade</code>；Docker 重新执行安装命令。多台服务器逐台升级，每台的 gateway 和管理后台保持同一版本。</span></div>{{end}}
+    {{if or $u.State.Newer $u.Mixed}}<div class="alert info mt"><span>{{if $u.Upgrade}}其他服务器的{{end}}升级方法：deb / rpm 安装执行 <code>sudo dnf upgrade botguard</code> 或 <code>sudo apt upgrade</code>；发布包安装执行 <code>sudo botguard upgrade</code>；Docker 重新执行安装命令。多台服务器逐台升级，每台的 gateway 和管理后台保持同一版本。</span></div>{{end}}
     </div></div>
 
   <div class="card mt"><div class="card-head"><h2>运维提示</h2></div><div class="card-body"><ul style="margin:0;padding-left:18px;line-height:2">
@@ -34,4 +44,13 @@
     <li>统计数据存在 Redis，按小时保留 32 天；审计日志存在 MySQL 的 sys_audit_log 表，不会自动清理。</li>
   </ul></div></div>
 </div>
+{{if $u.CanUpgrade}}{{if can .Me "system.manage"}}
+<dialog class="modal" id="dlg-upgrade"><form method="post" action="/system/upgrade">{{template "csrf" .CSRF}}<input type="hidden" name="version" value="{{$u.State.Latest.Tag}}">
+  <div class="m-head"><h3>升级到 {{$u.State.Latest.Tag}}</h3><button type="button" class="x" data-close aria-label="关闭">×</button></div>
+  <div class="m-body">
+    <div class="alert warn" style="margin:0"><span>升级会重启这台服务器上的 gateway 和管理后台，期间验证服务短暂不可用；数据库迁移只能向前，升级后不能退回旧版本。{{if $u.State.Latest.URL}}升级前请先看<a href="{{$u.State.Latest.URL}}" target="_blank" rel="noopener noreferrer">更新说明</a>。{{end}}</span></div>
+    <div class="form-row"><label>当前密码</label><input class="input" type="password" name="password" required autocomplete="current-password"></div>
+  </div>
+  <div class="m-foot"><button type="button" class="btn" data-close>取消</button><button class="btn primary">开始升级</button></div></form></dialog>
+{{end}}{{end}}
 {{template "foot" .}}
