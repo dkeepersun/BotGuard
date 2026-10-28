@@ -3,7 +3,9 @@
 // Glyphs come from a pre-rendered atlas (assets/glyphs.png, made by
 // tools/glyphatlas from Noto Sans SC under the SIL OFL 1.1), so the gateway
 // needs no font at run time. Each character is scaled, rotated, sheared and
-// coloured independently, and decoy characters are mixed in.
+// coloured independently, drawn in one of three styles (dark with a halo,
+// 3D extruded, hollow) and sometimes broken by thin cuts, and decoy
+// characters are mixed in.
 //
 // This style is familiar to users and hard for general AI agents to localise
 // precisely, but dedicated text-click solvers exist; treat it as one option
@@ -79,38 +81,92 @@ func sample(a *image.Gray, idx int, u, v float64) float64 {
 	return top*(1-fy) + bottom*fy
 }
 
+// Glyph styles. Each character gets one at random, so no single colour
+// or brightness threshold separates all of them from the background.
+const (
+	stylePlain   = iota // dark fill, light halo
+	styleExtrude        // light or vivid face over a darker 3D extrusion
+	styleHollow         // light fill inside a dark outline
+	styleCount
+)
+
 type glyph struct {
-	idx         int
-	x, y, size  float64
-	rot, shear  float64
-	color       color.RGBA
-	outlineOpac float64
+	idx        int
+	x, y, size float64
+	rot, shear float64
+	style      int
+	face, edge color.RGBA // fill, and halo / extrusion / outline
+	haloOpac   float64
+	ex, ey     float64 // extrusion step in image pixels
+	depth      int
+	cuts       [][3]float64 // breaks: unit normal and offset, in glyph pixels
+}
+
+// local maps image point (x, y) into the glyph's atlas cell, and returns the
+// glyph-space point before scaling (for cuts).
+func (g glyph) local(x, y float64) (u, v, rx, ry float64) {
+	sin, cos := math.Sincos(-g.rot)
+	dx, dy := x-g.x, y-g.y
+	rx, ry = dx*cos-dy*sin, dx*sin+dy*cos
+	rx -= ry * g.shear
+	scale := float64(Cell) / g.size
+	return rx*scale + Cell/2, ry*scale + Cell/2, rx, ry
+}
+
+// coverage is the glyph's ink at image point (x, y), with its breaks cut
+// out: thin gaps across a stroke that a reader bridges without noticing.
+func (g glyph) coverage(a *image.Gray, x, y float64) float64 {
+	u, v, rx, ry := g.local(x, y)
+	c := sample(a, g.idx, u, v)
+	for _, cut := range g.cuts {
+		if math.Abs(rx*cut[0]+ry*cut[1]-cut[2]) < 0.9 {
+			c *= 0.12
+		}
+	}
+	return c
 }
 
 // draw renders the glyph by inverse-mapping each destination pixel into the
 // atlas cell: rotate, shear, then scale.
 func draw(img *image.RGBA, a *image.Gray, g glyph) {
-	scale := float64(Cell) / g.size
-	sin, cos := math.Sincos(-g.rot)
-	half := g.size * 0.8
+	half := g.size*0.8 + float64(g.depth)*math.Hypot(g.ex, g.ey)
 	x0, x1 := max(0, int(g.x-half)), min(Width, int(g.x+half)+1)
 	y0, y1 := max(0, int(g.y-half)), min(Height, int(g.y+half)+1)
 	light := color.RGBA{255, 255, 255, 255}
 	for y := y0; y < y1; y++ {
 		for x := x0; x < x1; x++ {
-			dx, dy := float64(x)+0.5-g.x, float64(y)+0.5-g.y
-			rx, ry := dx*cos-dy*sin, dx*sin+dy*cos
-			rx -= ry * g.shear
-			u, v := rx*scale+Cell/2, ry*scale+Cell/2
-			cov := sample(a, g.idx, u, v)
-			// A soft light halo keeps dark glyphs readable on busy backgrounds.
-			halo := math.Max(math.Max(sample(a, g.idx, u-3, v), sample(a, g.idx, u+3, v)),
-				math.Max(sample(a, g.idx, u, v-3), sample(a, g.idx, u, v+3)))
-			if halo > cov {
-				imagegen.Blend(img, x, y, light, (halo-cov)*g.outlineOpac)
+			px, py := float64(x)+0.5, float64(y)+0.5
+			cov := g.coverage(a, px, py)
+			switch g.style {
+			case styleExtrude:
+				// Nearer layers of the extrusion are darker, as if lit from
+				// the front.
+				for k := g.depth; k >= 1; k-- {
+					if side := g.coverage(a, px-float64(k)*g.ex, py-float64(k)*g.ey); side > 0 {
+						shade := 1 - 0.5*float64(k)/float64(g.depth)
+						c := color.RGBA{uint8(float64(g.edge.R) * shade), uint8(float64(g.edge.G) * shade), uint8(float64(g.edge.B) * shade), 255}
+						imagegen.Blend(img, x, y, c, side)
+						break
+					}
+				}
+			default:
+				u, v, _, _ := g.local(px, py)
+				d := 3.0
+				if g.style == styleHollow {
+					d = 1.6
+				}
+				halo := math.Max(math.Max(sample(a, g.idx, u-d, v), sample(a, g.idx, u+d, v)),
+					math.Max(sample(a, g.idx, u, v-d), sample(a, g.idx, u, v+d)))
+				if halo > cov {
+					if g.style == styleHollow {
+						imagegen.Blend(img, x, y, g.edge, (halo-cov)*0.95)
+					} else {
+						imagegen.Blend(img, x, y, light, (halo-cov)*g.haloOpac)
+					}
+				}
 			}
 			if cov > 0 {
-				imagegen.Blend(img, x, y, g.color, cov)
+				imagegen.Blend(img, x, y, g.face, cov)
 			}
 		}
 	}
@@ -124,6 +180,37 @@ func darkColor(r *rand.Rand) color.RGBA {
 			return c
 		}
 	}
+}
+
+// styled fills in a glyph's style, colours and breaks.
+func styled(r *rand.Rand, g glyph) glyph {
+	g.style = r.IntN(styleCount)
+	switch g.style {
+	case styleExtrude:
+		// A light or vivid face; the extrusion is a dark version of a hue.
+		if r.IntN(2) == 0 {
+			g.face = imagegen.HSV(r.Float64()*360, 0.05+r.Float64()*0.15, 0.95)
+		} else {
+			g.face = imagegen.HSV(r.Float64()*360, 0.6+r.Float64()*0.3, 0.8+r.Float64()*0.2)
+		}
+		g.edge = imagegen.HSV(r.Float64()*360, 0.3+r.Float64()*0.4, 0.25+r.Float64()*0.2)
+		g.depth = 3 + r.IntN(3)
+		dir := r.Float64() * 2 * math.Pi
+		g.ex, g.ey = math.Cos(dir)*0.9, math.Sin(dir)*0.9
+	case styleHollow:
+		g.face = imagegen.HSV(r.Float64()*360, 0.1+r.Float64()*0.3, 0.92+r.Float64()*0.08)
+		g.edge = darkColor(r)
+	default:
+		g.face = darkColor(r)
+		g.haloOpac = 0.5 + r.Float64()*0.3
+	}
+	if r.IntN(5) < 2 {
+		for n := 1 + r.IntN(2); n > 0; n-- {
+			a := r.Float64() * math.Pi
+			g.cuts = append(g.cuts, [3]float64{math.Cos(a), math.Sin(a), (r.Float64()*2 - 1) * g.size * 0.25})
+		}
+	}
+	return g
 }
 
 // Generate draws 3 targets (4 a quarter of the time) and 1–2 decoys.
@@ -183,9 +270,9 @@ func compose(r *rand.Rand, src imagegen.Source, perm []int, n int, prompt func(w
 			y := radius + 4 + r.Float64()*(Height-2*radius-8)
 			if !click.Overlaps(placed, x, y, radius, 6) {
 				placed = append(placed, click.Target{X: x, Y: y, R: radius})
-				glyphs = append(glyphs, glyph{idx: perm[i], x: x, y: y, size: size,
+				glyphs = append(glyphs, styled(r, glyph{idx: perm[i], x: x, y: y, size: size,
 					rot:   (r.Float64()*70 - 35) * math.Pi / 180,
-					shear: r.Float64()*0.3 - 0.15, color: darkColor(r), outlineOpac: 0.5 + r.Float64()*0.3})
+					shear: r.Float64()*0.3 - 0.15}))
 				ok = true
 				break
 			}
@@ -195,11 +282,17 @@ func compose(r *rand.Rand, src imagegen.Source, perm []int, n int, prompt func(w
 		}
 	}
 
-	bg, _ := src.Background(r, Width, Height)
+	bg, photo := src.Background(r, Width, Height)
+	// Washed lighter so dark glyphs read; a photo less, since every style
+	// carries its own contrast (halo, extrusion or outline).
+	wash := 0.35
+	if photo {
+		wash = 0.2
+	}
 	white := color.RGBA{255, 255, 255, 255}
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {
-			imagegen.Blend(bg, x, y, white, 0.35)
+			imagegen.Blend(bg, x, y, white, wash)
 		}
 	}
 	imagegen.Clutter(r, bg, true)
