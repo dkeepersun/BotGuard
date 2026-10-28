@@ -102,6 +102,7 @@ sudo botguard ctl help            # 命令行管理应用、密钥和管理员
 | [API](api/contract-v1.md) | 接口与签名协议 |
 | [开发指南](docs/development.md) | 本地运行、数据库、测试 |
 | [发布流程](docs/release.md) | 发布服务端、软件源、镜像和 SDK |
+| [组件加固评估](docs/sdk-hardening.md) | 浏览器组件混淆的实测成本、能挡住什么、建议 |
 
 ## 许可证
 
