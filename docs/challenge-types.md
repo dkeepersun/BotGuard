@@ -144,7 +144,7 @@
 | `ua_platform_mismatch` | UA 声称的平台与 `navigator.platform`、触屏能力矛盾 |
 | `permission_mismatch` | 通知权限的两种查询方式结果矛盾（无头浏览器的已知特征） |
 | `automation_globals` | 存在常见自动化框架注入的全局变量 |
-| `cdp` | 页面的控制台正被开发者工具协议（CDP）读取：组件用 `console.debug` 输出一个错误对象，它的 `stack` 只有在被 CDP 序列化时才会被读到。Puppeteer、Playwright、Selenium 4 都会触发；打开了开发者工具的真人也会（+25，所以只让他做题，不拦截）。2026-10-29 加入 |
+| `cdp` | 页面的控制台正被开发者工具协议（CDP）读取。组件用 `console.debug` 输出一个错误对象，同时挂上 V8 的 `Error.prepareStackTrace`：只有 CDP 序列化这条消息时才会格式化错误的调用栈、触发这个钩子。Puppeteer、Playwright、Selenium 4 都会触发，打开了开发者工具的真人也会（+25，所以只是让他做题，不拦截）。网上流传的旧写法（给错误对象的 `stack` 加 getter）在现在的 Chrome 里已经不会触发。在 Chrome 156 无头模式下实测：开启 `Runtime.enable` 时为 true，不开时为 false。只对 Chrome、Edge 等 V8 内核的浏览器有效，Firefox、Safari 恒为 false。2026-10-29 加入 |
 | `native_tampered` | 组件检查的原生函数（`Function.prototype.toString`、`permissions.query`、`webdriver` 的 getter、`toDataURL`、WebGL `getParameter`）被替换，或 `webdriver`、`languages`、`plugins` 等被直接定义在 `navigator` 对象上，这是伪装插件和手写伪装的常见做法（+40）。部分防指纹插件也会改写 `toDataURL`，这类用户会多做一道题。2026-10-29 加入 |
 
 **交互信号**（从页面加载到点击、到拖动结束）：

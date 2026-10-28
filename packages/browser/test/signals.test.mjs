@@ -70,12 +70,14 @@ test('interaction tracker takes a tap\'s pointer type from its pointerdown', () 
 });
 
 test('a console read over the DevTools protocol is reported', async () => {
-  // A protocol client serialises logged errors, reading their stack.
+  // A protocol client formats logged errors' stacks; a plain console does not.
+  const before = Error.prepareStackTrace;
   const cdpConsole = { debug: (e) => void e.stack };
-  const env = await collectEnvironment({ outerWidth: 1440, outerHeight: 900, console: cdpConsole }, desktopChrome, null);
+  const env = await collectEnvironment({ outerWidth: 1440, outerHeight: 900, console: cdpConsole, Error }, desktopChrome, null);
   assert.equal(env.cdp, true);
-  const quiet = await collectEnvironment({ outerWidth: 1440, outerHeight: 900, console: { debug() {} } }, desktopChrome, null);
+  const quiet = await collectEnvironment({ outerWidth: 1440, outerHeight: 900, console: { debug() {} }, Error }, desktopChrome, null);
   assert.equal(quiet.cdp, false);
+  assert.equal(Error.prepareStackTrace, before, 'the hook is put back');
 });
 
 test('replaced native functions and navigator spoofs are reported', async () => {

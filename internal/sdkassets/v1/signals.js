@@ -54,21 +54,34 @@ async function permissionMismatch(win, nav) {
 }
 
 // The DevTools protocol (Puppeteer, Playwright, Selenium 4, and an open
-// DevTools window) serialises what the page logs, reading the properties of
-// logged objects; a plain console does not. The probe logs an error whose
-// stack getter notes the read. console.debug is hidden unless the console
-// shows verbose messages.
-function devtoolsProtocol(con) {
+// DevTools window) serialises what the page logs, and formats a logged
+// error's stack to do it; a plain console leaves the stack unformatted. The
+// probe logs an error while V8's Error.prepareStackTrace hook notes whether
+// the stack was formatted. The older probe, a getter on the error's stack,
+// stopped firing in Chrome; this one was checked on Chrome 156 (fires with
+// Runtime.enable, not without). Other engines ignore the hook and report
+// false. console.debug is hidden unless the console shows verbose messages.
+function devtoolsProtocol(win) {
+  const E = win.Error;
+  const con = win.console;
+  if (typeof E !== 'function' || typeof E.captureStackTrace !== 'function' || !con || typeof con.debug !== 'function') return false;
+  let read = false;
+  const saved = Object.getOwnPropertyDescriptor(E, 'prepareStackTrace');
   try {
-    if (!con || typeof con.debug !== 'function') return false;
-    let read = false;
-    const probe = new Error('');
-    Object.defineProperty(probe, 'stack', { configurable: false, enumerable: false, get() { read = true; return ''; } });
-    con.debug(probe);
-    return read;
+    E.prepareStackTrace = (err, frames) => {
+      read = true;
+      return typeof saved?.value === 'function' ? saved.value(err, frames) : String(err);
+    };
+    con.debug(new E(''));
   } catch {
-    return false;
+    // A frozen Error or console: no answer.
+  } finally {
+    try {
+      if (saved) Object.defineProperty(E, 'prepareStackTrace', saved);
+      else delete E.prepareStackTrace;
+    } catch { /* keep going */ }
   }
+  return read;
 }
 
 const NATIVE = /\{\s*\[native code\]\s*\}\s*$/;
@@ -119,7 +132,7 @@ export async function collectEnvironment(win = globalThis.window, nav = globalTh
     ua_platform_mismatch: platformMismatch(nav),
     permission_mismatch: await permissionMismatch(win, nav),
     automation_globals: AUTOMATION_GLOBALS.some((k) => k in win) || docKeys.some((k) => /^\$(cdc|wdc)_/.test(k)),
-    cdp: devtoolsProtocol(win.console),
+    cdp: devtoolsProtocol(win),
     native_tampered: nativeTampered(win, nav),
     user_agent: ua.slice(0, 512),
   };
