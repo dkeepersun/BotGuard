@@ -166,6 +166,9 @@ func TestConsoleStatistics(t *testing.T) {
 		"issue": 2, "issue:invisible": 1, "issue:slider": 1, "risk:low": 1, "risk:medium": 1, "reason:NO_SIGNALS": 1,
 		"solve_ok:invisible": 1, "solve_fail:ANSWER_INVALID": 1, "solve_fail_kind:slider": 1,
 		"verify_pass": 1, "verify_pass:invisible": 1, "verify_reject:TOKEN_CONSUMED": 1,
+		// The signal-less issue is not counted as a widget at all; the other
+		// carried signals but no version, like a widget before 0.3.0.
+		FieldWidgetOutdated: 1, FieldWidgetCurrent: 0,
 	} {
 		if got[field] != want {
 			t.Errorf("%s = %d, want %d (%v)", field, got[field], want, got)
@@ -181,5 +184,37 @@ func TestConsoleStatistics(t *testing.T) {
 	}
 	if evs[0].IP == "" || len(evs[0].IP) != 12 || strings.Contains(evs[0].IP, "192.0.2") {
 		t.Fatalf("ip tag %q", evs[0].IP)
+	}
+}
+
+// Widget versions are counted for the console and change nothing else: a
+// request without a version still gets every kind the action offers.
+func TestWidgetVersionCounts(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+	for _, v := range []string{"0.3.0", "0.10.1", "1.0.0-rc.1", "0.2.1", "", "junk"} {
+		out, _, err := h.g.Issue(context.Background(), IssueInput{AppKey: appA, Action: "time", Origin: originA, ClientIP: h.ip, Signals: clean(), Widget: v})
+		if err != nil || out.Kind != domain.KindClock {
+			t.Fatalf("widget %q: %v %+v", v, err, out)
+		}
+	}
+	hours, err := h.g.Stats.Hours(context.Background(), 1, h.clock, h.clock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := hours[0].Counts; c[FieldWidgetCurrent] != 3 || c[FieldWidgetOutdated] != 3 {
+		t.Fatalf("%v", c)
+	}
+}
+
+func TestWidgetCurrent(t *testing.T) {
+	for v, want := range map[string]bool{
+		"0.3.0": true, "0.3.1": true, "0.10.0": true, "1.0.0": true, "0.3.0-rc.1": true,
+		"0.2.9": false, "0.2.1": false, "": false, "0.3": false, "v0.3.0": false, "0.3.x": false,
+		strings.Repeat("9", 40): false,
+	} {
+		if got := widgetCurrent(v); got != want {
+			t.Errorf("%q: %v, want %v", v, got, want)
+		}
 	}
 }

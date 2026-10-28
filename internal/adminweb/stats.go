@@ -48,6 +48,23 @@ func (c Counts) Get(k string) int64 { return c[k] }
 // Rate is a/b as a percentage string.
 func (c Counts) Rate(a, b string) string { return formatPct(c[a], c[b]) }
 
+// WidgetOutdated is the share of widget requests that came from widgets
+// older than domain.MinWidget, which cannot show domain.WidgetKinds.
+func (c Counts) WidgetOutdated() string {
+	old := c[logic.FieldWidgetOutdated]
+	return formatPct(old, old+c[logic.FieldWidgetCurrent])
+}
+
+// UsesNewWidget reports whether kinds include one of domain.WidgetKinds.
+func UsesNewWidget(kinds []string) bool {
+	for _, k := range kinds {
+		if domain.NeedsNewWidget(k) {
+			return true
+		}
+	}
+	return false
+}
+
 // PassRate is solves that passed over all solves.
 func (c Counts) PassRate() string { return formatPct(c["solve_ok"], c["solve"]) }
 

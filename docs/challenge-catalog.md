@@ -60,7 +60,7 @@
 
 `slider` < `rotate` < `jigsaw` < `click_text` < `click_order` < `click_icon` < `click_shape` < `spatial`
 
-- 新建 action 默认包含全部 8 种交互题型；已有 action 不会自动加入新题型，需要在后台勾选。
+- 新建 action 默认包含全部 8 种交互题型；已有 action 不会自动加入新题型，需要在后台勾选。（第四期起新建 action 不默认包含需要组件 0.3.0 的三种新题型，见 §7.5。）
 - 题型列表的字段从 64 字符放宽到 255 字符（迁移 0006），8 种题型名连起来超过了 64 字符。
 
 ## 5. 局限
@@ -148,7 +148,13 @@ Apple M4 Pro，`go test -bench`，与改动前（main）对比：
 
 ### 7.5 排序与配置
 
-难度排序：`slider` < `rotate` < `jigsaw` < `click_text` < `click_order` < `click_icon` < `mirror` < `click_shape` < `clock` < `grid_count` < `spatial`。没有真实流量数据，先按研究结论排，`spatial` 仍是最难的。新建 action 默认包含全部 11 种题型；已有 action 不会自动加入，需要在后台勾选。题型列表字段 255 字符，11 种题型名连起来约 100 字符。
+难度排序：`slider` < `rotate` < `jigsaw` < `click_text` < `click_order` < `click_icon` < `mirror` < `click_shape` < `clock` < `grid_count` < `spatial`。没有真实流量数据，先按研究结论排，`spatial` 仍是最难的。题型列表字段 255 字符，11 种题型名连起来约 100 字符。
+
+**与旧版组件的兼容**：npm 安装的组件不会随 gateway 升级，0.3.0 之前的组件不认识这三种新题型，抽到就会验证失败。gateway 分不清旧组件和故意不报版本的脚本，如果“没报版本就不出新题型”，机器人省略字段就能永远避开它们，所以兼容放在后台把关：
+
+- 新建 action（包括新应用自带的 login、`botguard-ctl action set` 不带 `-kinds`）默认只勾选任何版本组件都能显示的 8 种；三种新题型在后台标“新”，要手动勾选，旁边说明需要组件 0.3.0 及以上。已有 action 不变。
+- 组件 0.3.0 起在签发请求里带 `widget` 版本号。gateway 对带浏览器信号的请求按版本计数（`widget:current` / `widget:outdated`；不带信号的直接调接口不算组件，不计入）。
+- 应用的「验证策略」页在近 24 小时有旧组件请求时给出提醒和占比；含新题型的 action 标出“旧版组件会失败”。占比降到 0 再勾选新题型。gateway 托管的 `/sdk/v1/` 脚本随服务端升级，不受影响。
 
 ### 7.6 浏览器实测
 

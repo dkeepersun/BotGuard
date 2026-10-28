@@ -67,7 +67,7 @@ make admin    # 另一个终端，管理后台 http://127.0.0.1:8091
 ```sh
 bin/botguard-ctl app create -name 商城               # 输出 app_key（前端用，相当于易盾 captchaId）
 bin/botguard-ctl origin add -app app_xxx -origin https://shop.example.com
-bin/botguard-ctl action set -app app_xxx -action login   # 默认 adaptive + 全部题型；-mode invisible|interactive|adaptive，-kinds slider,rotate,click_text,click_shape
+bin/botguard-ctl action set -app app_xxx -action login   # 默认 adaptive + 任何版本组件都能显示的 8 种题型；-mode invisible|interactive|adaptive，-kinds slider,rotate,click_text,click_shape,clock
 bin/botguard-ctl secret create -app app_xxx          # 输出 secret_id + secret_key，secret_key 只显示这一次
 bin/botguard-ctl app show -app app_xxx
 ```

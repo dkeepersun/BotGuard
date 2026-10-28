@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -57,6 +58,24 @@ func ValidMode(m string) bool { return m == ModeInvisible || m == ModeInteractiv
 // order is the hardness ranking adaptive mode uses at high risk.
 var InteractiveKinds = []string{KindSlider, KindRotate, KindJigsaw, KindClickText, KindClickOrder, KindClickIcon, KindMirror, KindClickShape,
 	KindClock, KindGridCount, KindSpatial}
+
+// WidgetKinds are the kinds added in browser widget 0.3.0: older widgets
+// (an npm install that was never upgraded) cannot show them and fail the
+// challenge. The gateway cannot tell an old widget from a script that leaves
+// its version out, so it never lowers the kinds on that basis; new actions
+// start without these kinds instead, and the console warns when old widgets
+// are still calling an app.
+var WidgetKinds = []string{KindMirror, KindClock, KindGridCount}
+
+// MinWidget is the widget version that shows every interactive kind.
+const MinWidget = "0.3.0"
+
+// NeedsNewWidget reports whether k is one of WidgetKinds.
+func NeedsNewWidget(k string) bool { return slices.Contains(WidgetKinds, k) }
+
+// DefaultKinds are the kinds a new action offers: every kind any widget
+// version can show.
+var DefaultKinds = slices.DeleteFunc(slices.Clone(InteractiveKinds), NeedsNewWidget)
 
 // DragKind kinds are answered with a one-dimensional drag (end position plus
 // trajectory); the jigsaw drag is two-dimensional and checked on its own.
