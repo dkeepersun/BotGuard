@@ -22,6 +22,10 @@ var reasonNames = map[string]string{
 	"NO_SIGNALS": "未上报浏览器信号", "UA_HEADER_MISMATCH": "UA 与请求头不一致", "IP_RECENT_FAILURES": "同 IP 近期失败",
 	"IP_HIGH_RATE": "同 IP 请求频繁", "FALLBACK_CHOSEN": "选择了无障碍路径", "KEYBOARD_INPUT": "键盘完成拖动题",
 	"TOUCH_INPUT": "触摸输入", "CAPACITY_DEGRADED": "图片题容量不足，降级为 PoW",
+	"NO_INTERACTION": "没有交互记录", "DESKTOP_TOUCH": "桌面系统声称触摸", "PREFIX_RECENT_FAILURES": "同网段近期失败",
+	"IP_CHANGED": "签发与提交不在同一网段", "SOLVE_TOO_FAST": "作答过快", "POINTER_MISMATCH": "输入方式前后不一致",
+	"CDP": "调试协议控制（Puppeteer / Playwright 或打开了开发者工具）", "NATIVE_TAMPERED": "浏览器原生函数被改写",
+	"TRAJECTORY_SMOOTH": "拖动速度过于平滑", "APP_UNDER_ATTACK": "应用处于被刷模式",
 	// Verify rejections.
 	"TOKEN_INVALID": "token 无效", "TOKEN_EXPIRED": "token 过期", "TOKEN_CONSUMED": "token 已被使用",
 	"ACTION_MISMATCH": "action 不符", "ORIGIN_NOT_ALLOWED": "来源不允许", "APP_MISMATCH": "应用不符",

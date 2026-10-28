@@ -194,6 +194,12 @@ type GatewayConfig struct {
 		// and how long a client's rung lasts after its last solve.
 		LadderDowngradePasses int `json:",default=3"`
 		LadderWindowSeconds   int `json:",default=1800"`
+		// Attack mode per app: this many failed solves within two minutes,
+		// at least this share of them, raise every risk level one step for
+		// AttackHoldSeconds. 0 failures disables it.
+		AttackFailures     int `json:",default=100"`
+		AttackRatioPercent int `json:",default=70"`
+		AttackHoldSeconds  int `json:",default=900"`
 	}
 	// Monitor writes a per-minute summary to Redis for the admin health page.
 	// Instance defaults to hostname:port; RateLimitedPerMinute is the
@@ -295,6 +301,9 @@ func (c GatewayConfig) Validate() error {
 		inRange("PuzzlePool.Workers", c.PuzzlePool.Workers, 0, 256),
 		inRange("Risk.FailureWindowSeconds", c.Risk.FailureWindowSeconds, 60, 86400),
 		inRange("Risk.LadderDowngradePasses", c.Risk.LadderDowngradePasses, 1, 100),
+		inRange("Risk.AttackFailures", c.Risk.AttackFailures, 0, 10_000_000),
+		inRange("Risk.AttackRatioPercent", c.Risk.AttackRatioPercent, 1, 100),
+		inRange("Risk.AttackHoldSeconds", c.Risk.AttackHoldSeconds, 60, 86_400),
 		inRange("Risk.LadderWindowSeconds", c.Risk.LadderWindowSeconds, 60, 86400),
 		inRange("Slider.Tolerance", c.Slider.Tolerance, 1, 20),
 		inRange("Rotate.ToleranceDegrees", c.Rotate.ToleranceDegrees, 2, 20),

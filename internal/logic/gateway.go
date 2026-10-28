@@ -88,6 +88,12 @@ type Settings struct {
 	// after the client's last solve.
 	LadderDowngradePasses int
 	LadderWindow          time.Duration
+	// Attack mode: AttackFailures failed solves for one app within two
+	// minutes, at least AttackRatioPercent of its solves, raise every risk
+	// level of that app one step for AttackHold. Zero failures disables it.
+	AttackFailures     int
+	AttackRatioPercent int
+	AttackHold         time.Duration
 
 	SliderTolerance int
 	// IPHashKey salts the IP tags in console events; empty disables them.

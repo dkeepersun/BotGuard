@@ -117,3 +117,36 @@ func cv(v []float64) float64 {
 	}
 	return math.Sqrt(ss/float64(len(v))) / mean
 }
+
+// Smooth reports a long drag whose steps grow and shrink too evenly. Between
+// pointer samples a hand moves by uneven amounts (it corrects, the sensor
+// rounds, frames arrive late), so the change from one step to the next is
+// of the order of the step itself; a generated easing curve changes its
+// step a little at a time, whatever timing jitter is added. Roughness is
+// the mean change between consecutive steps over the mean step; below 0.15
+// the drag counts as smooth. It only adds risk (risk.ReasonTrajectorySmooth):
+// the drag already passed Check.
+func Smooth(points []Point) bool {
+	var steps []float64
+	for i := 1; i < len(points); i++ {
+		if points[i].T <= points[i-1].T {
+			continue
+		}
+		steps = append(steps, math.Hypot(points[i].X-points[i-1].X, points[i].Y-points[i-1].Y))
+	}
+	if len(steps) < 15 {
+		return false
+	}
+	var sum, change float64
+	for i, d := range steps {
+		sum += d
+		if i > 0 {
+			change += math.Abs(d - steps[i-1])
+		}
+	}
+	if sum == 0 {
+		return false
+	}
+	mean := sum / float64(len(steps))
+	return change/float64(len(steps)-1)/mean < 0.15
+}

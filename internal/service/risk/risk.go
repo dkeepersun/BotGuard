@@ -15,16 +15,22 @@ import (
 // a missing struct means the client sent no signals at all.
 type Signals struct {
 	// Environment, collected once when the widget loads.
-	Webdriver          bool   `json:"webdriver"`
-	HeadlessUA         bool   `json:"headless_ua"`
-	SoftwareGL         bool   `json:"software_gl"`
-	ZeroOuter          bool   `json:"zero_outer"`
-	DesktopNoPlugins   bool   `json:"desktop_no_plugins"`
-	NoLanguages        bool   `json:"no_languages"`
-	UAPlatformMismatch bool   `json:"ua_platform_mismatch"`
-	PermissionMismatch bool   `json:"permission_mismatch"`
-	AutomationGlobals  bool   `json:"automation_globals"`
-	UserAgent          string `json:"user_agent"`
+	Webdriver          bool `json:"webdriver"`
+	HeadlessUA         bool `json:"headless_ua"`
+	SoftwareGL         bool `json:"software_gl"`
+	ZeroOuter          bool `json:"zero_outer"`
+	DesktopNoPlugins   bool `json:"desktop_no_plugins"`
+	NoLanguages        bool `json:"no_languages"`
+	UAPlatformMismatch bool `json:"ua_platform_mismatch"`
+	PermissionMismatch bool `json:"permission_mismatch"`
+	AutomationGlobals  bool `json:"automation_globals"`
+	// CDP: the page's console is being read over the DevTools protocol, as
+	// Puppeteer, Playwright and an open DevTools window do.
+	CDP bool `json:"cdp"`
+	// NativeTampered: a native function or property the widget checks has
+	// been replaced or redefined (navigator.webdriver spoofing and the like).
+	NativeTampered bool   `json:"native_tampered"`
+	UserAgent      string `json:"user_agent"`
 
 	// Interaction, up to the click (issue) or the end of the drag (solve).
 	MsToClick               int    `json:"ms_to_click"`
@@ -94,6 +100,14 @@ const (
 	// The answer claimed touch or pen although the challenge was requested
 	// with another pointer; the mouse rules applied.
 	ReasonPointerMismatch = "POINTER_MISMATCH"
+	ReasonCDP             = "CDP"
+	ReasonNativeTampered  = "NATIVE_TAMPERED"
+	// ReasonTrajectorySmooth: a long drag whose speed never wavers the way a
+	// hand's does, the mark of a generated easing curve.
+	ReasonTrajectorySmooth = "TRAJECTORY_SMOOTH"
+	// ReasonAppUnderAttack: the app's failure rate spiked, so every risk
+	// level is raised one step for a while (informational, no weight).
+	ReasonAppUnderAttack = "APP_UNDER_ATTACK"
 )
 
 // Pointer types the widget reports. Anything else is treated as a mouse, the
@@ -139,9 +153,14 @@ var Weights = map[string]int{
 	ReasonIPChanged:          15,
 	ReasonSolveTooFast:       25,
 	ReasonPointerMismatch:    15,
-	ReasonFallbackChosen:     0, // informational: the business server decides
-	ReasonTouchInput:         0, // informational
-	ReasonCapacityDegraded:   0, // informational
+	// Also an open DevTools window: a puzzle for the developer, not a block.
+	ReasonCDP:              25,
+	ReasonNativeTampered:   40,
+	ReasonTrajectorySmooth: 15,
+	ReasonAppUnderAttack:   0, // informational: the level is raised instead
+	ReasonFallbackChosen:   0, // informational: the business server decides
+	ReasonTouchInput:       0, // informational
+	ReasonCapacityDegraded: 0, // informational
 }
 
 const (
@@ -186,6 +205,8 @@ func Assess(s *Signals, f Facts) Assessment {
 		hit(s.Webdriver, ReasonWebdriver)
 		hit(s.HeadlessUA, ReasonHeadlessUA)
 		hit(s.AutomationGlobals, ReasonAutomationGlobals)
+		hit(s.CDP, ReasonCDP)
+		hit(s.NativeTampered, ReasonNativeTampered)
 		hit(s.UntrustedEvent, ReasonUntrustedEvent)
 		hit(s.SoftwareGL, ReasonSoftwareGL)
 		hit(s.ZeroOuter, ReasonZeroOuter)
@@ -224,6 +245,14 @@ const (
 	LevelMedium = "medium"
 	LevelHigh   = "high"
 )
+
+// Raise is the level one step above level (high stays high).
+func Raise(level string) string {
+	if level == LevelLow {
+		return LevelMedium
+	}
+	return LevelHigh
+}
 
 func Level(score, medium, high int) string {
 	switch {

@@ -260,3 +260,53 @@ func ceilSeconds(d time.Duration) int {
 	}
 	return s
 }
+
+// attackScript counts one solve for an app's attack detector and raises the
+// app's attack flag when the last two minutes cross the thresholds.
+//
+// KEYS[1] this minute's solves, KEYS[2] this minute's failures,
+// KEYS[3] last minute's solves, KEYS[4] last minute's failures, KEYS[5] flag
+// ARGV[1] "1" failed / "0" passed, ARGV[2] min failures, ARGV[3] min failure
+// ratio in percent, ARGV[4] flag ttl seconds
+const attackScript = `
+redis.call('INCR', KEYS[1])
+redis.call('EXPIRE', KEYS[1], 180)
+if ARGV[1] ~= '1' then return 0 end
+redis.call('INCR', KEYS[2])
+redis.call('EXPIRE', KEYS[2], 180)
+local total = tonumber(redis.call('GET', KEYS[1]) or '0') + tonumber(redis.call('GET', KEYS[3]) or '0')
+local fails = tonumber(redis.call('GET', KEYS[2]) or '0') + tonumber(redis.call('GET', KEYS[4]) or '0')
+if fails >= tonumber(ARGV[2]) and fails * 100 >= total * tonumber(ARGV[3]) then
+  redis.call('SET', KEYS[5], '1', 'EX', ARGV[4])
+  return 1
+end
+return 0
+`
+
+func attackKeys(appID int64, minute int64) []string {
+	tag := "bg:{attack:" + strconv.FormatInt(appID, 10) + "}:"
+	m, prev := strconv.FormatInt(minute, 10), strconv.FormatInt(minute-1, 10)
+	return []string{tag + "n:" + m, tag + "f:" + m, tag + "n:" + prev, tag + "f:" + prev, tag + "flag"}
+}
+
+// CountSolve feeds an app's attack detector: failed reports a wrong answer
+// or proof. It returns true when this solve put the app under attack.
+func (s *State) CountSolve(ctx context.Context, appID int64, failed bool, now time.Time, minFails, minRatioPct int, hold time.Duration) (bool, error) {
+	f := "0"
+	if failed {
+		f = "1"
+	}
+	v, err := s.rds.EvalCtx(ctx, attackScript, attackKeys(appID, now.Unix()/60), f, minFails, minRatioPct, ceilSeconds(hold))
+	if err != nil {
+		return false, err
+	}
+	n, _ := v.(int64)
+	return n == 1, nil
+}
+
+// UnderAttack reports whether the app's attack flag is up.
+func (s *State) UnderAttack(ctx context.Context, appID int64) (bool, error) {
+	keys := attackKeys(appID, 0)
+	v, err := s.rds.GetCtx(ctx, keys[4])
+	return v == "1", err
+}
