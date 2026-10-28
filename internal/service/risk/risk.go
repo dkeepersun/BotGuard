@@ -37,7 +37,17 @@ type Signals struct {
 	PointerMovesBeforeClick int    `json:"pointer_moves_before_click"`
 	UntrustedEvent          bool   `json:"untrusted_event"`
 	PointerType             string `json:"pointer_type"`
+	// Activation is "auto" when the widget started without a click (inline
+	// mode, the auto attribute): the click rules have nothing to judge.
+	Activation string `json:"activation"`
 }
+
+// AutoStart reports a widget that started without a click. The gateway then
+// never lets the attempt pass invisibly, so claiming it gains a bot nothing.
+func (s *Signals) AutoStart() bool { return s != nil && s.Activation == ActivationAuto }
+
+// ActivationAuto is Signals.Activation for a start without a click.
+const ActivationAuto = "auto"
 
 // Facts are observed by the gateway itself.
 type Facts struct {
@@ -214,9 +224,11 @@ func Assess(s *Signals, f Facts) Assessment {
 		hit(s.UAPlatformMismatch, ReasonUAPlatformMismatch)
 		hit(s.NoLanguages, ReasonNoLanguages)
 		hit(s.DesktopNoPlugins, ReasonDesktopNoPlugins)
-		// Touch taps and keyboard activation legitimately have no prior moves.
-		hit(NormalizePointer(s.PointerType) == PointerMouse && s.PointerMovesBeforeClick == 0, ReasonClickWithoutMove)
-		hit(s.MsToClick > 0 && s.MsToClick < fastClickMs, ReasonFastClick)
+		// Touch taps and keyboard activation legitimately have no prior
+		// moves; an automatic start has no click at all.
+		click := !s.AutoStart()
+		hit(click && NormalizePointer(s.PointerType) == PointerMouse && s.PointerMovesBeforeClick == 0, ReasonClickWithoutMove)
+		hit(click && s.MsToClick > 0 && s.MsToClick < fastClickMs, ReasonFastClick)
 		hit(s.MsToClick <= 0, ReasonNoInteraction)
 		pointer := NormalizePointer(s.PointerType)
 		hit((pointer == PointerTouch || pointer == PointerPen) && DesktopUA(f.HeaderUA), ReasonDesktopTouch)

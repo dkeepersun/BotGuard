@@ -47,8 +47,10 @@ BOTGUARD_SECRET_KEY=xxxxxxxx                            # 只放服务端，不�
 | `bind="#btn"` | 弹窗；点按钮先验证，通过后再提交表单 |
 | `mode="embed" bind="#btn"` | 嵌入式组件；点按钮时若还没验证，先完成验证再提交 |
 | `mode="popup"`（不写 bind） | 弹窗组件，由你自己的 JS 调用元素的 `verify()` 打开 |
+| `mode="float"` | 触发式：鼠标移到组件上（触屏点一下）时，拼图浮在组件上方显示，不挤动页面；可以再加 `bind` |
+| `mode="inline"` | 嵌入式：页面打开、组件可见时自动加载拼图，常驻在表单里 |
 
-`mode` 只能是 `embed` 或 `popup`，写错会在渲染时报错。
+`mode` 只能是 `embed`、`float`、`inline` 或 `popup`，写错会在渲染时报错。`float` 和 `inline` 需要 gateway 托管的组件 0.5.0 及以上（服务端 v0.7.1 起）。
 
 H5 页面或 App 内嵌页面，可以压缩高度、改主色：
 

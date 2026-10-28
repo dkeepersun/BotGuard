@@ -497,7 +497,14 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	if ladder {
 		rung = g.ladderRung(ctx, app.ID, ipBucket)
 	}
-	kind, factor := g.chooseKind(policy, level, in.Fallback, in.Select.candidates(policy, level, rung), rand.IntN)
+	// A widget that started on its own (inline mode) showed no human click,
+	// so it never passes invisibly: low risk picks a kind as medium would.
+	// The recorded level stays.
+	pick := level
+	if in.Signals.AutoStart() && level == risk.LevelLow {
+		pick = risk.LevelMedium
+	}
+	kind, factor := g.chooseKind(policy, pick, in.Fallback, in.Select.candidates(policy, pick, rung), rand.IntN)
 	var puzzle any
 	degraded := false
 	if domain.ValidInteractiveKind(kind) {

@@ -10,13 +10,24 @@
 //   </form>
 //
 // Attributes: endpoint, app-key, action, field-name (default botguard_token),
-// mode ("embed" or "popup"), auto (start without a click), width,
+// mode ("embed", "float", "inline" or "popup", see below), auto (start
+// without a click), width,
 // image-height, size ("compact"), accent, radius, theme ("light", "dark",
 // "auto"), lang ("zh-CN", "zh-TW", "en", "auto"), nonce (for a CSP without
 // constructable stylesheets), kinds / levels (the kinds the page asks for,
 // see selection() below). Events (bubbling): botguard:challenge,
 // botguard:verified, botguard:expired, botguard:error, botguard:cancel,
 // botguard:trace.
+//
+// Modes, like Yidun's three forms:
+//   embed  (default) a box; clicking it starts, and the puzzle opens below it
+//          in the page flow;
+//   float  trigger: the puzzle floats over the page while the pointer or
+//          focus is on the box (a tap on touch screens), without moving the
+//          layout;
+//   inline embedded: starts on its own once the widget is visible, so the
+//          puzzle is on the page from the start, and again after reset();
+//   popup  a dialog, opened by verify() or a bound submit button.
 //
 // Yidun-style function API (see init() below):
 //
@@ -40,7 +51,7 @@ const MAX_TTL_S = 600;
 const MAX_FAILURES = 3;
 // VERSION travels with every challenge request so the console can count
 // widgets too old for the newest kinds; keep it equal to package.json.
-export const VERSION = '0.4.0';
+export const VERSION = '0.5.0';
 const COOLDOWN_MS = 10_000;
 const MAX_POINTS = 400; // the gateway's slider.MaxPoints
 const MAX_GRID_CLICKS = 24; // the gateway's grid.MaxClicks
@@ -277,6 +288,13 @@ const STYLE = `
   width: min(var(--botguard-width, 360px), calc(100vw - 24px)); max-height: calc(100vh - 24px); max-height: calc(100dvh - 24px);
   overflow: auto; padding-top: 28px; box-shadow: 0 12px 40px rgba(0,0,0,.3); }
 .backdrop { display: none; }
+/* Float (trigger): the panel floats above the box, or below when there is no
+   room above, without moving the page; it shows while the pointer or focus
+   is on the widget. */
+:host([mode="float"]) { position: relative; }
+:host([mode="float"]) .panel { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); margin-top: 0; z-index: 2147483000;
+  box-shadow: 0 8px 28px rgba(0,0,0,.18); }
+:host([mode="float"]) .panel[data-place="below"] { bottom: auto; top: calc(100% + 6px); }
 :host([mode="popup"]) .panel:not([hidden]) + .backdrop { display: block; position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 2147483000;
   background: rgba(0,0,0,.35); }
 .close { display: none; position: absolute; right: 6px; top: 2px; border: 0; background: none; font-size: 20px; line-height: 24px;
@@ -534,6 +552,10 @@ export class BotGuardWidget extends ElementBase {
   #pending = null; // the verify() promise every caller shares, with its settle functions
   #view = null; // 'puzzle' while a puzzle is on screen
   #dialogOpen = false; // popup mode: the dialog is up for the current attempt
+  #floatShown = false; // float mode: the pointer or focus is on the widget
+  #floatTimer = 0;
+  #outsideDown = null; // float mode: closes the panel on a tap elsewhere
+  #visibleWait = null; // inline mode: stops waiting for the widget to be seen
   #returnFocus = null; // popup mode: where focus goes back to when the dialog closes
   #token = '';
   #tokenDeadline = 0; // performance.now() when the token stops being usable
@@ -609,6 +631,8 @@ export class BotGuardWidget extends ElementBase {
     });
     this.#root.querySelector('.close').addEventListener('click', () => this.#close());
     this.#panel.addEventListener('keydown', (e) => this.#dialogKey(e));
+    this.#listenFloat();
+    document.addEventListener('pointerdown', this.#outsideDown, true);
     // The hidden field lives in light DOM so the surrounding form submits it.
     this.#input = document.createElement('input');
     this.#input.type = 'hidden';
@@ -617,11 +641,86 @@ export class BotGuardWidget extends ElementBase {
     this.#retext();
     this.#idle();
     this.#loadRemote();
-    if (this.hasAttribute('auto')) this.start();
+    this.#autoStart();
   }
+
+  #mode() {
+    const m = this.getAttribute('mode');
+    return m === 'popup' || m === 'float' || m === 'inline' ? m : 'embed';
+  }
+
+  // Starts without a click: the auto attribute, or inline mode once the
+  // widget is on screen in a visible tab (environment signals read in a
+  // background tab are wrong, and an unseen widget should not cost a
+  // challenge).
+  #autoStart() {
+    this.#visibleWait?.();
+    this.#visibleWait = null;
+    if (this.#mode() !== 'inline') {
+      if (this.hasAttribute('auto')) this.start({ auto: true });
+      return;
+    }
+    let seen = !globalThis.IntersectionObserver;
+    const go = () => {
+      if (!seen || document.visibilityState === 'hidden') return;
+      this.#visibleWait?.();
+      this.#visibleWait = null;
+      this.start({ auto: true });
+    };
+    const io = globalThis.IntersectionObserver && new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        seen = true;
+        go();
+      }
+    });
+    io?.observe(this);
+    document.addEventListener('visibilitychange', go);
+    this.#visibleWait = () => {
+      io?.disconnect();
+      document.removeEventListener('visibilitychange', go);
+    };
+    go();
+  }
+
+  // Float mode: show the panel while the pointer or focus is on the widget,
+  // start verifying when it arrives, hide it shortly after it leaves unless
+  // a drag is under way. A tap elsewhere hides it on touch screens.
+  #listenFloat() {
+    const float = () => this.#mode() === 'float';
+    const show = (e) => {
+      clearTimeout(this.#floatTimer);
+      if (!this.#floatShown) {
+        this.#floatShown = true;
+        this.#render();
+      }
+      if (e) this.start({ trigger: e });
+    };
+    const hide = (delay) => {
+      clearTimeout(this.#floatTimer);
+      this.#floatTimer = setTimeout(() => {
+        if (this.#root.querySelector('.dragging, .lifted')) return hide(delay);
+        this.#floatShown = false;
+        this.#render();
+      }, delay);
+    };
+    this.addEventListener('pointerenter', (e) => float() && e.pointerType === 'mouse' && show(e));
+    this.addEventListener('pointerleave', (e) => float() && e.pointerType === 'mouse' && hide(300));
+    this.addEventListener('focusin', () => float() && show(null));
+    this.addEventListener('focusout', (e) => float() && !this.contains(e.relatedTarget) && hide(0));
+    this.#box.addEventListener('click', () => float() && show(null));
+    // Enter or Space on the box brings back a panel hidden with Esc.
+    this.#box.addEventListener('keydown', (e) => float() && (e.key === 'Enter' || e.key === ' ') && show(null));
+    this.#outsideDown = (e) => {
+      if (float() && this.#floatShown && !e.composedPath().includes(this)) hide(0);
+    };
+    this.#floatHide = () => hide(0);
+  }
+
+  #floatHide = () => {};
 
   // Inserted again after a removal, which abandoned any attempt in progress.
   #reconnected() {
+    document.addEventListener('pointerdown', this.#outsideDown, true);
     if (this.#token) return this.#armExpiry();
     const left = this.#cooldownUntil - performance.now();
     if (left > 0) return this.#startCooldown(left);
@@ -630,7 +729,7 @@ export class BotGuardWidget extends ElementBase {
       this.#cooldownUntil = 0;
       this.#idle();
     }
-    if (this.hasAttribute('auto')) this.start();
+    this.#autoStart();
   }
 
   disconnectedCallback() {
@@ -639,6 +738,10 @@ export class BotGuardWidget extends ElementBase {
     this.#cancel();
     clearTimeout(this.#expiryTimer);
     clearTimeout(this.#cooldownTimer);
+    clearTimeout(this.#floatTimer);
+    this.#visibleWait?.();
+    this.#visibleWait = null;
+    document.removeEventListener('pointerdown', this.#outsideDown, true);
     const state = this.#box.dataset.state;
     if (state === 'verified' || state === 'cooldown') this.#render();
     else this.#idle();
@@ -659,6 +762,8 @@ export class BotGuardWidget extends ElementBase {
     this.#setToken('');
     this.#idle();
     this.#settle(cancelled());
+    // Inline mode keeps a puzzle on the page: the next one loads by itself.
+    if (this.#mode() === 'inline' && this.isConnected) this.#autoStart();
   }
 
   async start(opts = {}) {
@@ -679,6 +784,12 @@ export class BotGuardWidget extends ElementBase {
     if (this.#token) return Promise.resolve(this.#token);
     if (this.#cooldownUntil > performance.now()) return Promise.reject(this.#tooMany());
     if (!this.#root) return Promise.reject(errorWith(this.#t('notConnected'), 'NOT_CONNECTED'));
+    // Float mode: a bound button or the page's own code asked, so show the
+    // panel even if the pointer is elsewhere.
+    if (this.#mode() === 'float' && !this.#floatShown) {
+      this.#floatShown = true;
+      this.#render();
+    }
     if (!this.#pending) {
       const pending = {};
       pending.promise = new Promise((resolve, reject) => Object.assign(pending, { resolve, reject }));
@@ -715,7 +826,7 @@ export class BotGuardWidget extends ElementBase {
     this.#emit('botguard:cancel', {});
   }
 
-  async #begin({ trigger = null, fallback = false } = {}) {
+  async #begin({ trigger = null, fallback = false, auto = false } = {}) {
     this.#round.end();
     const round = (this.#round = newRound());
     const endpoint = (this.getAttribute('endpoint') || '').replace(/\/+$/, '');
@@ -729,7 +840,9 @@ export class BotGuardWidget extends ElementBase {
       this.#show('loading', this.#t(fallback ? 'loadingFallback' : 'loading'), '');
       const env = await collectEnvironment().catch(() => null);
       if (!round.live) return;
-      const signals = { ...(env || {}), ...(interaction ? interaction.snapshot(trigger) : {}) };
+      // An automatic start has no click to judge; the gateway skips its click
+      // rules but never lets such a start pass invisibly.
+      const signals = { ...(env || {}), ...(interaction ? interaction.snapshot(trigger) : {}), ...(auto ? { activation: 'auto' } : {}) };
       const t0 = performance.now();
       const ch = await postJSON(`${endpoint}/v1/challenges`, { app_key: appKey, action, signals, fallback, widget: VERSION, lang: this.#lang(), ...selection(this) }, this.transport);
       if (!round.live) return;
@@ -1526,18 +1639,21 @@ export class BotGuardWidget extends ElementBase {
     this.#render();
   }
 
-  // Shows or hides the panel. Embed mode shows it only while a puzzle is up;
+  // Shows or hides the panel. Embed and inline modes show it while a puzzle
+  // is up, float mode only while the pointer or focus is on the widget too;
   // popup mode shows it for the whole attempt, so loading, progress and
   // errors are visible too, and manages focus like a modal dialog.
   #render() {
-    const popup = this.getAttribute('mode') === 'popup';
-    const open = this.isConnected && (popup ? this.#dialogOpen : this.#view === 'puzzle');
+    const mode = this.#mode();
+    const popup = mode === 'popup';
+    const open = this.isConnected && (popup ? this.#dialogOpen : this.#view === 'puzzle' && (mode !== 'float' || this.#floatShown));
     this.#panel.dataset.view = this.#view || 'status';
     if (popup) this.#panel.setAttribute('aria-modal', 'true');
     else this.#panel.removeAttribute('aria-modal');
     if (open === !this.#panel.hidden) return;
     const focusInside = this.#panel.contains(this.#root.activeElement);
     this.#panel.hidden = !open;
+    if (open && mode === 'float') this.#place();
     if (open) {
       if (!popup) return;
       const active = document.activeElement;
@@ -1552,8 +1668,24 @@ export class BotGuardWidget extends ElementBase {
     if ((focusInside || lost) && back?.isConnected) back.focus({ preventScroll: true });
   }
 
-  // Popup dialog keys: Esc closes, Tab stays inside.
+  // Float mode: above the box when it fits in the viewport, else below.
+  #place() {
+    const box = this.#box.getBoundingClientRect();
+    const need = this.#panel.offsetHeight + 12;
+    const above = box.top >= need || box.top >= (globalThis.innerHeight || 0) - box.bottom;
+    this.#panel.dataset.place = above ? 'above' : 'below';
+  }
+
+  // Popup dialog keys: Esc closes, Tab stays inside. In float mode Esc hides
+  // the floating panel; the puzzle stays for when the user comes back.
   #dialogKey(e) {
+    if (this.#mode() === 'float' && e.key === 'Escape') {
+      e.preventDefault();
+      // Focus first: arriving on the box would show the panel again.
+      this.#box.focus({ preventScroll: true });
+      this.#floatHide();
+      return;
+    }
     if (this.getAttribute('mode') !== 'popup') return;
     if (e.key === 'Escape') {
       e.preventDefault();
@@ -1609,7 +1741,8 @@ function resolveElement(target, option) {
  * Function-style setup, modelled on Yidun's initNECaptcha. Options:
  *   element   container (selector or node) for embed mode
  *   endpoint, appKey, action, fieldName
- *   mode      "embed" (default) or "popup"
+ *   mode      "embed" (default), "float" (trigger), "inline" (embedded,
+ *             starts by itself) or "popup"
  *   bindTo    popup mode: a submit button; submitting its form (any submit
  *             button, or Enter in a field) verifies first, then submits with
  *             the token and clears it. A button outside a form is guarded at
@@ -1650,7 +1783,7 @@ export function init(config) {
   w.setAttribute('app-key', config.appKey || '');
   w.setAttribute('action', config.action || '');
   if (config.fieldName) w.setAttribute('field-name', config.fieldName);
-  const mode = config.mode === 'popup' ? 'popup' : 'embed';
+  const mode = ['popup', 'float', 'inline'].includes(config.mode) ? config.mode : 'embed';
   w.setAttribute('mode', mode);
   if (config.auto) w.setAttribute('auto', '');
   // Sizing for H5 pages and app WebViews: see the CSS custom properties above.

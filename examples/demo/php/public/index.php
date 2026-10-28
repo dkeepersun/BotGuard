@@ -49,7 +49,9 @@ $ready = demo_ready();
     <p class="hint" id="mode-hint">登录用 adaptive 模式：正常浏览器通常无感通过；风险中等时随机出滑块、旋转、文字点选或图形点选，风险高时出最难的图形点选。演示站不校验密码。</p>
     <label class="size-pick">显示方式
       <select id="size">
-        <option value="default">默认（嵌入，最宽 360px）</option>
+        <option value="default">默认（点击后在下方展开）</option>
+        <option value="float">触发式（鼠标移上去时浮在上方）</option>
+        <option value="inline">嵌入式（自动加载拼图）</option>
         <option value="compact">紧凑（H5 / App：宽 100%，图片高 120px）</option>
         <option value="popup">弹出层（点提交按钮时弹出）</option>
       </select>

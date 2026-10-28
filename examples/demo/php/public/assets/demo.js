@@ -88,9 +88,12 @@ async function post(url, data) {
   return resp.json();
 }
 
-// Size presets: what an H5 page or app WebView would set on the widget.
+// Display presets: the widget's modes, and what an H5 page or app WebView
+// would set on it.
 const SIZES = {
   default: {},
+  float: { mode: 'float' },
+  inline: { mode: 'inline' },
   compact: { size: 'compact', width: '100%', 'image-height': '120' },
   popup: { mode: 'popup' },
 };

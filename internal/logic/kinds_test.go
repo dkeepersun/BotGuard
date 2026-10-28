@@ -499,3 +499,24 @@ func TestLanguage(t *testing.T) {
 		t.Fatalf("no language: %q", c.Click.Prompt)
 	}
 }
+
+// An automatic start (inline mode) never passes invisibly, even at low risk:
+// it showed no human click.
+func TestAutoStartGetsAPuzzle(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+	auto := clean()
+	auto.Activation, auto.PointerMovesBeforeClick, auto.MsToClick = risk.ActivationAuto, 0, 150
+	for range 10 {
+		if c := h.issueFor(t, "adaptive", auto, false); c.Kind != domain.KindSlider {
+			t.Fatalf("auto start: %s", c.Kind)
+		}
+	}
+	if c := h.issueFor(t, "adaptive", clean(), false); c.Kind != domain.KindInvisible {
+		t.Fatalf("clicked start: %s", c.Kind)
+	}
+	// An invisible-mode action stays invisible.
+	if c := h.issueFor(t, "login", auto, false); c.Kind != domain.KindInvisible {
+		t.Fatalf("invisible action: %s", c.Kind)
+	}
+}

@@ -67,6 +67,17 @@
     }
   });
 &lt;/script&gt;</pre></div></div></div>
+      <div class="card"><div class="card-head"><h2>前端 · 三种展示形式</h2></div><div class="card-body"><div class="snippet-wrap"><button class="btn copy sm" data-copy="#sn-modes">复制</button>
+<pre class="snippet" id="sn-modes"><span class="c">// 在上面的 initBotGuard({...}) 里加 mode，标签写法同样用 mode="..."</span>
+
+<span class="c">// 触发式：鼠标移到组件上（触屏点一下）时，拼图浮在组件上方，不挤动页面</span>
+initBotGuard({ element: '#captcha', mode: 'float', endpoint: '{{$d.Endpoint}}', appKey: '{{$a.AppKey}}', action: 'login' });
+
+<span class="c">// 嵌入式：组件可见时自动加载拼图，常驻在表单里（不写 mode 时点一下才展开）</span>
+initBotGuard({ element: '#captcha', mode: 'inline', endpoint: '{{$d.Endpoint}}', appKey: '{{$a.AppKey}}', action: 'login' });
+
+<span class="c">// 弹出式：点提交按钮时弹出，通过后自动提交表单</span>
+initBotGuard({ mode: 'popup', bindTo: '#submit', endpoint: '{{$d.Endpoint}}', appKey: '{{$a.AppKey}}', action: 'login' });</pre></div></div></div>
       <div class="card"><div class="card-head"><h2>前端 · npm / 组件标签</h2></div><div class="card-body"><div class="snippet-wrap"><button class="btn copy sm" data-copy="#sn-npm">复制</button>
 <pre class="snippet" id="sn-npm"><span class="c">// npm install @botguard/browser</span>
 import '@botguard/browser';
