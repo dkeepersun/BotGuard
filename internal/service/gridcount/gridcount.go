@@ -140,13 +140,13 @@ func fill(r *rand.Rand, cell int, target, want int) ([]item, bool) {
 }
 
 // Generate builds a puzzle from r. Production callers seed r from crypto/rand.
-func Generate(r *rand.Rand) (grid.Puzzle, error) {
-	p, _, err := generate(r)
+func Generate(r *rand.Rand, src imagegen.Source) (grid.Puzzle, error) {
+	p, _, err := generate(r, src)
 	return p, err
 }
 
 // generate also returns each cell's items, for tests.
-func generate(r *rand.Rand) (grid.Puzzle, [][]item, error) {
+func generate(r *rand.Rand, src imagegen.Source) (grid.Puzzle, [][]item, error) {
 	for attempt := 0; attempt < 50; attempt++ {
 		target := r.IntN(len(shapes))
 		n := 2 + r.IntN(4)
@@ -169,7 +169,7 @@ func generate(r *rand.Rand) (grid.Puzzle, [][]item, error) {
 			}
 		}
 
-		bg := imagegen.Background(r, Width, Height)
+		bg, _ := src.Background(r, Width, Height)
 		white := color.RGBA{255, 255, 255, 255}
 		for y := 0; y < Height; y++ {
 			for x := 0; x < Width; x++ {

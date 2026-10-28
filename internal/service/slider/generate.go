@@ -162,8 +162,8 @@ func decoyX(r *rand.Rand, taken []int) int {
 
 // Generate builds a puzzle from r. Production callers seed r from crypto/rand;
 // tests use a fixed seed for reproducible images.
-func Generate(r *rand.Rand) (Puzzle, error) {
-	bg := imagegen.Background(r, Width, Height)
+func Generate(r *rand.Rand, src imagegen.Source) (Puzzle, error) {
+	bg, _ := src.Background(r, Width, Height)
 	m := newMask(randomShape(r))
 
 	x := minX + r.IntN(maxX-minX)

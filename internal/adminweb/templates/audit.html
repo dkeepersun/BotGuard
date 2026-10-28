@@ -5,7 +5,7 @@
     <form class="tools form-inline" method="get" action="/audit">
       <input class="input sm" name="actor" value="{{$d.Actor}}" placeholder="操作人，如 admin:root">
       <select class="input sm" name="op"><option value="">全部操作</option>
-        {{range $op := split "app.,origin.,action.,secret.,admin.,auth.,system."}}<option value="{{$op}}" {{if eq $d.Operation $op}}selected{{end}}>{{opGroup $op}}</option>{{end}}</select>
+        {{range $op := split "app.,origin.,action.,secret.,background.,admin.,auth.,system."}}<option value="{{$op}}" {{if eq $d.Operation $op}}selected{{end}}>{{opGroup $op}}</option>{{end}}</select>
       <input class="input sm" name="target" value="{{$d.Target}}" placeholder="对象，如 app_xxx">
       <button class="btn sm">筛选</button>{{if or $d.Actor $d.Operation $d.Target}}<a class="btn sm ghost" href="/audit">清除</a>{{end}}
     </form>

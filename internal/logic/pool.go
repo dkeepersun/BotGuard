@@ -85,7 +85,7 @@ func (g *Gateway) fillPool(ctx context.Context, p *puzzlePool) {
 			return
 		case slots <- struct{}{}:
 		}
-		v, err := g.generate(kind)
+		v, err := g.generate(kind, g.Backgrounds.Default())
 		<-slots
 		if err != nil {
 			logx.Errorf("pool %s: %v", kind, err)

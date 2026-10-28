@@ -118,6 +118,9 @@ type Gateway struct {
 	pool *puzzlePool
 	// Monitor counts degraded challenges for the health page; nil is off.
 	Monitor *Monitor
+	// Backgrounds picks each app's picture source; nil draws procedural
+	// pictures only.
+	Backgrounds *Backgrounds
 }
 
 func (g *Gateway) limit(ctx context.Context, dim, subject string, quota int) error {

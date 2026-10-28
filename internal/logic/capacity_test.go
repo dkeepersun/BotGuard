@@ -168,3 +168,38 @@ func TestDegradedDifficultyFloor(t *testing.T) {
 		t.Fatalf("capped params %+v, want %+v", c.Params, want)
 	}
 }
+
+// The pool holds pictures from the default background source, so an app
+// with its own background setting never takes from it: with every slot busy
+// it degrades instead.
+func TestPuzzlePoolOnlyServesDefaultBackgrounds(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.g.StartPuzzlePool(ctx, 3, 1)
+	deadline := time.Now().Add(5 * time.Second)
+	for h.g.pool.short() != "" {
+		if time.Now().After(deadline) {
+			t.Fatal("pool never filled")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	slots := h.g.slots()
+	for range cap(slots) {
+		slots <- struct{}{}
+	}
+	defer func() {
+		for range cap(slots) {
+			<-slots
+		}
+	}()
+	h.apps.apps[appA].Background = domain.Background{Mode: domain.BackgroundProcedural}
+	if c := h.issueFor(t, "slide", clean(), false); c.Kind != domain.KindInvisible {
+		t.Fatalf("own background served from the pool: %+v", c.Kind)
+	}
+	h.apps.apps[appA].Background = domain.Background{}
+	if c := h.issueFor(t, "slide", clean(), false); c.Kind != domain.KindSlider {
+		t.Fatalf("default background not served from the pool: %+v", c.Kind)
+	}
+}

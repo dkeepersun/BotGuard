@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"math"
+	"mime/multipart"
 	"net/http"
 	"strconv"
 	"strings"
@@ -182,6 +184,8 @@ type appDetailView struct {
 	Apps []repository.AppSummary
 	// Reveal is a secret pair just created or rotated, shown once in a dialog.
 	Reveal *secretOnceView
+	// BuiltinPhotos and MaxBackgrounds describe the backgrounds tab.
+	BuiltinPhotos, MaxBackgrounds int
 }
 
 func estimate(puzzles int, difficulty uint64) (uint64, string) {
@@ -224,7 +228,8 @@ func (s *Server) loadAppDetail(ctx context.Context, key string) (appDetailView, 
 	if err != nil {
 		return appDetailView{}, err
 	}
-	v := appDetailView{App: d, Counts: perApp[d.ID], Trend: trend, Endpoint: s.PublicEndpoint, Apps: apps}
+	v := appDetailView{App: d, Counts: perApp[d.ID], Trend: trend, Endpoint: s.PublicEndpoint, Apps: apps,
+		BuiltinPhotos: s.Photos.Len(), MaxBackgrounds: domain.MaxBackgroundUploads}
 	v.Kinds = v.Counts.Prefixed("issue", 0)
 	if v.Endpoint == "" {
 		v.Endpoint = "https://你的-gateway-地址"
@@ -727,4 +732,101 @@ func (s *Server) systemPage(w http.ResponseWriter, r *http.Request, p *logic.Pri
 	}
 	s.render(w, r, "system.html", View{Title: "系统状态", Active: "sysinfo", Me: p,
 		Data: systemView{Checks: s.Checks(r.Context()), Info: s.Info, Now: s.Now(), Update: up}})
+}
+
+func (s *Server) backgroundMode(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error) {
+	key := pathvar.Vars(r)["key"]
+	if err := s.Apps.SetBackground(s.actor(r, p), key, r.PostFormValue("mode"), r.PostFormValue("builtin") == "1"); err != nil {
+		return "", err
+	}
+	s.setFlash(w, "ok", "背景设置已保存，约 10 秒内对新签发的验证生效")
+	return "", errRedirect{appBack(key, "backgrounds")}
+}
+
+// Upload limits: one picture, and one request of several.
+const (
+	maxUploadFile    = 10 << 20
+	maxUploadRequest = 64 << 20
+)
+
+func (s *Server) backgroundUpload(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error) {
+	key := pathvar.Vars(r)["key"]
+	back := errRedirect{appBack(key, "backgrounds")}
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 {
+		return "", fmt.Errorf("%w: 请选择要上传的照片", logic.ErrInvalid)
+	}
+	ctx := s.actor(r, p)
+	added := 0
+	var failed []string
+	for _, fh := range files {
+		if fh.Size > maxUploadFile {
+			failed = append(failed, fh.Filename+"：超过 10 MB")
+			continue
+		}
+		data, err := readUpload(fh)
+		if err == nil {
+			_, err = s.Apps.AddBackground(ctx, key, fh.Filename, data)
+		}
+		if err != nil {
+			if !errors.Is(err, logic.ErrInvalid) {
+				return "", err
+			}
+			failed = append(failed, s.userMessage(r, err))
+			continue
+		}
+		added++
+	}
+	switch {
+	case len(failed) == 0:
+		s.setFlash(w, "ok", fmt.Sprintf("已上传 %d 张照片，约 10 秒内用于新签发的验证", added))
+	case added == 0:
+		s.setFlash(w, "error", strings.Join(failed, "；"))
+	default:
+		s.setFlash(w, "error", fmt.Sprintf("已上传 %d 张；以下未上传：%s", added, strings.Join(failed, "；")))
+	}
+	return "", back
+}
+
+func readUpload(fh *multipart.FileHeader) ([]byte, error) {
+	f, err := fh.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	return io.ReadAll(io.LimitReader(f, maxUploadFile+1))
+}
+
+func (s *Server) backgroundDelete(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error) {
+	key := pathvar.Vars(r)["key"]
+	id, err := strconv.ParseInt(r.PostFormValue("id"), 10, 64)
+	if err != nil {
+		return "", fmt.Errorf("%w: 参数错误", logic.ErrInvalid)
+	}
+	if err := s.Apps.DeleteBackground(s.actor(r, p), key, id); err != nil {
+		return "", err
+	}
+	s.setFlash(w, "ok", "背景图已删除")
+	return "", errRedirect{appBack(key, "backgrounds")}
+}
+
+func (s *Server) backgroundImage(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
+	id, err := strconv.ParseInt(pathvar.Vars(r)["id"], 10, 64)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	img, err := s.Apps.BackgroundImage(r.Context(), pathvar.Vars(r)["key"], id)
+	if errors.Is(err, domain.ErrNotFound) {
+		http.NotFound(w, r)
+		return
+	}
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "private, max-age=86400")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = w.Write(img)
 }

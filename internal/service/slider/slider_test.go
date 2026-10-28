@@ -3,6 +3,7 @@ package slider
 import (
 	"bytes"
 	"encoding/base64"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"image/jpeg"
 	"image/png"
 	"math"
@@ -30,16 +31,16 @@ func decode(t *testing.T, url, prefix string) []byte {
 }
 
 func TestGenerate(t *testing.T) {
-	a, err := Generate(seeded(1))
+	a, err := Generate(seeded(1), imagegen.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := Generate(seeded(1))
+	b, _ := Generate(seeded(1), imagegen.Source{})
 	if a != b {
 		t.Fatal("same seed must give the same puzzle")
 	}
 	for i := uint64(0); i < 50; i++ {
-		p, err := Generate(seeded(i))
+		p, err := Generate(seeded(i), imagegen.Source{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -78,7 +79,7 @@ func TestShapesAreJigsaws(t *testing.T) {
 func BenchmarkGenerate(b *testing.B) {
 	r := seeded(9)
 	for b.Loop() {
-		if _, err := Generate(r); err != nil {
+		if _, err := Generate(r, imagegen.Source{}); err != nil {
 			b.Fatal(err)
 		}
 	}

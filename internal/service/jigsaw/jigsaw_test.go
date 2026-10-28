@@ -2,6 +2,7 @@ package jigsaw
 
 import (
 	"encoding/base64"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -54,7 +55,7 @@ func TestCheck(t *testing.T) {
 
 func TestGenerate(t *testing.T) {
 	for seed := uint64(1); seed <= 20; seed++ {
-		p, err := Generate(rand.New(rand.NewPCG(seed, 2)))
+		p, err := Generate(rand.New(rand.NewPCG(seed, 2)), imagegen.Source{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,7 +67,7 @@ func TestGenerate(t *testing.T) {
 		t.Fatal("TileAt")
 	}
 	if dir := os.Getenv("KIND_SAMPLE_DIR"); dir != "" {
-		p, _ := Generate(rand.New(rand.NewPCG(4, 4)))
+		p, _ := Generate(rand.New(rand.NewPCG(4, 4)), imagegen.Source{})
 		b, _ := base64.StdEncoding.DecodeString(p.Image[strings.Index(p.Image, ",")+1:])
 		_ = os.WriteFile(dir+"/jigsaw.jpg", b, 0o644)
 		_ = os.WriteFile(dir+"/jigsaw.txt", []byte(string(rune('0'+p.A))+","+string(rune('0'+p.B))), 0o644)

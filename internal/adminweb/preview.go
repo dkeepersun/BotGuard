@@ -15,6 +15,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/clock"
 	"github.com/dkeepersun/BotGuard/internal/service/grid"
 	"github.com/dkeepersun/BotGuard/internal/service/gridcount"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/mirror"
 	"github.com/dkeepersun/BotGuard/internal/service/qrcode"
@@ -39,6 +40,19 @@ func previewRand() *rand.Rand {
 	return rand.New(rand.NewChaCha8(seed))
 }
 
+// previewSource is the background source a preview asks for with bg: the
+// default mix, photos only or procedural only, from the built-in photos.
+func (s *Server) previewSource(r *http.Request) imagegen.Source {
+	switch r.URL.Query().Get("bg") {
+	case domain.BackgroundPhoto:
+		return imagegen.Source{Photos: s.Photos, Share: 1}
+	case domain.BackgroundProcedural:
+		return imagegen.Source{}
+	default:
+		return imagegen.Source{Photos: s.Photos, Share: 0.5}
+	}
+}
+
 func (s *Server) previewPage(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
 	s.render(w, r, "preview.html", View{Title: "题型预览", Active: "preview", Me: p})
 }
@@ -48,10 +62,11 @@ func (s *Server) previewPage(w http.ResponseWriter, r *http.Request, p *logic.Pr
 func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
 	kind := r.URL.Query().Get("kind")
 	rnd := previewRand()
+	src := s.previewSource(r)
 	out := map[string]any{"kind": kind, "name": kindNames[kind]}
 	switch kind {
 	case domain.KindSlider:
-		pz, err := slider.Generate(rnd)
+		pz, err := slider.Generate(rnd, src)
 		if err != nil {
 			s.serverError(w, r, err)
 			return
@@ -59,7 +74,7 @@ func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Pri
 		out["slider"] = map[string]any{"width": slider.Width, "height": slider.Height, "background": pz.Background, "piece": pz.Piece,
 			"piece_y": pz.Y, "piece_size": slider.PieceSize, "answer_x": pz.X}
 	case domain.KindRotate:
-		pz, err := rotate.Generate(rnd)
+		pz, err := rotate.Generate(rnd, src)
 		if err != nil {
 			s.serverError(w, r, err)
 			return
@@ -67,7 +82,7 @@ func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Pri
 		out["rotate"] = map[string]any{"width": rotate.Width, "height": rotate.Height, "background": pz.Background, "disc": pz.Disc,
 			"cx": pz.CX, "cy": pz.CY, "radius": pz.Radius, "track": rotate.Track, "angle": pz.Angle}
 	case domain.KindJigsaw:
-		pz, err := jigsaw.Generate(rnd)
+		pz, err := jigsaw.Generate(rnd, src)
 		if err != nil {
 			s.serverError(w, r, err)
 			return
@@ -75,11 +90,11 @@ func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Pri
 		out["jigsaw"] = map[string]any{"width": jigsaw.Width, "height": jigsaw.Height, "image": pz.Image, "rows": jigsaw.Rows, "cols": jigsaw.Cols,
 			"swap": []int{pz.A, pz.B}}
 	case domain.KindClickText, domain.KindClickOrder, domain.KindClickIcon, domain.KindClickShape, domain.KindClock, domain.KindSpatial:
-		generate := map[string]func(*rand.Rand) (click.Puzzle, error){
+		generate := map[string]func(*rand.Rand, imagegen.Source) (click.Puzzle, error){
 			domain.KindClickText: clicktext.Generate, domain.KindClickOrder: clicktext.GenerateOrder, domain.KindClickIcon: clickicon.Generate,
 			domain.KindClickShape: clickshape.Generate, domain.KindClock: clock.Generate, domain.KindSpatial: spatial.Generate,
 		}[kind]
-		pz, err := generate(rnd)
+		pz, err := generate(rnd, src)
 		if err != nil {
 			s.serverError(w, r, err)
 			return
@@ -87,8 +102,8 @@ func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Pri
 		out["click"] = map[string]any{"width": pz.Width, "height": pz.Height, "image": pz.Image, "prompt": pz.Prompt,
 			"prompt_image": pz.PromptImage, "targets": pz.Targets}
 	case domain.KindGridCount, domain.KindMirror:
-		generate := map[string]func(*rand.Rand) (grid.Puzzle, error){domain.KindGridCount: gridcount.Generate, domain.KindMirror: mirror.Generate}[kind]
-		pz, err := generate(rnd)
+		generate := map[string]func(*rand.Rand, imagegen.Source) (grid.Puzzle, error){domain.KindGridCount: gridcount.Generate, domain.KindMirror: mirror.Generate}[kind]
+		pz, err := generate(rnd, src)
 		if err != nil {
 			s.serverError(w, r, err)
 			return

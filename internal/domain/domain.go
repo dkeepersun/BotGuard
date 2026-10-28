@@ -131,8 +131,41 @@ type App struct {
 	Enabled       bool
 	PolicyVersion int64
 	// Origins are patterns normalized with NormalizeOriginPattern.
-	Origins []string
-	Actions map[string]ActionPolicy
+	Origins    []string
+	Actions    map[string]ActionPolicy
+	Background Background
+}
+
+// Background modes: where an app's challenge pictures come from.
+const (
+	BackgroundMixed      = "mixed"      // photos and procedural pictures, half each
+	BackgroundPhoto      = "photo"      // photos only
+	BackgroundProcedural = "procedural" // procedural pictures only
+)
+
+func ValidBackgroundMode(m string) bool {
+	return m == BackgroundMixed || m == BackgroundPhoto || m == BackgroundProcedural
+}
+
+// MaxBackgroundUploads bounds an app's uploaded photos; each is about
+// 50–120 KB and the gateway keeps them in memory.
+const MaxBackgroundUploads = 50
+
+// Background is an app's picture setting. Photos come from the built-in
+// library (unless NoBuiltin) and the app's uploads; with none, every picture
+// is procedural whatever the mode. The zero value is the default setting.
+type Background struct {
+	Mode      string // "" is BackgroundMixed
+	NoBuiltin bool
+	// Uploads counts the app's photos; Version changes whenever they do.
+	Uploads int
+	Version int64
+}
+
+// Default reports whether b is the setting a new app starts with, so its
+// challenges can come from the shared pre-generated pool.
+func (b Background) Default() bool {
+	return (b.Mode == "" || b.Mode == BackgroundMixed) && !b.NoBuiltin && b.Uploads == 0
 }
 
 // AllowsOrigin reports whether a normalized request origin matches one of

@@ -52,6 +52,9 @@ type appRow struct {
 	AppKey        string `db:"app_key"`
 	Status        int    `db:"status"`
 	PolicyVersion int64  `db:"active_policy_version"`
+	BgMode        string `db:"background_mode"`
+	BgBuiltin     bool   `db:"background_builtin"`
+	BgVersion     int64  `db:"background_version"`
 }
 
 type actionRow struct {
@@ -78,7 +81,7 @@ const secretColumns = "secret_id, app_id, secret_ciphertext, kek_id, status, exp
 func (r *SQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, error) {
 	var row appRow
 	err := r.conn.QueryRowCtx(ctx, &row,
-		"SELECT id, app_key, status, active_policy_version FROM botguard_app WHERE app_key = ?", appKey)
+		"SELECT id, app_key, status, active_policy_version, background_mode, background_builtin, background_version FROM botguard_app WHERE app_key = ?", appKey)
 	if errors.Is(err, sqlx.ErrNotFound) {
 		return nil, domain.ErrNotFound
 	}
@@ -87,6 +90,10 @@ func (r *SQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, err
 	}
 	var origins []string
 	if err := r.conn.QueryRowsCtx(ctx, &origins, "SELECT origin FROM botguard_app_origin WHERE app_id = ?", row.ID); err != nil {
+		return nil, err
+	}
+	var uploads int
+	if err := r.conn.QueryRowCtx(ctx, &uploads, "SELECT COUNT(*) FROM botguard_app_background WHERE app_id = ?", row.ID); err != nil {
 		return nil, err
 	}
 	var actions []actionRow
@@ -100,6 +107,11 @@ func (r *SQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, err
 		Enabled:       row.Status == statusEnabled,
 		PolicyVersion: row.PolicyVersion,
 		Actions:       make(map[string]domain.ActionPolicy, len(actions)),
+		Background:    domain.Background{Mode: row.BgMode, NoBuiltin: !row.BgBuiltin, Uploads: uploads, Version: row.BgVersion},
+	}
+	if !domain.ValidBackgroundMode(row.BgMode) {
+		logx.WithContext(ctx).Errorf("app %d has unknown background mode %q, using mixed", row.ID, row.BgMode)
+		app.Background.Mode = domain.BackgroundMixed
 	}
 	for _, o := range origins {
 		n, ok := domain.NormalizeOriginPattern(o)
@@ -364,4 +376,20 @@ func (b *tokenBucket) take() bool {
 	}
 	b.tokens--
 	return true
+}
+
+// AppPhotos returns the app's uploaded background photos (JPEG), oldest
+// first.
+func (r *SQLApps) AppPhotos(ctx context.Context, appID int64) ([][]byte, error) {
+	var rows []struct {
+		Image []byte `db:"image"`
+	}
+	if err := r.conn.QueryRowsCtx(ctx, &rows, "SELECT image FROM botguard_app_background WHERE app_id = ? ORDER BY id", appID); err != nil {
+		return nil, err
+	}
+	out := make([][]byte, len(rows))
+	for i, row := range rows {
+		out[i] = row.Image
+	}
+	return out, nil
 }

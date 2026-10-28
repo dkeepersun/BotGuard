@@ -132,7 +132,7 @@ func vivid(r *rand.Rand) color.RGBA {
 }
 
 // Generate draws 3 targets (4 a quarter of the time) among 3–4 decoys.
-func Generate(r *rand.Rand) (click.Puzzle, error) {
+func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 	n := 3
 	if r.IntN(4) == 0 {
 		n = 4
@@ -164,7 +164,7 @@ func Generate(r *rand.Rand) (click.Puzzle, error) {
 		if !ok {
 			continue
 		}
-		bg := imagegen.Background(r, Width, Height)
+		bg, _ := src.Background(r, Width, Height)
 		white := color.RGBA{255, 255, 255, 255}
 		for y := 0; y < Height; y++ {
 			for x := 0; x < Width; x++ {

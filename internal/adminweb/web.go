@@ -185,8 +185,17 @@ func (e errRedirect) Error() string { return "redirect " + e.to }
 // The handler returns a flash message; errors from logic.ErrInvalid are shown
 // to the admin, anything else is logged and shown generically.
 func (s *Server) action(perm string, h func(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error)) http.HandlerFunc {
+	return s.form(perm, 64<<10, h)
+}
+
+// upload is action for multipart forms with files, up to maxUploadRequest.
+func (s *Server) upload(perm string, h func(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error)) http.HandlerFunc {
+	return s.form(perm, maxUploadRequest, h)
+}
+
+func (s *Server) form(perm string, limit int64, h func(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error)) http.HandlerFunc {
 	return s.secure(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
 		if !sameOrigin(r) {
 			http.Error(w, "跨站请求被拒绝", http.StatusForbidden)
 			return
@@ -200,8 +209,14 @@ func (s *Server) action(perm string, h func(w http.ResponseWriter, r *http.Reque
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		if err := r.ParseForm(); err != nil {
-			http.Error(w, "请求格式错误", http.StatusBadRequest)
+		parse := r.ParseForm
+		if limit > 64<<10 {
+			// Files past 8 MB in memory spill to temporary files, which
+			// net/http removes when the handler returns.
+			parse = func() error { return r.ParseMultipartForm(8 << 20) }
+		}
+		if err := parse(); err != nil {
+			http.Error(w, "请求格式错误或文件过大", http.StatusBadRequest)
 			return
 		}
 		if subtle.ConstantTimeCompare([]byte(r.PostFormValue("_csrf")), []byte(p.Session.CSRF)) != 1 {

@@ -15,6 +15,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/migration"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen/photos"
 	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/dkeepersun/BotGuard/internal/version"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -68,7 +69,8 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 	if err != nil {
 		return nil, err
 	}
-	apps, err := repository.NewCachedApps(repository.NewSQLApps(db, seal), config.Seconds(c.AppCache.TTLSeconds), c.AppCache.Limit)
+	sqlApps := repository.NewSQLApps(db, seal)
+	apps, err := repository.NewCachedApps(sqlApps, config.Seconds(c.AppCache.TTLSeconds), c.AppCache.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +111,8 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 				RotateToleranceDegrees:   c.Rotate.ToleranceDegrees,
 				IPHashKey:                ipHashKey(c),
 			},
-			Now: time.Now,
+			Now:         time.Now,
+			Backgrounds: &logic.Backgrounds{Builtin: photos.Library(), Store: sqlApps},
 		},
 		IPs:    ips,
 		rds:    rds,

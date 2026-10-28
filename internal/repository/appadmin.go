@@ -334,9 +334,18 @@ type SecretDetail struct {
 
 type AppDetail struct {
 	AppSummary
-	Origins []string
-	Actions []ActionDetail
-	Secrets []SecretDetail
+	Origins     []string
+	Actions     []ActionDetail
+	Secrets     []SecretDetail
+	Background  BackgroundSetting
+	Backgrounds []BackgroundPhoto
+}
+
+// BackgroundSetting is where the app's pictures come from (domain.Background
+// without the derived fields).
+type BackgroundSetting struct {
+	Mode    string `db:"background_mode"`
+	Builtin bool   `db:"background_builtin"`
 }
 
 // AppDetail never returns secret keys or ciphertexts.
@@ -365,5 +374,13 @@ func (r *AppAdmin) AppDetail(ctx context.Context, appKey string) (*AppDetail, er
 		"SELECT secret_id, status = 1 AS enabled, expires_at, rotated_from, created_at FROM botguard_app_secret WHERE app_id = ? ORDER BY id", id); err != nil {
 		return nil, err
 	}
+	if err := r.conn.QueryRowCtx(ctx, &d.Background, "SELECT background_mode, background_builtin FROM botguard_app WHERE id = ?", id); err != nil {
+		return nil, err
+	}
+	backgrounds, err := r.Backgrounds(ctx, appKey)
+	if err != nil {
+		return nil, err
+	}
+	d.Backgrounds = backgrounds
 	return &d, nil
 }

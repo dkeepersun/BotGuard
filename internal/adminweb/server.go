@@ -21,6 +21,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/response"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"github.com/dkeepersun/BotGuard/internal/service/update"
 	"github.com/dkeepersun/BotGuard/internal/webui"
 	"github.com/zeromicro/go-zero/rest"
@@ -59,6 +60,9 @@ type Server struct {
 	// Upgrader hands one-click upgrades to the root-owned updater; nil
 	// when the console runs where none can be installed (Docker).
 	Upgrader *update.Upgrader
+	// Photos is the built-in background library, for previews; nil shows
+	// procedural pictures only.
+	Photos *imagegen.Library
 
 	tpl *template.Template
 }
@@ -128,6 +132,7 @@ func (s *Server) funcs() template.FuncMap {
 		"newWidget":     domain.NeedsNewWidget,
 		"usesNewWidget": UsesNewWidget,
 		"add":           func(a, b int) int { return a + b },
+		"kb":            func(n int) string { return fmt.Sprintf("%d KB", (n+512)/1024) },
 		"sub64":         func(a, b int64) int64 { return a - b },
 		"opName":        opName,
 		"pointer":       func(p string) string { return pointerNames[p] },
@@ -161,7 +166,7 @@ func (s *Server) funcs() template.FuncMap {
 	}
 }
 
-var opGroups = map[string]string{"app.": "应用", "origin.": "允许来源", "action.": "验证策略", "secret.": "密钥对", "admin.": "管理员", "auth.": "登录", "system.": "系统"}
+var opGroups = map[string]string{"app.": "应用", "origin.": "允许来源", "action.": "验证策略", "secret.": "密钥对", "background.": "背景图", "admin.": "管理员", "auth.": "登录", "system.": "系统"}
 
 var opNames = map[string]string{
 	"app.create": "创建应用", "app.update": "修改应用", "app.enable": "启用应用", "app.disable": "停用应用",
@@ -172,6 +177,7 @@ var opNames = map[string]string{
 	"admin.totp_enable": "开启动态码", "admin.totp_disable": "关闭动态码",
 	"auth.login": "登录", "auth.logout": "退出", "auth.login_failed": "登录失败",
 	"system.upgrade": "一键升级",
+	"background.set": "修改背景来源", "background.add": "上传背景图", "background.delete": "删除背景图",
 }
 
 func opName(op string) string {
@@ -292,6 +298,9 @@ func (s *Server) Register(srv *rest.Server) error {
 		post("/apps/:key/secrets/create", s.action(logic.PermManageSecrets, s.secretCreate)),
 		post("/apps/:key/secrets/rotate", s.action(logic.PermManageSecrets, s.secretRotate)),
 		post("/apps/:key/secrets/revoke", s.action(logic.PermManageSecrets, s.secretRevoke)),
+		post("/apps/:key/backgrounds/mode", s.action(logic.PermManageApps, s.backgroundMode)),
+		post("/apps/:key/backgrounds/delete", s.action(logic.PermManageApps, s.backgroundDelete)),
+		get("/apps/:key/backgrounds/:id", s.page(logic.PermView, s.backgroundImage)),
 
 		get("/stats", s.page(logic.PermView, s.statsPage)),
 		get("/events", s.page(logic.PermView, s.eventsPage)),
@@ -320,6 +329,10 @@ func (s *Server) Register(srv *rest.Server) error {
 		get("/system/upgrade", s.page(logic.PermSystem, s.upgradePage)),
 		get("/api/upgrade", s.page(logic.PermSystem, s.upgradeAPI)),
 	})
+	// Uploads need a larger body and longer than the console's timeout:
+	// each picture is decoded, scaled and re-encoded.
+	srv.AddRoute(post("/apps/:key/backgrounds/upload", s.upload(logic.PermManageApps, s.backgroundUpload)),
+		rest.WithMaxBytes(maxUploadRequest), rest.WithTimeout(2*time.Minute))
 	static := webui.StaticHandler()
 	for _, path := range webui.Paths() {
 		srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/static/" + path, Handler: func(w http.ResponseWriter, r *http.Request) {

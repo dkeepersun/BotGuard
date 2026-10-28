@@ -3,6 +3,7 @@ package rotate
 import (
 	"bytes"
 	"encoding/base64"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"image"
 	"image/png"
 	"math"
@@ -50,7 +51,7 @@ func mismatch(disc image.Image, full *image.RGBA, p Puzzle, turn float64) float6
 
 func TestTurningByTheAnswerRestoresThePicture(t *testing.T) {
 	for seed := uint64(1); seed <= 20; seed++ {
-		p, full, err := generate(rand.New(rand.NewPCG(seed, 7)))
+		p, full, err := generate(rand.New(rand.NewPCG(seed, 7)), imagegen.Source{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -67,7 +68,7 @@ func TestTurningByTheAnswerRestoresThePicture(t *testing.T) {
 }
 
 func TestBackgroundHidesTheDiscArea(t *testing.T) {
-	p, _, err := generate(rand.New(rand.NewPCG(3, 3)))
+	p, _, err := generate(rand.New(rand.NewPCG(3, 3)), imagegen.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +88,7 @@ func TestGenerateIsFastEnough(t *testing.T) {
 	for range 5 {
 		start := time.Now()
 		for i := 0; i < 4; i++ {
-			if _, err := Generate(r); err != nil {
+			if _, err := Generate(r, imagegen.Source{}); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -98,7 +99,7 @@ func TestGenerateIsFastEnough(t *testing.T) {
 		t.Fatalf("too slow: %v", per)
 	}
 	if dir := os.Getenv("ROTATE_SAMPLE_DIR"); dir != "" {
-		p, _ := Generate(r)
+		p, _ := Generate(r, imagegen.Source{})
 		for name, url := range map[string]string{"bg.jpg": p.Background, "disc.png": p.Disc} {
 			b, _ := base64.StdEncoding.DecodeString(url[strings.Index(url, ",")+1:])
 			_ = os.WriteFile(dir+"/"+name, b, 0o644)

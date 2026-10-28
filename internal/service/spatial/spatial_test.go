@@ -2,6 +2,7 @@ package spatial
 
 import (
 	"encoding/base64"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -41,7 +42,7 @@ func TestQuestionsAreUnambiguous(t *testing.T) {
 
 func TestGenerate(t *testing.T) {
 	for seed := uint64(1); seed <= 50; seed++ {
-		p, err := Generate(rand.New(rand.NewPCG(seed, 9)))
+		p, err := Generate(rand.New(rand.NewPCG(seed, 9)), imagegen.Source{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -50,7 +51,7 @@ func TestGenerate(t *testing.T) {
 		}
 	}
 	if dir := os.Getenv("KIND_SAMPLE_DIR"); dir != "" {
-		p, _ := Generate(rand.New(rand.NewPCG(7, 7)))
+		p, _ := Generate(rand.New(rand.NewPCG(7, 7)), imagegen.Source{})
 		b, _ := base64.StdEncoding.DecodeString(p.Image[strings.Index(p.Image, ",")+1:])
 		_ = os.WriteFile(dir+"/spatial.jpg", b, 0o644)
 		_ = os.WriteFile(dir+"/spatial.txt", []byte(p.Prompt), 0o644)

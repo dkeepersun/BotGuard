@@ -25,6 +25,7 @@
     <button data-tab="origins" role="tab">允许来源<span class="count">{{len $a.Origins}}</span></button>
     <button data-tab="actions" role="tab">验证策略<span class="count">{{len $d.Actions}}</span></button>
     <button data-tab="secrets" role="tab">密钥对<span class="count">{{len $d.Secrets}}</span></button>
+    <button data-tab="backgrounds" role="tab">背景图<span class="count">{{len $a.Backgrounds}}</span></button>
   </div>
 
   <section id="tab-overview" role="tabpanel">
@@ -146,6 +147,30 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
           <form method="post" action="/apps/{{$a.AppKey}}/secrets/revoke" data-confirm="吊销后，使用 {{.SecretID}} 的业务服务器会立即无法核验（约 10 秒内生效）。确定吊销？" data-danger data-ok-text="吊销">{{template "csrf" $.CSRF}}<input type="hidden" name="secret_id" value="{{.SecretID}}"><button class="btn sm danger">吊销</button></form>{{end}}</td></tr>
       {{else}}<tr><td colspan="6"><div class="empty">还没有密钥对</div></td></tr>{{end}}
       </tbody></table></div></div>
+  </section>
+
+  <section id="tab-backgrounds" role="tabpanel">{{$bg := $a.Background}}
+    <div class="card"><div class="card-head"><h2>背景来源<span class="hint">对所有题型生效，约 10 秒内用于新签发的验证</span></h2></div><div class="card-body">
+      <form method="post" action="/apps/{{$a.AppKey}}/backgrounds/mode">{{template "csrf" .CSRF}}
+        <div class="form-row"><span class="label">出题背景</span><div class="radio-cards">
+          <label class="radio-card"><input type="radio" name="mode" value="mixed" {{if eq $bg.Mode "mixed"}}checked{{end}} {{if not $manage}}disabled{{end}}><b>混合（推荐）</b><span>照片与程序生成的图案各占一半</span></label>
+          <label class="radio-card"><input type="radio" name="mode" value="photo" {{if eq $bg.Mode "photo"}}checked{{end}} {{if not $manage}}disabled{{end}}><b>只用照片</b><span>画面最自然，依赖照片库保密</span></label>
+          <label class="radio-card"><input type="radio" name="mode" value="procedural" {{if eq $bg.Mode "procedural"}}checked{{end}} {{if not $manage}}disabled{{end}}><b>只用程序生成</b><span>每张都不重复，不怕图库被收集</span></label></div></div>
+        <div class="form-row"><label class="chip"><input type="checkbox" name="builtin" value="1" {{if $bg.Builtin}}checked{{end}} {{if not $manage}}disabled{{end}}> 使用内置照片（{{$d.BuiltinPhotos}} 张，CC0 公有领域风景照）</label>
+          <div class="help">内置照片随源码公开，攻击者可以拿到全部原图，与题目图片比对来定位缺口和文字。每张照片出题时都会随机裁切、扭曲、调色，并叠加纹理，但这只能增加比对的难度，不能消除。安全要求高的应用请上传自己的照片，并取消勾选内置照片。没有任何照片可用时一律用程序生成。</div></div>
+        {{if $manage}}<button class="btn primary">保存</button>{{end}}
+        <a class="btn" href="/preview?bg=photo" data-tab-open="preview" data-title="题型预览">预览照片背景 →</a>
+      </form></div></div>
+    <div class="card mt"><div class="card-head"><h2>自定义照片<span class="hint">最多 {{$d.MaxBackgrounds}} 张；JPEG、PNG 或 WebP，至少 640×400，单张不超过 10 MB</span></h2>
+      {{if $manage}}<form class="inline" method="post" action="/apps/{{$a.AppKey}}/backgrounds/upload" enctype="multipart/form-data">{{template "csrf" .CSRF}}
+        <input type="file" name="files" accept="image/jpeg,image/png,image/webp" multiple required aria-label="选择要上传的照片">
+        <button class="btn primary sm">上传</button></form>{{end}}</div>
+      <div class="card-body">
+        <p class="muted">上传后按 16:10 居中裁切、缩放到 720×450 并重新压缩，原图的 EXIF 等信息不会保留。建议用风景、街景、室内等内容丰富的照片，避免大片纯色、文字和人脸。</p>
+        <div class="bg-grid">{{range $a.Backgrounds}}<figure><img src="/apps/{{$a.AppKey}}/backgrounds/{{.ID}}" alt="背景图 {{.ID}}" loading="lazy">
+          <figcaption><span class="cell-sub">{{time .CreatedAt}} · {{kb .Size}}</span>{{if $manage}}<form class="inline" method="post" action="/apps/{{$a.AppKey}}/backgrounds/delete" data-confirm="删除这张背景图？" data-danger data-ok-text="删除">{{template "csrf" $.CSRF}}<input type="hidden" name="id" value="{{.ID}}"><button class="btn sm danger">删除</button></form>{{end}}</figcaption></figure>
+        {{else}}<div class="empty">还没有上传照片</div>{{end}}</div>
+      </div></div>
   </section>
 </div>
 

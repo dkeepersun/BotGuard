@@ -225,7 +225,7 @@ func draw(img *image.RGBA, o object) {
 }
 
 // Generate draws a puzzle with 3 targets (4 a quarter of the time).
-func Generate(r *rand.Rand) (click.Puzzle, error) {
+func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 	for attempt := 0; attempt < 50; attempt++ {
 		objs := plan(r)
 		if !place(r, objs) {
@@ -258,7 +258,7 @@ func Generate(r *rand.Rand) (click.Puzzle, error) {
 			words = append(words, d)
 		}
 
-		bg := imagegen.Background(r, Width, Height)
+		bg, _ := src.Background(r, Width, Height)
 		// Wash the background towards white so saturated shapes stand out.
 		white := color.RGBA{255, 255, 255, 255}
 		for y := 0; y < Height; y++ {

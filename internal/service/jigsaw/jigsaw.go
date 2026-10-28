@@ -32,10 +32,14 @@ type Puzzle struct {
 	A, B  int
 }
 
-// picture draws long bands and arcs across the whole image, so every tile
-// border cuts through several of them.
-func picture(r *rand.Rand) *image.RGBA {
-	img := imagegen.Background(r, Width, Height)
+// picture returns the background. A procedural one gets long bands and arcs
+// across the whole image, so every tile border cuts through several of them;
+// a photo is left as it is, since its own content runs across the borders.
+func picture(r *rand.Rand, src imagegen.Source) (*image.RGBA, bool) {
+	img, photo := src.Background(r, Width, Height)
+	if photo {
+		return img, true
+	}
 	white := color.RGBA{255, 255, 255, 255}
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {
@@ -61,7 +65,7 @@ func picture(r *rand.Rand) *image.RGBA {
 			return math.Abs(math.Hypot(x-cx, y-cy)-rad) <= w/2
 		})
 	}
-	return img
+	return img, false
 }
 
 func swapTiles(img *image.RGBA, a, b int) {
@@ -78,12 +82,13 @@ func swapTiles(img *image.RGBA, a, b int) {
 }
 
 // Generate builds a puzzle from r. Production callers seed r from crypto/rand.
-func Generate(r *rand.Rand) (Puzzle, error) {
-	img := picture(r)
-	a := r.IntN(Rows * Cols)
-	b := r.IntN(Rows*Cols - 1)
-	if b >= a {
-		b++
+func Generate(r *rand.Rand, src imagegen.Source) (Puzzle, error) {
+	img, photo := picture(r, src)
+	a, b := pair(r)
+	// Two tiles of the same sky or lawn look alike swapped. On a photo, look
+	// for a pair that differs; the bands make every pair differ otherwise.
+	for try := 0; photo && try < 20 && tileDiff(img, a, b) < minTileDiff; try++ {
+		a, b = pair(r)
 	}
 	swapTiles(img, a, b)
 	url, err := imagegen.JPEG(r, img)
@@ -203,4 +208,34 @@ func deviation(path [][3]float64) float64 {
 		worst = math.Max(worst, math.Abs((x1-x0)*(y0-p[2])-(x0-p[1])*(y1-y0))/l)
 	}
 	return worst
+}
+
+func pair(r *rand.Rand) (a, b int) {
+	a = r.IntN(Rows * Cols)
+	b = r.IntN(Rows*Cols - 1)
+	if b >= a {
+		b++
+	}
+	return a, b
+}
+
+// minTileDiff is the mean per-channel difference two swapped photo tiles
+// need, so the swap is visible.
+const minTileDiff = 18
+
+// tileDiff is the mean absolute per-channel difference between tiles a and b.
+func tileDiff(img *image.RGBA, a, b int) float64 {
+	ax, ay := (a%Cols)*TileW, (a/Cols)*TileH
+	bx, by := (b%Cols)*TileW, (b/Cols)*TileH
+	sum := 0
+	for y := 0; y < TileH; y++ {
+		for x := 0; x < TileW; x++ {
+			i, j := img.PixOffset(ax+x, ay+y), img.PixOffset(bx+x, by+y)
+			for k := 0; k < 3; k++ {
+				d := int(img.Pix[i+k]) - int(img.Pix[j+k])
+				sum += max(d, -d)
+			}
+		}
+	}
+	return float64(sum) / float64(TileW*TileH*3)
 }
