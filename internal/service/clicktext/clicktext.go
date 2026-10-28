@@ -202,6 +202,7 @@ func compose(r *rand.Rand, perm []int, n int, prompt func(words []string) string
 			imagegen.Blend(bg, x, y, white, 0.35)
 		}
 	}
+	imagegen.Clutter(r, bg, true)
 	// Interference lines under the glyphs.
 	for k := 2 + r.IntN(3); k > 0; k-- {
 		c := imagegen.RandomColor(r)
@@ -215,6 +216,7 @@ func compose(r *rand.Rand, perm []int, n int, prompt func(words []string) string
 	for _, g := range glyphs {
 		draw(bg, a, g)
 	}
+	imagegen.Finish(r, bg)
 	url, err := imagegen.JPEG(r, bg)
 	if err != nil {
 		return click.Puzzle{}, err
