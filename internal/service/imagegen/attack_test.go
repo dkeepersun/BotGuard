@@ -27,14 +27,17 @@ import (
 //
 // Both solvers see only what a browser gets (background, piece, piece_y):
 //
-//   - continuity: take the two darkest slot-shaped dips on the piece's row
-//     (the slot and its decoy) and keep the one whose surroundings continue
-//     the piece's own edge pixels best;
+//   - continuity: take the two slot-shaped places on the piece's row that
+//     differ most from their surroundings, lighter or darker (the slot and
+//     its decoy), and keep the one whose surroundings continue the piece's
+//     own pixels best: right at the edge, or 4 or 7 px either side of
+//     it, past any rim the generator draws;
 //   - library: additionally holds the photo library and is told the exact
 //     crop each picture came from, before warp and colour changes (an upper
-//     bound: a real attacker has to search for it). It subtracts the crop to
-//     find the two dips, then keeps the one where the picture is the photo
-//     darkened evenly: the decoy's inside is a copy from elsewhere.
+//     bound: a real attacker has to search for it). It divides by the crop to
+//     find the two places changed most, then keeps the one where the picture
+//     is the photo changed most evenly: the decoy's inside is a copy from
+//     elsewhere.
 func TestSliderAttacks(t *testing.T) {
 	if os.Getenv("BOTGUARD_ATTACK") == "" {
 		t.Skip("set BOTGUARD_ATTACK=1 to run the slider attack measurement")
@@ -48,7 +51,7 @@ func TestSliderAttacks(t *testing.T) {
 		{"procedural", imagegen.Source{}},
 		{"photo", imagegen.Source{Photos: lib, Share: 1}},
 	} {
-		var cont, library, dips int
+		var cont, cont4, cont7, library, dips int
 		for i := range n {
 			var ref *image.RGBA
 			src := imagegen.Traced(c.src, func(plain *image.RGBA) { ref = plain })
@@ -59,16 +62,23 @@ func TestSliderAttacks(t *testing.T) {
 			bg := toRGBA(decodeURL(t, p.Background))
 			piece := toRGBA(decodeURL(t, p.Piece))
 			m := pieceMask(piece)
-			cands := darkest(bg, m, p.Y, func(x, y int) float64 { return luma(bg, x, y) })
+			cands := standout(bg, m, p.Y)
 			if near(cands, p.X) {
 				dips++
 			}
-			if pick := bestContinuity(bg, piece, m, p.Y, cands); abs(pick-p.X) <= 4 {
+			if pick := bestContinuity(bg, piece, m, p.Y, cands, 1); abs(pick-p.X) <= 4 {
 				cont++
+			}
+			if pick := bestContinuity(bg, piece, m, p.Y, cands, 4); abs(pick-p.X) <= 4 {
+				cont4++
+			}
+			if pick := bestContinuity(bg, piece, m, p.Y, cands, 7); abs(pick-p.X) <= 4 {
+				cont7++
 			}
 			if ref != nil {
 				res := residual(bg, ref)
-				lc := darkest(bg, m, p.Y, func(x, y int) float64 { return res[y*bg.Rect.Dx()+x] })
+				// Slots change the photo by a factor, darker or lighter.
+				lc := darkest(bg, m, p.Y, func(x, y int) float64 { return -math.Abs(math.Log(res[y*bg.Rect.Dx()+x])) })
 				if pick := bestMatch(bg.Rect.Dx(), res, m, p.Y, lc); abs(pick-p.X) <= 4 {
 					library++
 				}
@@ -78,8 +88,8 @@ func TestSliderAttacks(t *testing.T) {
 		if c.src.Photos != nil {
 			libRate = fmt.Sprintf("%.1f%%", pct(library, n))
 		}
-		t.Logf("%-10s slot among the two darkest dips %5.1f%%  continuity solver %5.1f%%  library solver %s",
-			c.name, pct(dips, n), pct(cont, n), libRate)
+		t.Logf("%-10s slot among the two candidates %5.1f%%  continuity at the edge %5.1f%%  4 px off %5.1f%%  7 px off %5.1f%%  library %s",
+			c.name, pct(dips, n), pct(cont, n), pct(cont4, n), pct(cont7, n), libRate)
 	}
 }
 
@@ -141,10 +151,14 @@ func pieceMask(piece *image.RGBA) [][2]int {
 
 // darkest returns the two slot positions on row y where v is lowest inside
 // the piece's shape, at least a piece apart.
-func darkest(bg *image.RGBA, m [][2]int, y int, v func(x, y int) float64) []int {
+func darkest(bg *image.RGBA, m [][2]int, y int, v func(x, y int) float64, whole ...func(x int) float64) []int {
 	w := bg.Rect.Dx()
 	score := make([]float64, w-slider.PieceSize)
 	for x := range score {
+		if len(whole) > 0 {
+			score[x] = whole[0](x)
+			continue
+		}
 		s := 0.0
 		for _, p := range m {
 			s += v(x+p[0], y+p[1])
@@ -170,10 +184,46 @@ func darkest(bg *image.RGBA, m [][2]int, y int, v func(x, y int) float64) []int 
 	return out
 }
 
+// standout returns the two slot positions on row y, at least a piece apart,
+// whose inside differs most in mean luma from a ring 3–6 px around it.
+func standout(bg *image.RGBA, m [][2]int, y int) []int {
+	in := map[[2]int]bool{}
+	for _, p := range m {
+		in[p] = true
+	}
+	var ring [][2]int
+	for py := -6; py < slider.PieceSize+6; py++ {
+		for px := -6; px < slider.PieceSize+6; px++ {
+			d := 99
+			for _, p := range m {
+				d = min(d, max(abs(p[0]-px), abs(p[1]-py)))
+			}
+			if d >= 3 && d <= 6 {
+				ring = append(ring, [2]int{px, py})
+			}
+		}
+	}
+	w, h := bg.Rect.Dx(), bg.Rect.Dy()
+	return darkest(bg, m, y, func(int, int) float64 { return 0 }, func(x int) float64 {
+		var sin, sout float64
+		var nout int
+		for _, p := range m {
+			sin += luma(bg, x+p[0], y+p[1])
+		}
+		for _, p := range ring {
+			if qx, qy := x+p[0], y+p[1]; qx >= 0 && qy >= 0 && qx < w && qy < h {
+				sout += luma(bg, qx, qy)
+				nout++
+			}
+		}
+		return -math.Abs(sin/float64(len(m)) - sout/float64(max(1, nout)))
+	})
+}
+
 // bestContinuity keeps the candidate whose surroundings best continue the
-// piece: each edge pixel of the piece, two pixels in, against the
-// background one pixel outside the slot in the same direction.
-func bestContinuity(bg, piece *image.RGBA, m [][2]int, y int, cands []int) int {
+// piece: each edge pixel of the piece, depth+1 pixels in, against the
+// background depth pixels outside the slot in the same direction.
+func bestContinuity(bg, piece *image.RGBA, m [][2]int, y int, cands []int, depth int) int {
 	in := map[[2]int]bool{}
 	for _, p := range m {
 		in[p] = true
@@ -183,8 +233,11 @@ func bestContinuity(bg, piece *image.RGBA, m [][2]int, y int, cands []int) int {
 		sum, n := 0.0, 0
 		for _, p := range m {
 			for _, d := range [][2]int{{1, 0}, {-1, 0}, {0, 1}, {0, -1}} {
-				out := [2]int{p[0] + d[0], p[1] + d[1]}
-				inner := [2]int{p[0] - 2*d[0], p[1] - 2*d[1]}
+				if in[[2]int{p[0] + d[0], p[1] + d[1]}] {
+					continue
+				}
+				out := [2]int{p[0] + depth*d[0], p[1] + depth*d[1]}
+				inner := [2]int{p[0] - (depth+1)*d[0], p[1] - (depth+1)*d[1]}
 				if in[out] || !in[inner] {
 					continue
 				}

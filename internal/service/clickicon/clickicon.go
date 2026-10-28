@@ -110,8 +110,11 @@ type placed struct {
 }
 
 // draw fills icon i into img around (x, y), radius r, turned by rot, with a
-// dark outline so it stands out from the busy background.
-func draw(img *image.RGBA, i int, x, y, r, rot float64, c color.RGBA) {
+// dark outline so it stands out from the busy background. A glass icon is
+// translucent white over a soft shadow instead, the way the big vendors draw
+// icons on photos: it takes its colour from the picture behind it, so a
+// colour threshold does not cut it out.
+func draw(img *image.RGBA, i int, x, y, r, rot float64, c color.RGBA, glass bool) {
 	sin, cos := math.Sincos(-rot)
 	inside := func(px, py, grow float64) bool {
 		dx, dy := (px-x)/r, (py-y)/r
@@ -119,7 +122,13 @@ func draw(img *image.RGBA, i int, x, y, r, rot float64, c color.RGBA) {
 		s := 1 + grow
 		return icons[i].shape(u/s, v/s)
 	}
-	x0, y0, x1, y1 := int(x-r*1.3), int(y-r*1.3), int(x+r*1.3)+1, int(y+r*1.3)+1
+	x0, y0, x1, y1 := int(x-r*1.3), int(y-r*1.3), int(x+r*1.3)+3, int(y+r*1.3)+3
+	if glass {
+		shadow := color.RGBA{0, 0, 0, 255}
+		imagegen.FillShape(img, x0, y0, x1, y1, shadow, 0.45, func(px, py float64) bool { return inside(px-1.5, py-1.5, 1.5/r) })
+		imagegen.FillShape(img, x0, y0, x1, y1, color.RGBA{255, 255, 255, 255}, 0.82, func(px, py float64) bool { return inside(px, py, 0) })
+		return
+	}
 	outline := color.RGBA{30, 30, 30, 255}
 	imagegen.FillShape(img, x0, y0, x1, y1, outline, 0.85, func(px, py float64) bool { return inside(px, py, 2.2/r) })
 	imagegen.FillShape(img, x0, y0, x1, y1, c, 1, func(px, py float64) bool { return inside(px, py, 0) })
@@ -164,16 +173,22 @@ func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 		if !ok {
 			continue
 		}
-		bg, _ := src.Background(r, Width, Height)
+		bg, photo := src.Background(r, Width, Height)
+		// Washed so the vivid icons stand out; a photo less, so its glass
+		// icons (half of them) still show against it.
+		wash := 0.4
+		if photo {
+			wash = 0.12
+		}
 		white := color.RGBA{255, 255, 255, 255}
 		for y := 0; y < Height; y++ {
 			for x := 0; x < Width; x++ {
-				imagegen.Blend(bg, x, y, white, 0.4)
+				imagegen.Blend(bg, x, y, white, wash)
 			}
 		}
 		imagegen.Clutter(r, bg, false)
 		for _, o := range objs {
-			draw(bg, o.icon, o.x, o.y, o.r, o.rot, o.color)
+			draw(bg, o.icon, o.x, o.y, o.r, o.rot, o.color, photo && r.IntN(2) == 0)
 		}
 		imagegen.Finish(r, bg)
 		url, err := imagegen.JPEG(r, bg)
