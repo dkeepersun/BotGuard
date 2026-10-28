@@ -171,9 +171,11 @@ func Generate(r *rand.Rand) (click.Puzzle, error) {
 				imagegen.Blend(bg, x, y, white, 0.4)
 			}
 		}
+		imagegen.Clutter(r, bg, false)
 		for _, o := range objs {
 			draw(bg, o.icon, o.x, o.y, o.r, o.rot, o.color)
 		}
+		imagegen.Finish(r, bg)
 		url, err := imagegen.JPEG(r, bg)
 		if err != nil {
 			return click.Puzzle{}, err

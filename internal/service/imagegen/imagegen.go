@@ -14,9 +14,12 @@ import (
 )
 
 func RandomColor(r *rand.Rand) color.RGBA {
-	h := r.Float64() * 360
-	s := 0.3 + r.Float64()*0.45
-	v := 0.45 + r.Float64()*0.45
+	return HSV(r.Float64()*360, 0.3+r.Float64()*0.45, 0.45+r.Float64()*0.45)
+}
+
+// HSV converts hue in degrees, saturation and value in [0, 1].
+func HSV(h, s, v float64) color.RGBA {
+	h = math.Mod(h, 360)
 	c := v * s
 	x := c * (1 - math.Abs(math.Mod(h/60, 2)-1))
 	var rr, gg, bb float64
@@ -44,62 +47,6 @@ func Blend(dst *image.RGBA, x, y int, c color.RGBA, a float64) {
 	p[0] = uint8(float64(p[0])*(1-a) + float64(c.R)*a)
 	p[1] = uint8(float64(p[1])*(1-a) + float64(c.G)*a)
 	p[2] = uint8(float64(p[2])*(1-a) + float64(c.B)*a)
-}
-
-func Background(r *rand.Rand, width, height int) *image.RGBA {
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
-	a, b := RandomColor(r), RandomColor(r)
-	for y := 0; y < height; y++ {
-		for x := 0; x < width; x++ {
-			t := (float64(x)/float64(width) + float64(y)/float64(height)) / 2
-			i := img.PixOffset(x, y)
-			img.Pix[i] = uint8(float64(a.R)*(1-t) + float64(b.R)*t)
-			img.Pix[i+1] = uint8(float64(a.G)*(1-t) + float64(b.G)*t)
-			img.Pix[i+2] = uint8(float64(a.B)*(1-t) + float64(b.B)*t)
-			img.Pix[i+3] = 255
-		}
-	}
-	for n := 10 + r.IntN(7); n > 0; n-- {
-		c, alpha := RandomColor(r), 0.25+r.Float64()*0.45
-		cx, cy := r.Float64()*float64(width), r.Float64()*float64(height)
-		size := 15 + r.Float64()*60
-		var inside func(x, y float64) bool
-		switch r.IntN(3) {
-		case 0:
-			inside = func(x, y float64) bool { return math.Hypot(x-cx, y-cy) <= size }
-		case 1:
-			w, h, rot := size, size*(0.4+r.Float64()), r.Float64()*math.Pi
-			sin, cos := math.Sincos(rot)
-			inside = func(x, y float64) bool {
-				dx, dy := x-cx, y-cy
-				u, v := dx*cos+dy*sin, -dx*sin+dy*cos
-				return math.Abs(u) <= w && math.Abs(v) <= h
-			}
-		default:
-			var pts [3][2]float64
-			for i := range pts {
-				ang := r.Float64() * 2 * math.Pi
-				pts[i] = [2]float64{cx + math.Cos(ang)*size, cy + math.Sin(ang)*size}
-			}
-			inside = func(x, y float64) bool { return InTriangle(x, y, pts) }
-		}
-		x0, x1 := max(0, int(cx-size*1.5)), min(width, int(cx+size*1.5)+1)
-		y0, y1 := max(0, int(cy-size*1.5)), min(height, int(cy+size*1.5)+1)
-		for y := y0; y < y1; y++ {
-			for x := x0; x < x1; x++ {
-				if inside(float64(x)+0.5, float64(y)+0.5) {
-					Blend(img, x, y, c, alpha)
-				}
-			}
-		}
-	}
-	for i := 0; i < len(img.Pix); i += 4 {
-		d := r.IntN(25) - 12
-		for k := 0; k < 3; k++ {
-			img.Pix[i+k] = uint8(max(0, min(255, int(img.Pix[i+k])+d)))
-		}
-	}
-	return img
 }
 
 func InTriangle(x, y float64, p [3][2]float64) bool {
