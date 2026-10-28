@@ -110,7 +110,7 @@ sudo -u botguard sqlite3 /var/lib/botguard/botguard.db ".backup '/var/lib/botgua
 
 升级后行为上的变化：
 
-1. **页面上的 `kinds` / `levels` 默认不生效**（v0.4）：被忽略，改按 action 策略出题。需要的 action 在后台勾选「允许页面指定题型」（`botguard ctl action set -client-kinds`）。这个开关谁都能用，打开后机器人也能每次只要最简单的题型。
+1. **页面上的 `kinds` / `levels` 默认不生效**（v0.4）：被忽略，改按 action 策略出题。需要的 action 在后台勾选「允许页面指定题型」（`botguard ctl action set -client-kinds`）。打开后 `kinds` / `levels` 谁都能写，机器人也能每次只要列表里最简单的题型，只在确实需要的 action 上打开。
 2. **高风险请求不再给无障碍备用路径**（v0.4），照样出列表中最难的题型。
 3. **按网段限流和连续失败封禁**（v0.5）：同一网段（IPv4 /24、IPv6 /48）每个应用每分钟最多 300 道图片题，跨应用每分钟最多签发 1200 次，同一 IP 在 10 分钟内失败 20 次后签发返回 429。大量用户共用出口 IP（公司、学校、运营商 NAT）时，按需调高 `gateway.yaml` 的 `RateLimit.InteractivePerPrefixPerMinute`、`RateLimit.ChallengePerPrefixPerMinute`、`Risk.FailureBlockThreshold`。
 4. **新题型要手动开启**（v0.6）：已有 action 的题型不变，新建 action 默认只勾 8 种。时钟读数、镜像辨别、九宫格计数需要浏览器组件 0.3.0 及以上：用 gateway 托管脚本（`/sdk/v1/`）的页面随服务端升级；用 npm 安装组件的先升级到 `@botguard/browser@0.3.0` 再勾选。仍有旧组件请求时，应用的「验证策略」页会提醒。见 [challenge-catalog.md](challenge-catalog.md) §7.5。
