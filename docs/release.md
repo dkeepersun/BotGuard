@@ -37,8 +37,7 @@
 - Packagist：[botguard/php-sdk](https://packagist.org/packages/botguard/php-sdk)、[botguard/laravel](https://packagist.org/packages/botguard/laravel)。两个镜像仓库都已装好 Packagist 的 webhook，新标签会自动收录。
 - 镜像仓库：[botguard-php-sdk](https://github.com/dkeepersun/botguard-php-sdk)、[botguard-laravel](https://github.com/dkeepersun/botguard-laravel)。已关闭 issues 和 wiki；部署密钥已配置，私钥只保存在主仓库的 Actions secrets 里。
 - 软件源：<https://dkeepersun.github.io/BotGuard/>，签名密钥指纹 `BE49F7E6B91F729E10F3E24A0E7787FFB93E3231`，私钥在 Actions secret `REPO_GPG_PRIVATE_KEY` 里。GitHub Pages 已启用（Source：GitHub Actions）。
-- 待办：
-  - 签名密钥的 UID 是生成时没改的占位文字 `BotGuard Packages <真实邮箱>`，按下文「更换签名密钥的 UID」改为 GitHub noreply 邮箱。
+- 签名密钥的 UID 已于 2026-10-29 改为 `BotGuard Packages <2715388+dkeepersun@users.noreply.github.com>`，旧的占位 UID 已吊销，指纹不变；`REPO_GPG_PRIVATE_KEY` 已更新，`repo` 工作流已重新导出 `gpg.key`。
 
 第一次发布时遇到的问题，下次可以提前避开：
 
