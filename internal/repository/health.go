@@ -13,8 +13,11 @@ import (
 // (RATE_LIMITED, UNAVAILABLE ...); Degraded counts image challenges served
 // as PoW by cause (quota, saturated).
 type HealthMinute struct {
-	At         int64            `json:"at"` // unix seconds, start of the minute
-	Instance   string           `json:"instance"`
+	At       int64  `json:"at"` // unix seconds, start of the minute
+	Instance string `json:"instance"`
+	// Version is the gateway's version.String(), so the console can show
+	// instances left on another release.
+	Version    string           `json:"version,omitempty"`
 	Requests   map[string]int64 `json:"requests,omitempty"` // by route
 	Codes      map[string]int64 `json:"codes,omitempty"`
 	Degraded   map[string]int64 `json:"degraded,omitempty"`

@@ -65,3 +65,12 @@ Cleanup:
   AuditLogDays: 180
   # Secret pairs whose rotation grace ended, or that were revoked, this long ago.
   RetiredSecretDays: 30
+
+# The console looks up the latest release on GitHub every IntervalHours and,
+# when a newer one exists, tells owners on the dashboard and the system page
+# (docs/admin.md 版本更新). Only a version number is fetched; nothing about
+# this install is sent. Set Check: false where the server cannot or must not
+# reach api.github.com; URL may point at a mirror of the same API.
+Update:
+  Check: true
+  IntervalHours: 6

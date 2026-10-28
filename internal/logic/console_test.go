@@ -23,6 +23,7 @@ func TestRolePermissions(t *testing.T) {
 		ok         bool
 	}{
 		{RoleOwner, PermManageAdmins, true}, {RoleOperator, PermManageAdmins, false}, {RoleOperator, PermManageSecrets, true},
+		{RoleOwner, PermSystem, true}, {RoleOperator, PermSystem, false}, {RoleViewer, PermSystem, false},
 		{RoleViewer, PermView, true}, {RoleViewer, PermManageApps, false}, {RoleViewer, PermAudit, false}, {"", PermView, false},
 	} {
 		if Allowed(c.role, c.perm) != c.ok {

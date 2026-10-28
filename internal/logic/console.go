@@ -39,6 +39,8 @@ const (
 	PermManageSecrets = "secrets.manage"
 	PermAudit         = "audit.view"
 	PermManageAdmins  = "admins.manage"
+	// PermSystem covers installing a release (docs/admin.md 版本更新).
+	PermSystem = "system.manage"
 )
 
 // Allowed reports whether role grants perm.
@@ -47,7 +49,7 @@ func Allowed(role, perm string) bool {
 	case RoleOwner:
 		return true
 	case RoleOperator:
-		return perm != PermManageAdmins
+		return perm != PermManageAdmins && perm != PermSystem
 	case RoleViewer:
 		return perm == PermView
 	}

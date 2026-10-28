@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -51,6 +52,14 @@ type AdminConfig struct {
 		// 0 keeps rows forever.
 		AuditLogDays      int `json:",default=180"`
 		RetiredSecretDays int `json:",default=30"`
+	}
+	// Update looks for new releases for the console's update notice
+	// (docs/admin.md 版本更新). Turn Check off where the server cannot or
+	// must not reach GitHub; URL may point at a mirror of the same API.
+	Update struct {
+		Check         bool   `json:",default=true"`
+		URL           string `json:",optional"`
+		IntervalHours int    `json:",default=6"`
 	}
 }
 
@@ -102,6 +111,14 @@ func (c AdminConfig) Validate() error {
 	}
 	if c.Session.AbsoluteHours < 1 || c.Session.AbsoluteHours > 72 {
 		return errors.New("Session.AbsoluteHours must be within [1, 72]")
+	}
+	if c.Update.IntervalHours < 1 || c.Update.IntervalHours > 168 {
+		return errors.New("Update.IntervalHours must be within [1, 168]")
+	}
+	if c.Update.URL != "" {
+		if u, err := url.Parse(c.Update.URL); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+			return errors.New("Update.URL must be an http(s) URL")
+		}
 	}
 	return nil
 }

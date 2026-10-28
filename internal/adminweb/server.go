@@ -21,6 +21,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/response"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/update"
 	"github.com/dkeepersun/BotGuard/internal/webui"
 	"github.com/zeromicro/go-zero/rest"
 )
@@ -46,6 +47,10 @@ type Server struct {
 	SessionTTL     time.Duration
 	Now            func() time.Time
 	Info           map[string]string
+	// Version is this console's version.String(); Updates looks for newer
+	// releases and is nil when Update.Check is off.
+	Version string
+	Updates *update.Checker
 
 	tpl *template.Template
 }
@@ -296,6 +301,7 @@ func (s *Server) Register(srv *rest.Server) error {
 		post("/profile/totp/disable", s.action("", s.totpDisable)),
 
 		get("/system", s.page(logic.PermView, s.systemPage)),
+		post("/system/update-check", s.action(logic.PermSystem, s.updateCheck)),
 	})
 	static := webui.StaticHandler()
 	for _, path := range webui.Paths() {
