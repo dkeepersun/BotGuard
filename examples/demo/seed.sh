@@ -14,7 +14,7 @@ field() { sed -n "s/^$1: //p"; }
 # clicks and the rotate disc.
 # Re-applied on every start so an existing demo database picks up changes.
 set_modes() {
-  botguard-ctl action set -app "$1" -action login -mode adaptive -kinds slider,rotate,jigsaw,click_text,click_order,click_icon,click_shape,spatial -puzzles 8 -difficulty 3000 >/dev/null
+  botguard-ctl action set -app "$1" -action login -mode adaptive -kinds slider,rotate,jigsaw,click_text,click_order,click_icon,click_shape,clock,spatial -puzzles 8 -difficulty 3000 >/dev/null
   botguard-ctl action set -app "$1" -action register -mode interactive -kinds slider -puzzles 8 -difficulty 3000 >/dev/null
   botguard-ctl action set -app "$1" -action post -mode interactive -kinds click_text -puzzles 8 -difficulty 3000 >/dev/null
   botguard-ctl action set -app "$1" -action pay -mode interactive -kinds click_shape -puzzles 8 -difficulty 3000 >/dev/null

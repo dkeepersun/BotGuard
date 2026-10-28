@@ -339,7 +339,7 @@ func curve(r *rand.Rand, img *image.RGBA) {
 	p0 := [2]float64{r.Float64() * fw, r.Float64() * fh}
 	p1 := [2]float64{(r.Float64()*1.4 - 0.2) * fw, (r.Float64()*1.4 - 0.2) * fh}
 	p2 := [2]float64{r.Float64() * fw, r.Float64() * fh}
-	stroke(img, bezier(p0, p1, p2), 0.6+r.Float64()*1.2, RandomColor(r), 0.3+r.Float64()*0.35)
+	Stroke(img, bezier(p0, p1, p2), 0.6+r.Float64()*1.2, RandomColor(r), 0.3+r.Float64()*0.35)
 }
 
 func bezier(p0, p1, p2 [2]float64) [][2]float64 {
@@ -353,27 +353,57 @@ func bezier(p0, p1, p2 [2]float64) [][2]float64 {
 	return pts
 }
 
-// stroke blends a line of the given half-width through densely sampled
-// points. Pixels are marked first and blended once, so the stroke has no
-// darker joints.
-func stroke(img *image.RGBA, pts [][2]float64, width float64, c color.RGBA, alpha float64) {
+// Stroke blends a line of the given half-width through densely sampled
+// points (see Polyline). Pixels are marked first and blended once, so the
+// stroke has no darker joints.
+func Stroke(img *image.RGBA, pts [][2]float64, width float64, c color.RGBA, alpha float64) {
+	if len(pts) == 0 {
+		return
+	}
 	b := img.Bounds()
-	w, h := b.Dx(), b.Dy()
-	mark := make([]bool, w*h)
+	x0, y0, x1, y1 := pts[0][0], pts[0][1], pts[0][0], pts[0][1]
 	for _, p := range pts {
-		for y := max(0, int(p[1]-width-1)); y < min(h, int(p[1]+width+2)); y++ {
-			for x := max(0, int(p[0]-width-1)); x < min(w, int(p[0]+width+2)); x++ {
+		x0, y0, x1, y1 = min(x0, p[0]), min(y0, p[1]), max(x1, p[0]), max(y1, p[1])
+	}
+	// The mark covers only the stroke's bounding box.
+	bx0, by0 := max(b.Min.X, int(x0-width-1)), max(b.Min.Y, int(y0-width-1))
+	bx1, by1 := min(b.Max.X, int(x1+width+2)), min(b.Max.Y, int(y1+width+2))
+	if bx1 <= bx0 || by1 <= by0 {
+		return
+	}
+	w := bx1 - bx0
+	mark := make([]bool, w*(by1-by0))
+	for _, p := range pts {
+		for y := max(by0, int(p[1]-width-1)); y < min(by1, int(p[1]+width+2)); y++ {
+			for x := max(bx0, int(p[0]-width-1)); x < min(bx1, int(p[0]+width+2)); x++ {
 				if math.Hypot(float64(x)+0.5-p[0], float64(y)+0.5-p[1]) <= width {
-					mark[y*w+x] = true
+					mark[(y-by0)*w+x-bx0] = true
 				}
 			}
 		}
 	}
 	for i, m := range mark {
 		if m {
-			Blend(img, i%w, i/w, c, alpha)
+			Blend(img, bx0+i%w, by0+i/w, c, alpha)
 		}
 	}
+}
+
+// Polyline samples the segments through pts every half pixel, for Stroke.
+func Polyline(pts ...[2]float64) [][2]float64 {
+	if len(pts) < 2 {
+		return pts
+	}
+	var out [][2]float64
+	for i := 1; i < len(pts); i++ {
+		a, b := pts[i-1], pts[i]
+		n := int(math.Hypot(b[0]-a[0], b[1]-a[1])*2) + 1
+		for s := 0; s < n; s++ {
+			t := float64(s) / float64(n)
+			out = append(out, [2]float64{a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t})
+		}
+	}
+	return append(out, pts[len(pts)-1])
 }
 
 // Clutter draws decoys after the caller's wash and before its targets: short
@@ -402,13 +432,13 @@ func Clutter(r *rand.Rand, img *image.RGBA, dark bool) {
 			rr := rad * (1 + 0.25*t*float64(n%2))
 			pts = append(pts, [2]float64{cx + math.Cos(a)*rr, cy + math.Sin(a)*rr})
 		}
-		stroke(img, pts, 0.8+r.Float64()*0.7, pick(), 0.45+r.Float64()*0.3)
+		Stroke(img, pts, 0.8+r.Float64()*0.7, pick(), 0.45+r.Float64()*0.3)
 	}
 	for n := 1 + r.IntN(2); n > 0; n-- {
 		p0 := [2]float64{r.Float64() * float64(w), r.Float64() * float64(h)}
 		p1 := [2]float64{r.Float64() * float64(w), r.Float64() * float64(h)}
 		p2 := [2]float64{r.Float64() * float64(w), r.Float64() * float64(h)}
-		stroke(img, bezier(p0, p1, p2), 0.7+r.Float64()*0.6, pick(), 0.4+r.Float64()*0.25)
+		Stroke(img, bezier(p0, p1, p2), 0.7+r.Float64()*0.6, pick(), 0.4+r.Float64()*0.25)
 	}
 }
 
@@ -418,13 +448,25 @@ func Clutter(r *rand.Rand, img *image.RGBA, dark bool) {
 // so exact-colour lookup and flat-region segmentation stop working; the
 // shift is small enough that a red shape still reads as red.
 func Finish(r *rand.Rand, img *image.RGBA) {
+	Hairlines(r, img)
+	Perturb(r, img)
+}
+
+// Hairlines draws Finish's one or two faint lines across the whole picture.
+// Kinds whose targets contain thin strokes of their own (clock hands) draw
+// them under the targets instead.
+func Hairlines(r *rand.Rand, img *image.RGBA) {
 	w, h := img.Bounds().Dx(), img.Bounds().Dy()
 	for n := 1 + r.IntN(2); n > 0; n-- {
 		p0 := [2]float64{0, r.Float64() * float64(h)}
 		p1 := [2]float64{r.Float64() * float64(w), (r.Float64()*1.6 - 0.3) * float64(h)}
 		p2 := [2]float64{float64(w), r.Float64() * float64(h)}
-		stroke(img, bezier(p0, p1, p2), 0.55+r.Float64()*0.3, HSV(r.Float64()*360, 0.4, 0.35+r.Float64()*0.4), 0.3+r.Float64()*0.2)
+		Stroke(img, bezier(p0, p1, p2), 0.55+r.Float64()*0.3, HSV(r.Float64()*360, 0.4, 0.35+r.Float64()*0.4), 0.3+r.Float64()*0.2)
 	}
+}
+
+// Perturb is Finish's colour cast and grain.
+func Perturb(r *rand.Rand, img *image.RGBA) {
 	var lut [3][256]uint8
 	for k := range lut {
 		gain, lift := 0.93+r.Float64()*0.1, r.Float64()*10-5

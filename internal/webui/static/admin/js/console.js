@@ -123,7 +123,7 @@
   const codeColors = {
     low: '#16a34a', medium: '#f59e0b', high: '#dc2626',
     invisible: '#94a3b8', slider: '#2563eb', rotate: '#7c3aed', jigsaw: '#0d9488', click_text: '#0891b2', click_order: '#ca8a04',
-    click_icon: '#ea580c', click_shape: '#db2777', spatial: '#4f46e5', fallback: '#64748b',
+    click_icon: '#ea580c', click_shape: '#db2777', clock: '#65a30d', spatial: '#4f46e5', fallback: '#64748b',
   };
   const colorOf = (it, i) => codeColors[it.Code] || palette[i % palette.length];
   function donut(box) {
@@ -346,7 +346,7 @@
   const pv = $('[data-preview]');
   if (pv) {
     const kinds = [['slider', '滑块拼图'], ['rotate', '旋转对齐'], ['jigsaw', '推理拼图'], ['click_text', '文字点选'],
-      ['click_order', '语序点选'], ['click_icon', '图标点选'], ['click_shape', '图形点选'], ['spatial', '空间推理']];
+      ['click_order', '语序点选'], ['click_icon', '图标点选'], ['click_shape', '图形点选'], ['clock', '时钟读数'], ['spatial', '空间推理']];
     const showAnswer = $('#pv-answer');
     pv.innerHTML = kinds.map(([k, n]) => `<div class="card"><div class="card-head"><h2>${n}<span class="hint mono">${k}</span></h2>
       <button class="btn sm" data-regen="${k}">换一张</button></div><div class="card-body" id="pv-${k}"><div class="empty">生成中…</div></div></div>`).join('');
