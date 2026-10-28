@@ -16,6 +16,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
 	"github.com/dkeepersun/BotGuard/internal/store"
+	"github.com/dkeepersun/BotGuard/internal/version"
 	"github.com/zeromicro/go-zero/core/logx"
 	"github.com/zeromicro/go-zero/core/stores/redis"
 )
@@ -130,7 +131,7 @@ func NewGateway(c config.GatewayConfig) (*Gateway, error) {
 		}
 		instance = host + ":" + strconv.Itoa(c.Port)
 	}
-	gw.Monitor = &logic.Monitor{Instance: instance, Store: repository.NewHealthStore(rds),
+	gw.Monitor = &logic.Monitor{Instance: instance, Version: version.String(), Store: repository.NewHealthStore(rds),
 		RateLimitedPerMinute: int64(c.Monitor.RateLimitedPerMinute), Pool: gw.Logic.PoolLevels}
 	gw.Logic.Monitor = gw.Monitor
 	go gw.Monitor.Run(context.Background())

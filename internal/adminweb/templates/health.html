@@ -14,11 +14,12 @@
       data-series="requests:请求:#2563eb,rate_limited:限流:#d97706,unavailable:503:#dc2626,degraded:降级:#7c3aed"></div></div></div>
 
   <div class="card mt"><div class="card-head"><h2>gateway 实例<span class="hint">超过 3 分钟没有上报的标为失联</span></h2></div>
-    <div class="card-body flush table-wrap"><table class="table"><thead><tr><th>实例</th><th>最近上报</th><th class="num">请求</th><th class="num">限流</th><th class="num">503</th><th class="num">降级</th><th class="num">题库最少</th><th class="num">协程</th><th class="num">内存</th></tr></thead><tbody>
-    {{range $d.Instances}}<tr><td class="mono"><span class="dot {{if .Stale}}bad{{else}}ok{{end}}"></span>{{.Name}}{{if .Stale}} <span class="badge bad">失联</span>{{end}}</td><td class="nowrap">{{ago .LastSeen}}</td>
+    <div class="card-body flush table-wrap"><table class="table"><thead><tr><th>实例</th><th>版本</th><th>最近上报</th><th class="num">请求</th><th class="num">限流</th><th class="num">503</th><th class="num">降级</th><th class="num">题库最少</th><th class="num">协程</th><th class="num">内存</th></tr></thead><tbody>
+    {{range $d.Instances}}<tr><td class="mono"><span class="dot {{if .Stale}}bad{{else}}ok{{end}}"></span>{{.Name}}{{if .Stale}} <span class="badge bad">失联</span>{{end}}</td>
+      <td class="mono nowrap">{{if .Last.Version}}{{.Last.Version}}{{else}}<span class="muted">未上报</span>{{end}}{{if and .Last.Version (ne .Last.Version $d.Running)}} <span class="badge warn">与管理后台不同</span>{{end}}</td><td class="nowrap">{{ago .LastSeen}}</td>
       <td class="num">{{num .Requests}}</td><td class="num">{{num .RateLimited}}</td><td class="num {{if .Unavailable}}bad-text{{end}}">{{num .Unavailable}}</td><td class="num">{{num .Degraded}}</td>
       <td class="num">{{if .PoolKnown}}{{.PoolMin}} / {{.PoolSize}}{{else}}<span class="muted">未开启</span>{{end}}</td><td class="num">{{.Last.Goroutines}}</td><td class="num">{{.Last.HeapMB}} MB</td></tr>
-    {{else}}<tr><td colspan="9"><div class="empty">还没有 gateway 上报。gateway 升级到带运行监控的版本、连上同一个 Redis 后，每分钟会出现一条记录。</div></td></tr>{{end}}
+    {{else}}<tr><td colspan="10"><div class="empty">还没有 gateway 上报。gateway 升级到带运行监控的版本、连上同一个 Redis 后，每分钟会出现一条记录。</div></td></tr>{{end}}
     </tbody></table></div></div>
 
   <div class="card mt"><div class="card-head"><h2>异常记录<span class="hint">只记录，不发送通知；最近 100 条</span></h2></div>

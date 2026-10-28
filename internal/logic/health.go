@@ -38,7 +38,9 @@ var (
 type Monitor struct {
 	// Instance names this gateway in the summaries, e.g. host:port.
 	Instance string
-	Store    *repository.HealthStore
+	// Version is reported with every summary.
+	Version string
+	Store   *repository.HealthStore
 	// RateLimitedPerMinute is the RATE_LIMITED count that makes a minute an
 	// anomaly; 0 never does.
 	RateLimitedPerMinute int64
@@ -97,7 +99,7 @@ func (m *Monitor) bump(c *map[string]int64, key string) {
 // take returns the counts so far and starts a new minute.
 func (m *Monitor) take(at time.Time) repository.HealthMinute {
 	m.mu.Lock()
-	out := repository.HealthMinute{At: at.Unix(), Instance: m.Instance, Requests: m.requests, Codes: m.codes, Degraded: m.degraded}
+	out := repository.HealthMinute{At: at.Unix(), Instance: m.Instance, Version: m.Version, Requests: m.requests, Codes: m.codes, Degraded: m.degraded}
 	m.requests, m.codes, m.degraded = nil, nil, nil
 	m.mu.Unlock()
 	if m.Pool != nil {

@@ -16,6 +16,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
 	"github.com/dkeepersun/BotGuard/internal/service/sealer"
+	"github.com/dkeepersun/BotGuard/internal/service/update"
 	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/dkeepersun/BotGuard/internal/version"
 	"github.com/zeromicro/go-zero/core/conf"
@@ -149,7 +150,17 @@ func main() {
 	server := rest.MustNewServer(c.RestConf)
 	defer server.Stop()
 	web := &adminweb.Server{Console: console, Apps: app, Repo: repo, Stats: repository.NewStats(rds), Health: repository.NewHealthStore(rds), IPs: ips, Checks: checks,
-		PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), CookieSecure: c.CookieSecure, SessionTTL: absolute, Info: info}
+		PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), CookieSecure: c.CookieSecure, SessionTTL: absolute, Info: info,
+		Version: version.String()}
+	if c.Update.Check {
+		u := c.Update.URL
+		if u == "" {
+			u = update.DefaultURL
+		}
+		web.Updates = &update.Checker{URL: u, Current: version.Version, Interval: time.Duration(c.Update.IntervalHours) * time.Hour,
+			Client: &http.Client{Timeout: 15 * time.Second}}
+		go web.Updates.Run(context.Background())
+	}
 	if err := web.Register(server); err != nil {
 		log.Fatal(err)
 	}

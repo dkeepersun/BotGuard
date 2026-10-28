@@ -33,6 +33,9 @@ type dashboardView struct {
 	Ranking  []AppRow
 	Recent   []RecentEvent
 	Checks   []Check
+	// Update is set for those who may install a release, when one is newer
+	// or the gateways run another version than the console.
+	Update *updateView
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
@@ -65,6 +68,16 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, p *logic.Prin
 		Failures: day.Prefixed("solve_fail", 6), Rejects: day.Prefixed("verify_reject", 6),
 		Ranking: rankApps(apps, perApp), Recent: recent, Checks: s.Checks(ctx)}
 	scaleBars(v.Failures, v.Rejects)
+	if p.Can(logic.PermSystem) {
+		up, err := s.versions(ctx)
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		if up.State.Newer || up.Mixed {
+			v.Update = &up
+		}
+	}
 	for _, a := range apps {
 		if a.Enabled {
 			v.Enabled++
@@ -703,9 +716,15 @@ type systemView struct {
 	Checks []Check
 	Info   map[string]string
 	Now    time.Time
+	Update updateView
 }
 
 func (s *Server) systemPage(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
+	up, err := s.versions(r.Context())
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
 	s.render(w, r, "system.html", View{Title: "系统状态", Active: "sysinfo", Me: p,
-		Data: systemView{Checks: s.Checks(r.Context()), Info: s.Info, Now: s.Now()}})
+		Data: systemView{Checks: s.Checks(r.Context()), Info: s.Info, Now: s.Now(), Update: up}})
 }

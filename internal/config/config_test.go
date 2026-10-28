@@ -18,6 +18,7 @@ func TestAdminConfigValidation(t *testing.T) {
 		c.MySQL.DataSource = "u:p@tcp(127.0.0.1:3306)/botguard"
 		c.Session.IdleMinutes, c.Session.AbsoluteHours = 30, 8
 		c.Cleanup.IntervalMinutes = 60
+		c.Update.IntervalHours = 6
 		return c
 	}
 	if err := base("0.0.0.0", true).Validate(); err != nil {
@@ -37,6 +38,22 @@ func TestAdminConfigValidation(t *testing.T) {
 	c.SecretKEK = "k1:not-base64"
 	if c.Validate() == nil {
 		t.Fatal("bad KEK accepted")
+	}
+	for _, u := range []string{"ftp://mirror.example/latest", "javascript:alert(1)", "https://"} {
+		c := base("127.0.0.1", true)
+		c.Update.URL = u
+		if c.Validate() == nil {
+			t.Fatalf("Update.URL %q accepted", u)
+		}
+	}
+	c = base("127.0.0.1", true)
+	c.Update.URL = "https://mirror.example/repos/dkeepersun/BotGuard/releases/latest"
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c.Update.IntervalHours = 0
+	if c.Validate() == nil {
+		t.Fatal("Update.IntervalHours 0 accepted")
 	}
 }
 

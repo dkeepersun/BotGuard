@@ -26,7 +26,9 @@ type healthInstance struct {
 }
 
 type healthView struct {
-	Now       time.Time
+	Now time.Time
+	// Running is this console's version, to flag gateways on another.
+	Running   string
 	Instances []healthInstance
 	Anomalies []repository.HealthAnomaly
 	Trend     Trend
@@ -43,7 +45,7 @@ var anomalyLabels = map[string]string{
 func (s *Server) healthPage(w http.ResponseWriter, r *http.Request, p *logic.Principal) {
 	ctx := r.Context()
 	now := s.Now()
-	v := healthView{Now: now}
+	v := healthView{Now: now, Running: s.Version}
 	instances, err := s.Health.Instances(ctx, now.Add(-24*time.Hour))
 	if err != nil {
 		s.serverError(w, r, err)

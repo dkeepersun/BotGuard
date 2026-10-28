@@ -9,6 +9,24 @@
       {{range $k, $v := $d.Info}}<dt>{{$k}}</dt><dd class="mono">{{$v}}</dd>{{end}}
     </dl></div></div>
   </div>
+  {{$u := $d.Update}}
+  <div class="card mt"><div class="card-head"><h2>版本更新</h2>
+    {{if and $u.Enabled (can .Me "system.manage")}}<form method="post" action="/system/update-check">{{template "csrf" $.CSRF}}<button class="btn sm">立即检查</button></form>{{end}}</div>
+    <div class="card-body"><dl class="kv">
+      <dt>管理后台</dt><dd class="mono">{{$u.Running}}</dd>
+      <dt>最新正式版本</dt><dd>{{if not $u.Enabled}}<span class="muted">已关闭检查（配置 Update.Check: false）</span>
+        {{else if $u.State.Latest}}<span class="mono">{{$u.State.Latest.Tag}}</span>{{if not $u.State.Latest.PublishedAt.IsZero}} · 发布于 {{time $u.State.Latest.PublishedAt}}{{end}}{{if $u.State.Latest.URL}} · <a href="{{$u.State.Latest.URL}}" target="_blank" rel="noopener noreferrer">更新说明</a>{{end}}
+          {{if $u.State.Newer}} <span class="badge warn">有新版本</span>{{else if $u.State.Current}} <span class="badge ok">已是最新</span>{{end}}
+        {{else}}<span class="muted">还没有检查成功</span>{{end}}</dd>
+      {{if $u.Enabled}}<dt>上次检查</dt><dd>{{time $u.State.CheckedAt}}{{if $u.State.Err}} <span class="bad-text">失败：{{$u.State.Err}}</span>{{end}}</dd>{{end}}
+      <dt>gateway</dt><dd>{{range $u.Gateways}}<div><span class="mono">{{or .Version "未上报版本（v0.5.0 及更早）"}}</span>
+          {{if .Same}}<span class="badge ok">与管理后台一致</span>{{else}}<span class="badge warn">与管理后台不同</span>{{end}} <span class="cell-sub">{{join .Instances "、"}}</span></div>
+        {{else}}<span class="muted">最近 3 分钟没有 gateway 上报（见运行状况）</span>{{end}}</dd>
+    </dl>
+    {{if and $u.Enabled (not $u.State.Current)}}<div class="alert info mt">这是开发构建（源码编译），没有正式版本号，不和发布版本比较；源码部署用 <code>sudo botguard update</code> 升级。</div>{{end}}
+    {{if or $u.State.Newer $u.Mixed}}<div class="alert info mt"><span>升级方法：deb / rpm 安装执行 <code>sudo dnf upgrade botguard</code> 或 <code>sudo apt upgrade</code>；发布包安装执行 <code>sudo botguard upgrade</code>；Docker 重新执行安装命令。多台服务器逐台升级，每台的 gateway 和管理后台保持同一版本。</span></div>{{end}}
+    </div></div>
+
   <div class="card mt"><div class="card-head"><h2>运维提示</h2></div><div class="card-body"><ul style="margin:0;padding-left:18px;line-height:2">
     <li>升级时先执行 <code>botguard-ctl migrate up</code>，再滚动替换 gateway；库结构落后时 gateway 的 /readyz 会返回 <code>schema_outdated</code>。</li>
     <li>管理后台和 gateway 必须使用同一个 <code>BOTGUARD_SECRET_KEK</code>；更换 KEK 时把旧值放进 <code>BOTGUARD_SECRET_KEK_PREVIOUS</code>。</li>

@@ -41,6 +41,7 @@ type env struct {
 	stats   *repository.Stats
 	health  *repository.HealthStore
 	apps    *repository.AppAdmin
+	web     *Server
 }
 
 func newEnv(t *testing.T) *env {
@@ -75,7 +76,7 @@ func newEnv(t *testing.T) *env {
 	}
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, console: console, stats: stats, health: health, apps: repo}
+	return &env{t: t, srv: srv, console: console, stats: stats, health: health, apps: repo, web: web}
 }
 
 type browser struct {

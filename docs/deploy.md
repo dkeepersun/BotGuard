@@ -80,6 +80,8 @@ sudo -u botguard sqlite3 /var/lib/botguard/botguard.db ".backup '/var/lib/botgua
 | 源码 | `sudo botguard update`（git pull、编译、迁移、重启） |
 | Docker | `docker compose pull && docker compose up -d` |
 
+有新版本时，管理后台的控制台会提示超级管理员，「系统状态」页列出管理后台和各 gateway 的版本（见 [admin.md](admin.md)「版本更新」）。
+
 升级会自动完成：校验下载文件、替换程序、迁移数据库、重启服务。配置和数据保持不变。新版本需要修改配置时，会写在 Release 说明里。
 
 - `upgrade` 先校验 `checksums.txt`，不通过就放弃，不改任何文件；文件通过改名替换，运行中的服务不受影响。
