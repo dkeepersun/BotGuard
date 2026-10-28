@@ -124,6 +124,14 @@ Risk:
   # the tier is forgotten this many seconds after the client's last solve.
   LadderDowngradePasses: 3
   LadderWindowSeconds: 1800
+  # Attack mode, per app: when an app sees this many failed solves within two
+  # minutes, and they are at least this percentage of its solves, every risk
+  # level is raised one step for AttackHoldSeconds (low risk gets a puzzle,
+  # medium the hardest kind with harder PoW) and verify reports
+  # APP_UNDER_ATTACK. 0 failures disables it.
+  AttackFailures: 100
+  AttackRatioPercent: 70
+  AttackHoldSeconds: 900
 
 # Health summary: every minute each gateway writes its request, error-code,
 # degrade and puzzle-pool counts to Redis (kept 24 h) for the admin console's

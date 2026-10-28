@@ -485,6 +485,12 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		Fallback:       in.Fallback && policy.Mode != domain.ModeInvisible,
 	})
 	level := risk.Level(assessment.Score, g.Settings.RiskMedium, g.Settings.RiskHigh)
+	// Under attack every client is treated one level worse: low risk sees a
+	// puzzle, medium the hardest kind with harder PoW.
+	if g.underAttack(ctx, app.ID) {
+		level = risk.Raise(level)
+		assessment = assessment.Add(risk.Assessment{Reasons: []string{risk.ReasonAppUnderAttack}})
+	}
 	// Invisible mode never shows a picture, whatever the page asks.
 	ladder := in.Select.ladder() && policy.Mode != domain.ModeInvisible
 	rung := 0
@@ -621,6 +627,42 @@ type SolveOutput struct {
 	ExpiresIn int64 `json:"expires_in"`
 }
 
+func trajectoryPoints(t [][3]float64) []slider.Point {
+	out := make([]slider.Point, len(t))
+	for i, p := range t {
+		out[i] = slider.Point{T: p[0], X: p[1], Y: p[2]}
+	}
+	return out
+}
+
+// countSolve feeds the app's attack detector (Settings.AttackFailures).
+func (g *Gateway) countSolve(ctx context.Context, appID int64, failed bool) {
+	if g.Settings.AttackFailures <= 0 {
+		return
+	}
+	started, err := g.State.CountSolve(ctx, appID, failed, g.Now(), g.Settings.AttackFailures, g.Settings.AttackRatioPercent, g.Settings.AttackHold)
+	if err != nil {
+		logx.WithContext(ctx).Errorf("attack detector: %v", err)
+		return
+	}
+	if started {
+		logx.WithContext(ctx).Infof("app %d under attack: failures crossed %d in two minutes", appID, g.Settings.AttackFailures)
+	}
+}
+
+// underAttack reports whether the app's attack flag is up; a Redis error
+// counts as no.
+func (g *Gateway) underAttack(ctx context.Context, appID int64) bool {
+	if g.Settings.AttackFailures <= 0 {
+		return false
+	}
+	on, err := g.State.UnderAttack(ctx, appID)
+	if err != nil {
+		logx.WithContext(ctx).Errorf("attack flag: %v", err)
+	}
+	return on
+}
+
 // fail records a failed attempt for the IP and its network prefix, raising
 // their risk next time.
 func (g *Gateway) fail(ctx context.Context, ip netip.Addr, e *errx.Error) error {
@@ -749,6 +791,7 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		if state.Ladder {
 			g.climb(ctx, app.ID, ipBucket, false)
 		}
+		g.countSolve(ctx, app.ID, true)
 		return g.fail(ctx, in.ClientIP, e)
 	}
 	if err := pow.Verify(p.Algorithm, p.ChallengeID, p.Params, in.Nonces); err != nil {
@@ -838,6 +881,15 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if interactive && input == risk.PointerTouch {
 		observed = append(observed, risk.ReasonTouchInput)
 	}
+	// Keyboard drags move in fixed steps; only pointer paths are judged.
+	if input != risk.PointerKeyboard {
+		if domain.DragKind(p.Kind) && slider.Smooth(points) {
+			observed = append(observed, risk.ReasonTrajectorySmooth)
+		}
+		if isJigsaw && slider.Smooth(trajectoryPoints(in.Answer.Trajectory)) {
+			observed = append(observed, risk.ReasonTrajectorySmooth)
+		}
+	}
 	if state.Prefix != "" && clientip.Prefix(in.ClientIP) != state.Prefix {
 		observed = append(observed, risk.ReasonIPChanged)
 	}
@@ -867,5 +919,6 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	if state.Ladder {
 		g.climb(ctx, app.ID, ipBucket, true)
 	}
+	g.countSolve(ctx, app.ID, false)
 	return &SolveOutput{Token: token, ExpiresAt: exp, ExpiresIn: int64(g.Settings.TokenTTL / time.Second)}, origin, nil
 }

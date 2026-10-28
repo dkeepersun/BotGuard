@@ -144,6 +144,8 @@
 | `ua_platform_mismatch` | UA 声称的平台与 `navigator.platform`、触屏能力矛盾 |
 | `permission_mismatch` | 通知权限的两种查询方式结果矛盾（无头浏览器的已知特征） |
 | `automation_globals` | 存在常见自动化框架注入的全局变量 |
+| `cdp` | 页面的控制台正被开发者工具协议（CDP）读取。组件用 `console.debug` 输出一个错误对象，同时挂上 V8 的 `Error.prepareStackTrace`：只有 CDP 序列化这条消息时才会格式化错误的调用栈、触发这个钩子。Puppeteer、Playwright、Selenium 4 都会触发，打开了开发者工具的真人也会（+25，所以只是让他做题，不拦截）。网上流传的旧写法（给错误对象的 `stack` 加 getter）在现在的 Chrome 里已经不会触发。在 Chrome 156 无头模式下实测：开启 `Runtime.enable` 时为 true，不开时为 false。只对 Chrome、Edge 等 V8 内核的浏览器有效，Firefox、Safari 恒为 false。2026-10-29 加入 |
+| `native_tampered` | 组件检查的原生函数（`Function.prototype.toString`、`permissions.query`、`webdriver` 的 getter、`toDataURL`、WebGL `getParameter`）被替换，或 `webdriver`、`languages`、`plugins` 等被直接定义在 `navigator` 对象上，这是伪装插件和手写伪装的常见做法（+40）。部分防指纹插件也会改写 `toDataURL`，这类用户会多做一道题。2026-10-29 加入 |
 
 **交互信号**（从页面加载到点击、到拖动结束）：
 
@@ -175,6 +177,9 @@
 | `IP_CHANGED` | 解题和签发不在同一网段（+15）：可能是把题转给打码平台，也可能是手机切换了网络，所以只加分不拒绝 |
 | `SOLVE_TOO_FAST` | 图片题从签发到提交不到 800 ms（+25），人来不及看图作答 |
 | `POINTER_MISMATCH` | 激活时不是触摸或笔，解题却声称触摸或笔（+15）；这时按鼠标规则校验，触摸的宽松规则不生效 |
+| `TRAJECTORY_SMOOTH` | 拖动类（滑块、旋转、推理拼图）的轨迹步长变化太均匀（+15）：相邻两次采样之间，手的移动量忽大忽小（修正、传感器取整、帧延迟），步长变化与步长本身同一量级；程序生成的缓动曲线每步只变一点，加上随机时间间隔也一样。粗糙度（相邻步长变化的均值 / 步长均值）低于 0.15 视为平滑，至少 15 个采样才判断。只加分，不拒绝；真实用户的误报率还没有线上数据。2026-10-29 加入 |
+
+**应用级“被刷模式”**（2026-10-29 加入）：某个应用在两分钟内答题失败（PoW 或答案不对）达到 `Risk.AttackFailures`（默认 100）次，并且占这两分钟答题数的 `Risk.AttackRatioPercent`（默认 70%）以上时，该应用进入被刷模式，持续 `Risk.AttackHoldSeconds`（默认 15 分钟）。期间该应用的每个请求风险等级上调一级：低风险也要做题，中风险出最难的题型并提高 PoW；verify 带 `APP_UNDER_ATTACK`（权重 0，只说明原因）。只影响这一个应用，计数在 Redis 中，多个 gateway 共享。`AttackFailures: 0` 关闭。
 
 ### 5.2 怎么打分
 

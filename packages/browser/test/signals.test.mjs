@@ -68,3 +68,32 @@ test('interaction tracker takes a tap\'s pointer type from its pointerdown', () 
   listeners.pointerdown({ isTrusted: false, pointerType: 'touch' });
   assert.equal(tracker.snapshot({ type: 'click', isTrusted: true, pointerType: 'mouse' }).pointer_type, 'mouse');
 });
+
+test('a console read over the DevTools protocol is reported', async () => {
+  // A protocol client formats logged errors' stacks; a plain console does not.
+  const before = Error.prepareStackTrace;
+  const cdpConsole = { debug: (e) => void e.stack };
+  const env = await collectEnvironment({ outerWidth: 1440, outerHeight: 900, console: cdpConsole, Error }, desktopChrome, null);
+  assert.equal(env.cdp, true);
+  const quiet = await collectEnvironment({ outerWidth: 1440, outerHeight: 900, console: { debug() {} }, Error }, desktopChrome, null);
+  assert.equal(quiet.cdp, false);
+  assert.equal(Error.prepareStackTrace, before, 'the hook is put back');
+});
+
+test('replaced native functions and navigator spoofs are reported', async () => {
+  function Navigator() {}
+  const fakeToString = Function.prototype.toString;
+  const win = { outerWidth: 1, outerHeight: 1, Navigator, Function: { prototype: { toString: fakeToString, call: Function.prototype.call } } };
+  const real = Object.create(Navigator.prototype);
+  Object.assign(Navigator.prototype, { userAgent: desktopChrome.userAgent, platform: 'MacIntel', languages: ['zh-CN'], plugins: { length: 3 }, maxTouchPoints: 0 });
+  assert.equal((await collectEnvironment(win, real, null)).native_tampered, false);
+  // A spoof defined on the instance.
+  const spoofed = Object.create(Navigator.prototype);
+  Object.defineProperty(spoofed, 'webdriver', { get: () => false });
+  assert.equal((await collectEnvironment(win, spoofed, null)).native_tampered, true);
+  // A patched permissions.query.
+  const patched = Object.create(Navigator.prototype);
+  Navigator.prototype.permissions = { query: () => Promise.resolve({ state: 'prompt' }) };
+  assert.equal((await collectEnvironment(win, patched, null)).native_tampered, true);
+  delete Navigator.prototype.permissions;
+});

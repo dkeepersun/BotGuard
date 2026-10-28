@@ -2,6 +2,7 @@ package logic
 
 import (
 	"context"
+	"math"
 	"net/netip"
 	"slices"
 	"strconv"
@@ -175,4 +176,76 @@ func TestNetworkPrefix(t *testing.T) {
 	// Another network is not affected.
 	h.ip = netip.MustParseAddr("203.0.113.9")
 	h.issueFor(t, "login", nil, false)
+}
+
+// A burst of failures against one app raises every client of that app one
+// risk level: a clean client of an adaptive action, normally let through
+// invisibly, gets a puzzle, and verify says why.
+func TestAttackMode(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+	h.g.Settings.AttackFailures, h.g.Settings.AttackRatioPercent, h.g.Settings.AttackHold = 3, 50, 15*time.Minute
+	if c := h.issueFor(t, "adaptive", clean(), false); c.Kind != domain.KindInvisible {
+		t.Fatalf("before: %s", c.Kind)
+	}
+	for i := 0; i < 3; i++ {
+		h.ip = netip.AddrFrom4([4]byte{203, 0, byte(113 + i), 7})
+		c := h.issueFor(t, "slide", clean(), false)
+		if _, err := h.solveWith(c, &SliderAnswer{X: 10, Trajectory: humanDrag(10)}, clean()); code(err) != "ANSWER_INVALID" {
+			t.Fatalf("wrong answer %d: %v", i, err)
+		}
+	}
+	h.ip = netip.AddrFrom4([4]byte{192, 0, 2, 99})
+	c := h.issueFor(t, "adaptive", clean(), false)
+	if c.Kind != domain.KindSlider {
+		t.Fatalf("under attack: %s", c.Kind)
+	}
+	out, err := h.solveWith(c, &SliderAnswer{X: answerX, Trajectory: humanDrag(answerX)}, clean())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := h.verify(out.Token, "adaptive", "r-attack"); !slices.Contains(v.RiskReasons, risk.ReasonAppUnderAttack) {
+		t.Fatalf("reasons: %v", v.RiskReasons)
+	}
+	// Other apps are unaffected; the flag lapses after the hold.
+	if out, _, err := h.g.Issue(context.Background(), IssueInput{AppKey: appB, Action: "adaptive", Origin: "https://b.example", ClientIP: h.ip, Signals: clean()}); err != nil || out.Kind != domain.KindInvisible {
+		t.Fatalf("other app: %v %v", out, err)
+	}
+	h.redis.FastForward(16 * time.Minute)
+	if c := h.issueFor(t, "adaptive", clean(), false); c.Kind != domain.KindInvisible {
+		t.Fatalf("after the hold: %s", c.Kind)
+	}
+}
+
+// A generated easing curve passes the drag checks but adds risk.
+func TestSmoothTrajectory(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+	var eased [][3]float64
+	for i := 0; i <= 40; i++ {
+		p := float64(i) / 40
+		// Random-looking timing does not hide the curve.
+		eased = append(eased, [3]float64{float64(i)*16 + float64(i*7%5), p * p * (3 - 2*p) * answerX, math.Sin(p*3) * 2})
+	}
+	c := h.issueFor(t, "slide", clean(), false)
+	out, err := h.solveWith(c, &SliderAnswer{X: answerX, Trajectory: eased}, clean())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := h.verify(out.Token, "slide", "r-smooth"); !slices.Contains(v.RiskReasons, risk.ReasonTrajectorySmooth) {
+		t.Fatalf("eased drag: %v", v.RiskReasons)
+	}
+	// A hand's steps are uneven.
+	hand := slices.Clone(eased)
+	for i := 1; i < len(hand)-1; i++ {
+		hand[i][1] += float64(i*7%5-2) * 0.9
+	}
+	c = h.issueFor(t, "slide", clean(), false)
+	out, err = h.solveWith(c, &SliderAnswer{X: answerX, Trajectory: hand}, clean())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := h.verify(out.Token, "slide", "r-hand"); slices.Contains(v.RiskReasons, risk.ReasonTrajectorySmooth) {
+		t.Fatalf("hand drag: %v", v.RiskReasons)
+	}
 }

@@ -37,7 +37,12 @@ func humanDrag(target float64) [][3]float64 {
 	t := 0.0
 	for i := 0; i <= 40; i++ {
 		p := float64(i) / 40
-		pts = append(pts, [3]float64{t, p * p * (3 - 2*p) * (target + 4), math.Sin(p*3)*2 + float64(i%3)*0.4})
+		// Uneven steps, as a hand makes (slider.Smooth flags even ones).
+		jitter := 0.0
+		if i > 0 {
+			jitter = float64(i*7%5-2) * 0.9
+		}
+		pts = append(pts, [3]float64{t, p*p*(3-2*p)*(target+4) + jitter, math.Sin(p*3)*2 + float64(i%3)*0.4})
 		t += 14 + float64(i%5)
 	}
 	return append(pts, [3]float64{t + 80, target + 1, 1.5}, [3]float64{t + 140, target, 1.2})

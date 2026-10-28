@@ -118,6 +118,16 @@ sudo -u botguard sqlite3 /var/lib/botguard/botguard.db ".backup '/var/lib/botgua
 
 PHP、Laravel、Go SDK 不需要跟着升级。
 
+### v0.6.1 之后的行为变化
+
+下一个版本（照片背景、多语言、被刷模式）升级后：
+
+1. **题目背景默认混用照片**：所有应用默认“照片与程序生成各半”，照片来自内置的 57 张 CC0 风景照。不想要照片的应用在「背景图」标签改为“只用程序生成”。安全要求高的应用上传自己的照片并取消内置照片，见 [admin.md](admin.md)「背景图」。gateway 和管理后台的程序各增大约 5 MB，内存多约 30 MB（照片解码后缓存）。
+2. **迁移 0008、0009**：背景设置和上传的照片、外观与文案。SQLite 启动时自动迁移，MySQL 由升级命令先执行 `migrate up`。
+3. **浏览器组件 0.4.0**：新增语言、主题、圆角和文案。gateway 托管的 `/sdk/v1/` 脚本随服务端升级；npm 安装的组件不升级也照常工作（拿到简体中文提示），只是用不了新选项和后台的「外观与文案」。
+4. **被刷模式**：某个应用两分钟内答题失败 100 次以上、且占答题数七成以上时，该应用 15 分钟内所有请求的风险等级上调一级（低风险也要做题）。平时失败就多的大流量应用，按需调高 `gateway.yaml` 的 `Risk.AttackFailures`；设为 0 关闭。见 [challenge-types.md](challenge-types.md) §5.1。
+5. **新的风险原因码**：`CDP`、`NATIVE_TAMPERED`、`TRAJECTORY_SMOOTH`、`APP_UNDER_ATTACK`，会出现在 verify 的 `risk_reasons` 里。按原因码做二次判断的业务方可以把它们加进规则。
+
 ### 更换 KEK
 
 1. 生成新值：`echo "k1:$(openssl rand -base64 32)"`（`k1` 换成新的编号，例如 `k2`）。
