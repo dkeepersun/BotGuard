@@ -18,6 +18,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/password"
 	"github.com/dkeepersun/BotGuard/internal/service/sealer"
+	"github.com/dkeepersun/BotGuard/internal/store"
 	"github.com/dkeepersun/BotGuard/internal/testdb"
 	"github.com/dkeepersun/BotGuard/internal/webui"
 	"github.com/zeromicro/go-zero/core/stores/redis"
@@ -43,6 +44,7 @@ type env struct {
 	health  *repository.HealthStore
 	apps    *repository.AppAdmin
 	web     *Server
+	db      *store.DB
 }
 
 func newEnv(t *testing.T) *env {
@@ -77,7 +79,7 @@ func newEnv(t *testing.T) *env {
 	}
 	srv := httptest.NewServer(r)
 	t.Cleanup(srv.Close)
-	return &env{t: t, srv: srv, console: console, stats: stats, health: health, apps: repo, web: web}
+	return &env{t: t, srv: srv, console: console, stats: stats, health: health, apps: repo, web: web, db: conn}
 }
 
 type browser struct {

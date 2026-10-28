@@ -3,6 +3,7 @@ package clickshape
 import (
 	"bytes"
 	"encoding/base64"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"image/jpeg"
 	"math/rand/v2"
 	"strings"
@@ -18,16 +19,16 @@ func seeded(n uint64) *rand.Rand {
 }
 
 func TestGenerate(t *testing.T) {
-	a, err := Generate(seeded(1))
+	a, err := Generate(seeded(1), imagegen.Source{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := Generate(seeded(1))
+	b, _ := Generate(seeded(1), imagegen.Source{})
 	if a.Prompt != b.Prompt || a.Image != b.Image {
 		t.Fatal("same seed must give the same puzzle")
 	}
 	for i := uint64(0); i < 300; i++ {
-		p, err := Generate(seeded(i))
+		p, err := Generate(seeded(i), imagegen.Source{})
 		if err != nil {
 			t.Fatalf("seed %d: %v", i, err)
 		}
@@ -86,7 +87,7 @@ func TestNearMissDecoys(t *testing.T) {
 func BenchmarkGenerate(b *testing.B) {
 	r := seeded(9)
 	for b.Loop() {
-		if _, err := Generate(r); err != nil {
+		if _, err := Generate(r, imagegen.Source{}); err != nil {
 			b.Fatal(err)
 		}
 	}

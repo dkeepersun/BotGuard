@@ -47,18 +47,27 @@ func ToleranceX(degrees float64) int { return int(math.Round(degrees / 360 * Tra
 
 // picture draws a background whose bands cross the disc boundary, so every
 // wrong angle visibly breaks at least one of them.
-func picture(r *rand.Rand, cx, cy, radius float64) *image.RGBA {
-	img := imagegen.Background(r, Width, Height)
-	white := color.RGBA{255, 255, 255, 255}
-	for y := 0; y < Height; y++ {
-		for x := 0; x < Width; x++ {
-			imagegen.Blend(img, x, y, white, 0.25)
+func picture(r *rand.Rand, src imagegen.Source, cx, cy, radius float64) *image.RGBA {
+	img, photo := src.Background(r, Width, Height)
+	// Procedural pictures are washed so the bands stand out. A photo keeps
+	// its own contrast and gets two fainter, thinner bands and no arcs: the
+	// scene is most of what the user lines up, but a close-up of flowers has
+	// no clear way up.
+	bands, bandAlpha, bandScale := 3+r.IntN(2), 0.85, 1.0
+	if photo {
+		bands, bandAlpha, bandScale = 2, 0.55, 0.6
+	} else {
+		white := color.RGBA{255, 255, 255, 255}
+		for y := 0; y < Height; y++ {
+			for x := 0; x < Width; x++ {
+				imagegen.Blend(img, x, y, white, 0.25)
+			}
 		}
 	}
 	// Straight bands through the disc, at distinct angles so no two are
 	// parallel enough to be confused after a turn.
 	used := []float64{}
-	for n := 3 + r.IntN(2); n > 0; n-- {
+	for n := bands; n > 0; n-- {
 		var ang float64
 		for try := 0; try < 50; try++ {
 			ang = r.Float64() * math.Pi
@@ -76,14 +85,18 @@ func picture(r *rand.Rand, cx, cy, radius float64) *image.RGBA {
 		used = append(used, ang)
 		off := (r.Float64()*2 - 1) * radius * 0.6
 		nx, ny := -math.Sin(ang), math.Cos(ang)
-		width := 5 + r.Float64()*6
+		width := (5 + r.Float64()*6) * bandScale
 		c := imagegen.RandomColor(r)
-		imagegen.FillShape(img, 0, 0, Width, Height, c, 0.85, func(x, y float64) bool {
+		imagegen.FillShape(img, 0, 0, Width, Height, c, bandAlpha, func(x, y float64) bool {
 			return math.Abs((x-cx)*nx+(y-cy)*ny-off) <= width/2
 		})
 	}
 	// Arcs from circles centred outside the disc that cut through its rim.
-	for n := 1 + r.IntN(2); n > 0; n-- {
+	arcs := 1 + r.IntN(2)
+	if photo {
+		arcs = 0
+	}
+	for n := arcs; n > 0; n-- {
 		a := r.Float64() * 2 * math.Pi
 		dist := radius * (1.2 + r.Float64()*0.5)
 		ax, ay := cx+math.Cos(a)*dist, cy+math.Sin(a)*dist
@@ -124,17 +137,17 @@ func bilinear(img *image.RGBA, x, y float64) (float64, float64, float64) {
 }
 
 // Generate builds a puzzle from r. Production callers seed r from crypto/rand.
-func Generate(r *rand.Rand) (Puzzle, error) {
-	p, _, err := generate(r)
+func Generate(r *rand.Rand, src imagegen.Source) (Puzzle, error) {
+	p, _, err := generate(r, src)
 	return p, err
 }
 
 // generate also returns the unturned picture, for tests.
-func generate(r *rand.Rand) (Puzzle, *image.RGBA, error) {
+func generate(r *rand.Rand, src imagegen.Source) (Puzzle, *image.RGBA, error) {
 	radius := 64 + r.IntN(9)
 	cx := Width/2 + r.IntN(25) - 12
 	cy := Height/2 + r.IntN(17) - 8
-	full := picture(r, float64(cx), float64(cy), float64(radius))
+	full := picture(r, src, float64(cx), float64(cy), float64(radius))
 	// Away from 0° so the puzzle never starts solved or nearly so.
 	angle := 30 + r.Float64()*300
 

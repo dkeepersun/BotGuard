@@ -1,6 +1,6 @@
-// Package imagegen draws the procedural backgrounds and primitives shared by
-// the slider and click challenges. Standard library only: no image assets,
-// so there are no licences to track and no two images repeat.
+// Package imagegen draws the backgrounds and primitives shared by the
+// challenge kinds: procedural pictures that never repeat (background.go) and
+// treated photos from a library (photo.go; the built-in one is in photos/).
 package imagegen
 
 import (

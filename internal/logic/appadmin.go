@@ -2,6 +2,8 @@ package logic
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -12,6 +14,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/domain"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/credential"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
 	"github.com/dkeepersun/BotGuard/internal/service/sealer"
 )
@@ -251,4 +254,40 @@ func (a *AppAdmin) ListApps(ctx context.Context) ([]repository.AppSummary, error
 
 func (a *AppAdmin) AppDetail(ctx context.Context, appKey string) (*repository.AppDetail, error) {
 	return a.Repo.AppDetail(ctx, appKey)
+}
+
+// SetBackground chooses where the app's challenge pictures come from.
+func (a *AppAdmin) SetBackground(ctx context.Context, appKey, mode string, builtin bool) error {
+	if !domain.ValidBackgroundMode(mode) {
+		return invalid("背景来源只能是 mixed、photo 或 procedural")
+	}
+	ctx = repository.Audited(ctx, "background.set", appKey, map[string]any{"mode": mode, "builtin": builtin})
+	return a.Repo.SetBackground(ctx, appKey, mode, builtin)
+}
+
+// AddBackground checks and re-encodes an uploaded picture (see
+// imagegen.Normalize) and stores it for the app.
+func (a *AppAdmin) AddBackground(ctx context.Context, appKey, name string, data []byte) (int64, error) {
+	img, err := imagegen.Normalize(data)
+	if err != nil {
+		return 0, invalid("%s：%v", name, err)
+	}
+	sum := sha256.Sum256(img)
+	ctx = repository.Audited(ctx, "background.add", appKey, map[string]any{"file": name, "bytes": len(img)})
+	id, err := a.Repo.AddBackground(ctx, appKey, img, hex.EncodeToString(sum[:]))
+	switch {
+	case errors.Is(err, repository.ErrTooMany):
+		return 0, invalid("每个应用最多 %d 张背景图，请先删除不用的", domain.MaxBackgroundUploads)
+	case errors.Is(err, domain.ErrDuplicate):
+		return 0, invalid("%s：这张图片已经上传过", name)
+	}
+	return id, err
+}
+
+func (a *AppAdmin) DeleteBackground(ctx context.Context, appKey string, id int64) error {
+	return a.Repo.DeleteBackground(repository.Audited(ctx, "background.delete", appKey, map[string]any{"id": id}), appKey, id)
+}
+
+func (a *AppAdmin) BackgroundImage(ctx context.Context, appKey string, id int64) ([]byte, error) {
+	return a.Repo.BackgroundImage(ctx, appKey, id)
 }

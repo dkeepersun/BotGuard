@@ -132,7 +132,7 @@ func questions(objs []object) []question {
 }
 
 // Generate asks two questions about different shapes.
-func Generate(r *rand.Rand) (click.Puzzle, error) {
+func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 	for attempt := 0; attempt < 100; attempt++ {
 		objs := layout(r)
 		qs := questions(objs)
@@ -152,7 +152,7 @@ func Generate(r *rand.Rand) (click.Puzzle, error) {
 		if second == nil {
 			continue
 		}
-		bg := imagegen.Background(r, Width, Height)
+		bg, _ := src.Background(r, Width, Height)
 		white := color.RGBA{255, 255, 255, 255}
 		for y := 0; y < Height; y++ {
 			for x := 0; x < Width; x++ {

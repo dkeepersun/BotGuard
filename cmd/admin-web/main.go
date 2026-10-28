@@ -15,6 +15,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/migration"
 	"github.com/dkeepersun/BotGuard/internal/repository"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen/photos"
 	"github.com/dkeepersun/BotGuard/internal/service/sealer"
 	"github.com/dkeepersun/BotGuard/internal/service/update"
 	"github.com/dkeepersun/BotGuard/internal/store"
@@ -149,7 +150,7 @@ func main() {
 	app := &logic.AppAdmin{Repo: repo, Sealer: seal, Now: time.Now}
 	server := rest.MustNewServer(c.RestConf)
 	defer server.Stop()
-	web := &adminweb.Server{Console: console, Apps: app, Repo: repo, Stats: repository.NewStats(rds), Health: repository.NewHealthStore(rds), IPs: ips, Checks: checks,
+	web := &adminweb.Server{Console: console, Apps: app, Repo: repo, Photos: photos.Library(), Stats: repository.NewStats(rds), Health: repository.NewHealthStore(rds), IPs: ips, Checks: checks,
 		PublicEndpoint: strings.TrimRight(c.PublicEndpoint, "/"), CookieSecure: c.CookieSecure, SessionTTL: absolute, Info: info,
 		Version: version.String(), Started: time.Now()}
 	if c.Update.Check {

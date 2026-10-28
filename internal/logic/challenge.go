@@ -25,6 +25,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/clock"
 	"github.com/dkeepersun/BotGuard/internal/service/grid"
 	"github.com/dkeepersun/BotGuard/internal/service/gridcount"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/mirror"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
@@ -214,9 +215,15 @@ var errSaturated = errors.New("puzzle generation saturated")
 // puzzle returns a fresh puzzle of an interactive kind: from the pool when it
 // has one, otherwise generated now if a slot is free. It never queues behind
 // a flood; it answers errSaturated instead.
-func (g *Gateway) puzzle(kind string) (any, error) {
-	if v, ok := g.pool.take(kind); ok {
-		return v, nil
+//
+// The pool holds pictures from the default background source only, so an
+// app with its own setting always gets a fresh one.
+func (g *Gateway) puzzle(ctx context.Context, app *domain.App, kind string) (any, error) {
+	pooled := app.Background.Default()
+	if pooled {
+		if v, ok := g.pool.take(kind); ok {
+			return v, nil
+		}
 	}
 	slots := g.slots()
 	select {
@@ -225,7 +232,11 @@ func (g *Gateway) puzzle(kind string) (any, error) {
 	default:
 		return nil, errSaturated
 	}
-	return g.generate(kind)
+	src := g.Backgrounds.Default()
+	if !pooled {
+		src = g.Backgrounds.Source(ctx, app)
+	}
+	return g.generate(kind, src)
 }
 
 func cryptoRand() (*rand.Rand, error) {
@@ -238,7 +249,7 @@ func cryptoRand() (*rand.Rand, error) {
 
 // generate makes one puzzle of kind: a slider.Puzzle, rotate.Puzzle,
 // jigsaw.Puzzle, click.Puzzle or grid.Puzzle. It takes no slot; callers bound it.
-func (g *Gateway) generate(kind string) (any, error) {
+func (g *Gateway) generate(kind string, src imagegen.Source) (any, error) {
 	switch {
 	case kind == domain.KindSlider && g.Puzzles != nil:
 		return g.Puzzles()
@@ -257,27 +268,27 @@ func (g *Gateway) generate(kind string) (any, error) {
 	}
 	switch kind {
 	case domain.KindSlider:
-		return slider.Generate(r)
+		return slider.Generate(r, src)
 	case domain.KindRotate:
-		return rotate.Generate(r)
+		return rotate.Generate(r, src)
 	case domain.KindJigsaw:
-		return jigsaw.Generate(r)
+		return jigsaw.Generate(r, src)
 	case domain.KindClickText:
-		return clicktext.Generate(r)
+		return clicktext.Generate(r, src)
 	case domain.KindClickOrder:
-		return clicktext.GenerateOrder(r)
+		return clicktext.GenerateOrder(r, src)
 	case domain.KindClickIcon:
-		return clickicon.Generate(r)
+		return clickicon.Generate(r, src)
 	case domain.KindSpatial:
-		return spatial.Generate(r)
+		return spatial.Generate(r, src)
 	case domain.KindClickShape:
-		return clickshape.Generate(r)
+		return clickshape.Generate(r, src)
 	case domain.KindClock:
-		return clock.Generate(r)
+		return clock.Generate(r, src)
 	case domain.KindGridCount:
-		return gridcount.Generate(r)
+		return gridcount.Generate(r, src)
 	case domain.KindMirror:
-		return mirror.Generate(r)
+		return mirror.Generate(r, src)
 	default:
 		return nil, fmt.Errorf("no generator for kind %q", kind)
 	}
@@ -293,7 +304,8 @@ func (g *Gateway) generate(kind string) (any, error) {
 // spend it from a few networks and push the app onto the PoW-only path. A
 // network prefix over its own share is therefore refused (429) before it
 // touches the app quota: degrading it would hand it exactly that cheap path.
-func (g *Gateway) interactivePuzzle(ctx context.Context, appID int64, prefix, kind string) (puzzle any, cause string, err error) {
+func (g *Gateway) interactivePuzzle(ctx context.Context, app *domain.App, prefix, kind string) (puzzle any, cause string, err error) {
+	appID := app.ID
 	if quota := g.Settings.InteractivePerPrefixPerMinute; quota > 0 {
 		ok, retry, err := g.Limiter.Allow(ctx, dimPrefixInteractive, strconv.FormatInt(appID, 10)+":"+prefix, quota, rateWindow)
 		if err != nil {
@@ -314,7 +326,7 @@ func (g *Gateway) interactivePuzzle(ctx context.Context, appID int64, prefix, ki
 			return nil, DegradeQuota, nil
 		}
 	}
-	v, err := g.puzzle(kind)
+	v, err := g.puzzle(ctx, app, kind)
 	if errors.Is(err, errSaturated) {
 		return nil, DegradeSaturated, nil
 	}
@@ -451,7 +463,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	degraded := false
 	if domain.ValidInteractiveKind(kind) {
 		var cause string
-		if puzzle, cause, err = g.interactivePuzzle(ctx, app.ID, prefix, kind); err != nil {
+		if puzzle, cause, err = g.interactivePuzzle(ctx, app, prefix, kind); err != nil {
 			return nil, origin, err
 		}
 		if puzzle == nil {

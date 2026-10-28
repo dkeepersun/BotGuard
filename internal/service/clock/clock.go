@@ -180,14 +180,14 @@ func layout(r *rand.Rand, n int) ([]face, bool) {
 }
 
 // Generate builds a puzzle from r. Production callers seed r from crypto/rand.
-func Generate(r *rand.Rand) (click.Puzzle, error) {
-	p, _, err := generate(r)
+func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
+	p, _, err := generate(r, src)
 	return p, err
 }
 
 // generate also returns the faces, for tests; the targets are the first
 // Targets of them.
-func generate(r *rand.Rand) (click.Puzzle, []face, error) {
+func generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, []face, error) {
 	for attempt := 0; attempt < 50; attempt++ {
 		n := 4
 		if r.IntN(3) == 0 {
@@ -215,7 +215,7 @@ func generate(r *rand.Rand) (click.Puzzle, []face, error) {
 			f.hand = imagegen.HSV(r.Float64()*360, 0.2+r.Float64()*0.6, 0.08+r.Float64()*0.22)
 		}
 
-		bg := imagegen.Background(r, Width, Height)
+		bg, _ := src.Background(r, Width, Height)
 		white := color.RGBA{255, 255, 255, 255}
 		for y := 0; y < Height; y++ {
 			for x := 0; x < Width; x++ {

@@ -2,6 +2,7 @@ package clickicon
 
 import (
 	"encoding/base64"
+	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"math"
 	"math/rand/v2"
 	"os"
@@ -50,7 +51,7 @@ func TestGenerate(t *testing.T) {
 	per := time.Duration(math.MaxInt64)
 	start := time.Now()
 	for seed := uint64(1); seed <= 20; seed++ {
-		p, err := Generate(rand.New(rand.NewPCG(seed, 11)))
+		p, err := Generate(rand.New(rand.NewPCG(seed, 11)), imagegen.Source{})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -66,7 +67,7 @@ func TestGenerate(t *testing.T) {
 		t.Fatalf("too slow: %v", per)
 	}
 	if dir := os.Getenv("KIND_SAMPLE_DIR"); dir != "" {
-		p, _ := Generate(rand.New(rand.NewPCG(5, 5)))
+		p, _ := Generate(rand.New(rand.NewPCG(5, 5)), imagegen.Source{})
 		for name, url := range map[string]string{"icon.jpg": p.Image, "icon-prompt.png": p.PromptImage} {
 			b, _ := base64.StdEncoding.DecodeString(url[strings.Index(url, ",")+1:])
 			_ = os.WriteFile(dir+"/"+name, b, 0o644)

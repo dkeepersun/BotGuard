@@ -169,13 +169,13 @@ func paint(img *image.RGBA, s shape, x, y, unit, turn float64, flipped bool, fil
 }
 
 // Generate builds a puzzle from r. Production callers seed r from crypto/rand.
-func Generate(r *rand.Rand) (grid.Puzzle, error) {
-	p, _, _, err := generate(r)
+func Generate(r *rand.Rand, src imagegen.Source) (grid.Puzzle, error) {
+	p, _, _, err := generate(r, src)
 	return p, err
 }
 
 // generate also returns the shape and the copies, for tests.
-func generate(r *rand.Rand) (grid.Puzzle, shape, []copyOf, error) {
+func generate(r *rand.Rand, src imagegen.Source) (grid.Puzzle, shape, []copyOf, error) {
 	s := randomShape(r)
 	_, _, reach := extent(s)
 	cellW, cellH := float64(Width)/Cols, float64(Height)/Rows
@@ -192,7 +192,7 @@ func generate(r *rand.Rand) (grid.Puzzle, shape, []copyOf, error) {
 		}
 	}
 
-	bg := imagegen.Background(r, Width, Height)
+	bg, _ := src.Background(r, Width, Height)
 	white := color.RGBA{255, 255, 255, 255}
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {

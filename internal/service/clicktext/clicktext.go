@@ -127,20 +127,20 @@ func darkColor(r *rand.Rand) color.RGBA {
 }
 
 // Generate draws 3 targets (4 a quarter of the time) and 1–2 decoys.
-func Generate(r *rand.Rand) (click.Puzzle, error) {
+func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 	n := 3
 	if r.IntN(4) == 0 {
 		n = 4
 	}
 	total := n + 1 + r.IntN(2)
 	perm := r.Perm(len(runes))[:total]
-	return compose(r, perm, n, func(words []string) string { return "请依次点击：" + strings.Join(words, "、") })
+	return compose(r, src, perm, n, func(words []string) string { return "请依次点击：" + strings.Join(words, "、") })
 }
 
 // GenerateOrder draws a four-character idiom, shuffled, with 1–2 decoy
 // characters. The prompt does not give the order: the user has to know the
 // idiom, then find its characters.
-func GenerateOrder(r *rand.Rand) (click.Puzzle, error) {
+func GenerateOrder(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 	idiom := []rune(Idioms[r.IntN(len(Idioms))])
 	index := make(map[rune]int, len(runes))
 	for i, c := range runes {
@@ -161,11 +161,11 @@ func GenerateOrder(r *rand.Rand) (click.Puzzle, error) {
 			decoys--
 		}
 	}
-	return compose(r, glyphs, len(idiom), func([]string) string { return "请按成语的正确顺序，依次点击图中的 4 个字" })
+	return compose(r, src, glyphs, len(idiom), func([]string) string { return "请按成语的正确顺序，依次点击图中的 4 个字" })
 }
 
 // compose places and draws glyphs; the first n are the targets, in order.
-func compose(r *rand.Rand, perm []int, n int, prompt func(words []string) string) (click.Puzzle, error) {
+func compose(r *rand.Rand, src imagegen.Source, perm []int, n int, prompt func(words []string) string) (click.Puzzle, error) {
 	a, err := loadAtlas()
 	if err != nil {
 		return click.Puzzle{}, err
@@ -195,7 +195,7 @@ func compose(r *rand.Rand, perm []int, n int, prompt func(words []string) string
 		}
 	}
 
-	bg := imagegen.Background(r, Width, Height)
+	bg, _ := src.Background(r, Width, Height)
 	white := color.RGBA{255, 255, 255, 255}
 	for y := 0; y < Height; y++ {
 		for x := 0; x < Width; x++ {
