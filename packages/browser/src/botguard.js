@@ -40,7 +40,7 @@ const MAX_FAILURES = 3;
 const COOLDOWN_MS = 10_000;
 const MAX_POINTS = 400; // the gateway's slider.MaxPoints
 // Kinds answered with ordered clicks on the picture.
-const CLICK_KINDS = ['click_text', 'click_order', 'click_icon', 'click_shape', 'spatial'];
+const CLICK_KINDS = ['click_text', 'click_order', 'click_icon', 'click_shape', 'clock', 'spatial'];
 const SAMPLE_MS = 8; // minimum spacing of trajectory samples
 const PROGRESS_MS = 100; // minimum spacing of progress repaints
 

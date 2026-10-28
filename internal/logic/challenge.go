@@ -22,6 +22,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/clickshape"
 	"github.com/dkeepersun/BotGuard/internal/service/clicktext"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
+	"github.com/dkeepersun/BotGuard/internal/service/clock"
 	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
 	"github.com/dkeepersun/BotGuard/internal/service/risk"
@@ -238,6 +239,8 @@ func (g *Gateway) generate(kind string) (any, error) {
 		return spatial.Generate(r)
 	case domain.KindClickShape:
 		return clickshape.Generate(r)
+	case domain.KindClock:
+		return clock.Generate(r)
 	default:
 		return nil, fmt.Errorf("no generator for kind %q", kind)
 	}

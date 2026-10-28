@@ -12,6 +12,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/clickicon"
 	"github.com/dkeepersun/BotGuard/internal/service/clickshape"
 	"github.com/dkeepersun/BotGuard/internal/service/clicktext"
+	"github.com/dkeepersun/BotGuard/internal/service/clock"
 	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/qrcode"
 	"github.com/dkeepersun/BotGuard/internal/service/rotate"
@@ -70,10 +71,10 @@ func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Pri
 		}
 		out["jigsaw"] = map[string]any{"width": jigsaw.Width, "height": jigsaw.Height, "image": pz.Image, "rows": jigsaw.Rows, "cols": jigsaw.Cols,
 			"swap": []int{pz.A, pz.B}}
-	case domain.KindClickText, domain.KindClickOrder, domain.KindClickIcon, domain.KindClickShape, domain.KindSpatial:
+	case domain.KindClickText, domain.KindClickOrder, domain.KindClickIcon, domain.KindClickShape, domain.KindClock, domain.KindSpatial:
 		generate := map[string]func(*rand.Rand) (click.Puzzle, error){
 			domain.KindClickText: clicktext.Generate, domain.KindClickOrder: clicktext.GenerateOrder, domain.KindClickIcon: clickicon.Generate,
-			domain.KindClickShape: clickshape.Generate, domain.KindSpatial: spatial.Generate,
+			domain.KindClickShape: clickshape.Generate, domain.KindClock: clock.Generate, domain.KindSpatial: spatial.Generate,
 		}[kind]
 		pz, err := generate(rnd)
 		if err != nil {

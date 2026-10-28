@@ -386,7 +386,7 @@ func TestPhaseThreeKinds(t *testing.T) {
 	}
 
 	human := &SliderAnswer{Clicks: [][3]float64{{1700, 62, 48}, {2600, 224, 83}, {3350, 137, 158}}, MovesBetween: []int{3, 12, 9}}
-	for action, kind := range map[string]string{"icons": domain.KindClickIcon, "order": domain.KindClickOrder, "where": domain.KindSpatial} {
+	for action, kind := range map[string]string{"icons": domain.KindClickIcon, "order": domain.KindClickOrder, "where": domain.KindSpatial, "time": domain.KindClock} {
 		c := h.issueFor(t, action, clean(), false)
 		if c.Kind != kind || c.Click == nil || c.Click.Targets != 3 {
 			t.Fatalf("%s issue: %+v", kind, c)

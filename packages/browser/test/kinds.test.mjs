@@ -74,5 +74,13 @@ test('click_icon shows the icon strip; other click kinds do not', async () => {
   await flush();
   assert.equal(img.hidden, true);
   assert.match($(el, '.prompt').textContent, /依次点击/);
+
+  gateway.kind = 'clock';
+  gateway.challenge = () => ({ ...original(), click: { width: 320, height: 200, image: 'data:,', prompt: '请依次点击：显示 3:40 的时钟、显示 8:15 的时钟', targets: 2 } });
+  el.reset();
+  el.verify().catch(() => {});
+  await flush();
+  assert.equal($(el, '.click-ui').hidden, false);
+  assert.match($(el, '.prompt').textContent, /3:40/);
   gateway.challenge = original;
 });
