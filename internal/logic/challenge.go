@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"net/netip"
 	"runtime"
+	"slices"
 	"strconv"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/mirror"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 	"github.com/dkeepersun/BotGuard/internal/service/risk"
 	"github.com/dkeepersun/BotGuard/internal/service/rotate"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
@@ -98,6 +100,9 @@ type IssueInput struct {
 	// Select is the page's requested kinds or ladder; zero leaves the
 	// choice to the action policy.
 	Select Selection
+	// Lang is the page's language tag; prompts come back in the nearest
+	// supported language (package prompt), Simplified Chinese when empty.
+	Lang string
 	// Widget is the version the browser widget reports, empty before 0.3.0.
 	// It only feeds the console's count of outdated widgets: a script can
 	// leave it out as easily as an old widget, so it never picks the kind.
@@ -200,6 +205,32 @@ func (g *Gateway) chooseKind(policy domain.ActionPolicy, level string, fallback 
 	default:
 		return domain.KindInvisible, factor
 	}
+}
+
+// textKinds ask the user to read Chinese characters.
+var textKinds = []string{domain.KindClickText, domain.KindClickOrder}
+
+// readable drops the text kinds from the action for pages in a language
+// other than Chinese; with nothing left it offers the slider.
+func readable(policy domain.ActionPolicy, lang string) domain.ActionPolicy {
+	if prompt.Chinese(lang) {
+		return policy
+	}
+	kinds := slices.DeleteFunc(slices.Clone(actionKinds(policy)), func(k string) bool { return slices.Contains(textKinds, k) })
+	if len(kinds) == 0 {
+		kinds = []string{domain.KindSlider}
+	}
+	policy.Kinds = kinds
+	return policy
+}
+
+// promptIn picks the prompt in lang; zh is the Simplified Chinese one, for
+// puzzles made without translations.
+func promptIn(t prompt.Text, zh, lang string) string {
+	if s := t[lang]; s != "" {
+		return s
+	}
+	return zh
 }
 
 // slots is the semaphore bounding concurrent image generation, one slot per
@@ -416,6 +447,8 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	if !ok || !policy.Enabled {
 		return nil, origin, errx.ErrActionForbidden
 	}
+	lang := prompt.Lang(in.Lang)
+	policy = readable(policy, lang)
 	// The page's kinds / levels count only where the action opts in: anyone
 	// can write them, so left on by default they would let a bot always ask
 	// for the easiest kind. Elsewhere they are ignored, not refused, so a
@@ -521,10 +554,10 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 	case click.Puzzle:
 		state.Targets = pz.Targets
 		clickRender = &ClickRender{Width: pz.Width, Height: pz.Height, Image: pz.Image,
-			Prompt: pz.Prompt, PromptImage: pz.PromptImage, Targets: len(pz.Targets)}
+			Prompt: promptIn(pz.Prompts, pz.Prompt, lang), PromptImage: pz.PromptImage, Targets: len(pz.Targets)}
 	case grid.Puzzle:
 		state.Grid = &gridState{Width: pz.Width, Height: pz.Height, Rows: pz.Rows, Cols: pz.Cols, Cells: pz.Answer}
-		gridRender = &GridRender{Width: pz.Width, Height: pz.Height, Image: pz.Image, Prompt: pz.Prompt,
+		gridRender = &GridRender{Width: pz.Width, Height: pz.Height, Image: pz.Image, Prompt: promptIn(pz.Prompts, pz.Prompt, lang),
 			PromptImage: pz.PromptImage, Rows: pz.Rows, Cols: pz.Cols}
 	}
 	private, err := json.Marshal(state)

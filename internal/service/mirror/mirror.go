@@ -23,6 +23,7 @@ import (
 
 	"github.com/dkeepersun/BotGuard/internal/service/grid"
 	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 )
 
 const (
@@ -217,7 +218,12 @@ func generate(r *rand.Rand, src imagegen.Source) (grid.Puzzle, shape, []copyOf, 
 	if err != nil {
 		return grid.Puzzle{}, nil, nil, err
 	}
-	return grid.Puzzle{Image: url, PromptImage: ref, Prompt: "请选出所有与示例互为镜像（翻转过）的图形，只是转动过的不要选",
+	t := prompt.Text{
+		prompt.ZhCN: "请选出所有与示例互为镜像（翻转过）的图形，只是转动过的不要选",
+		prompt.ZhTW: "請選出所有與示例互為鏡像（翻轉過）的圖形，只是轉動過的不要選",
+		prompt.En:   "Select every shape that is a mirror image (flipped) of the example; skip the ones that are only turned",
+	}
+	return grid.Puzzle{Image: url, PromptImage: ref, Prompt: t[prompt.ZhCN], Prompts: t,
 		Width: Width, Height: Height, Rows: Rows, Cols: Cols, Answer: answer}, s, copies, nil
 }
 

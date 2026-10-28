@@ -19,6 +19,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/click"
 	"github.com/dkeepersun/BotGuard/internal/service/grid"
 	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 )
 
 const (
@@ -34,8 +35,14 @@ const (
 // shapes are the kinds a prompt can count; each stays recognisable when
 // small and turned (squares are only tilted a little, or they would pass for
 // diamonds).
+// names translates the shape names (Traditional Chinese, English singular).
+var names = map[string]struct{ tw, en string }{
+	"圆形": {"圓形", "circle"}, "三角形": {"三角形", "triangle"}, "正方形": {"正方形", "square"},
+	"五角星": {"五角星", "star"}, "十字": {"十字", "cross"},
+}
+
 var shapes = []struct {
-	name   string
+	name   string                  // Simplified Chinese; names has the others
 	inside func(x, y float64) bool // unit coordinates, centred
 	spin   float64                 // largest rotation, radians
 }{
@@ -188,7 +195,17 @@ func generate(r *rand.Rand, src imagegen.Source) (grid.Puzzle, [][]item, error) 
 		if err != nil {
 			return grid.Puzzle{}, nil, err
 		}
-		return grid.Puzzle{Image: url, Prompt: fmt.Sprintf("请选出所有恰好有 %d 个%s的格子", n, shapes[target].name),
+		name := names[shapes[target].name]
+		plural := name.en + "s"
+		if n == 1 {
+			plural = name.en
+		}
+		t := prompt.Text{
+			prompt.ZhCN: fmt.Sprintf("请选出所有恰好有 %d 个%s的格子", n, shapes[target].name),
+			prompt.ZhTW: fmt.Sprintf("請選出所有恰好有 %d 個%s的格子", n, name.tw),
+			prompt.En:   fmt.Sprintf("Select every cell with exactly %d %s", n, plural),
+		}
+		return grid.Puzzle{Image: url, Prompt: t[prompt.ZhCN], Prompts: t,
 			Width: Width, Height: Height, Rows: Rows, Cols: Cols, Answer: answer}, cells, nil
 	}
 	return grid.Puzzle{}, nil, fmt.Errorf("gridcount: no layout after 50 attempts")

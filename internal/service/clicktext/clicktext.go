@@ -27,6 +27,7 @@ import (
 
 	"github.com/dkeepersun/BotGuard/internal/service/click"
 	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 )
 
 const (
@@ -221,7 +222,13 @@ func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 	}
 	total := n + 1 + r.IntN(2)
 	perm := r.Perm(len(runes))[:total]
-	return compose(r, src, perm, n, func(words []string) string { return "请依次点击：" + strings.Join(words, "、") })
+	return compose(r, src, perm, n, func(words []string) prompt.Text {
+		return prompt.Text{
+			prompt.ZhCN: "请依次点击：" + prompt.Join(prompt.ZhCN, words),
+			prompt.ZhTW: "請依次點擊：" + prompt.Join(prompt.ZhTW, words),
+			prompt.En:   "Click in order: " + prompt.Join(prompt.En, words),
+		}
+	})
 }
 
 // GenerateOrder draws a four-character idiom, shuffled, with 1–2 decoy
@@ -248,11 +255,17 @@ func GenerateOrder(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 			decoys--
 		}
 	}
-	return compose(r, src, glyphs, len(idiom), func([]string) string { return "请按成语的正确顺序，依次点击图中的 4 个字" })
+	return compose(r, src, glyphs, len(idiom), func([]string) prompt.Text {
+		return prompt.Text{
+			prompt.ZhCN: "请按成语的正确顺序，依次点击图中的 4 个字",
+			prompt.ZhTW: "請按成語的正確順序，依次點擊圖中的 4 個字",
+			prompt.En:   "Click the 4 characters in the order of the Chinese idiom they form",
+		}
+	})
 }
 
 // compose places and draws glyphs; the first n are the targets, in order.
-func compose(r *rand.Rand, src imagegen.Source, perm []int, n int, prompt func(words []string) string) (click.Puzzle, error) {
+func compose(r *rand.Rand, src imagegen.Source, perm []int, n int, text func(words []string) prompt.Text) (click.Puzzle, error) {
 	a, err := loadAtlas()
 	if err != nil {
 		return click.Puzzle{}, err
@@ -322,7 +335,8 @@ func compose(r *rand.Rand, src imagegen.Source, perm []int, n int, prompt func(w
 		targets[i] = click.Target{X: g.x, Y: g.y, R: g.size * 0.55}
 		words[i] = string(runes[g.idx])
 	}
-	return click.Puzzle{Image: url, Prompt: prompt(words), Width: Width, Height: Height, Targets: targets}, nil
+	t := text(words)
+	return click.Puzzle{Image: url, Prompt: t[prompt.ZhCN], Prompts: t, Width: Width, Height: Height, Targets: targets}, nil
 }
 
 func segmentDistance(px, py, x0, y0, x1, y1 float64) float64 {

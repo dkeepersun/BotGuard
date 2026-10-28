@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 	"image/jpeg"
 	"math/rand/v2"
 	"strings"
@@ -61,16 +62,19 @@ func TestDescriptionsAreUnique(t *testing.T) {
 		}
 		for j := range objs {
 			for _, d := range unique(objs, j) {
-				matches := 0
-				for _, o := range objs {
-					for _, e := range o.desc() {
-						if e == d {
-							matches++
+				// Unique in every language, not only the one compared.
+				for _, lang := range prompt.Langs {
+					matches := 0
+					for _, o := range objs {
+						for _, e := range o.desc() {
+							if e[lang] == d[lang] {
+								matches++
+							}
 						}
 					}
-				}
-				if matches != 1 {
-					t.Fatalf("seed %d: %q matches %d objects", i, d, matches)
+					if matches != 1 {
+						t.Fatalf("seed %d: %q matches %d objects", i, d[lang], matches)
+					}
 				}
 			}
 		}

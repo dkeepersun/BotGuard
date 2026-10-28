@@ -3,6 +3,7 @@ package logic
 import (
 	"context"
 	"encoding/base64"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 	"math"
 	"net/netip"
 	"slices"
@@ -451,5 +452,45 @@ func TestGridKinds(t *testing.T) {
 	many := &SliderAnswer{Clicks: make([][3]float64, 25)}
 	if _, err := h.solveWith(h.issueFor(t, "count", clean(), false), many, clean()); code(err) != "INVALID_REQUEST" {
 		t.Fatalf("too many clicks: %v", err)
+	}
+}
+
+// Pages in a language other than Chinese never get the text kinds, and get
+// prompts in their language; Chinese pages keep them.
+func TestLanguage(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+	clicks := h.g.Clicks
+	h.g.Clicks = func(kind string) (click.Puzzle, error) {
+		p, err := clicks(kind)
+		p.Prompts = prompt.Text{prompt.ZhCN: p.Prompt, prompt.ZhTW: "請點擊：" + kind, prompt.En: "Click: " + kind}
+		return p, err
+	}
+	h.apps.apps[appA].Actions["words"] = domain.ActionPolicy{Enabled: true, Mode: domain.ModeInteractive,
+		Kinds: []string{domain.KindClickText, domain.KindClickOrder, domain.KindClickShape}, Puzzles: 2, Difficulty: 16}
+	h.apps.apps[appA].Actions["only_words"] = domain.ActionPolicy{Enabled: true, Mode: domain.ModeInteractive,
+		Kinds: []string{domain.KindClickText}, Puzzles: 2, Difficulty: 16}
+	issue := func(action, lang string) *IssueOutput {
+		t.Helper()
+		out, _, err := h.g.Issue(context.Background(), IssueInput{AppKey: appA, Action: action, Origin: originA, ClientIP: h.ip, Signals: clean(), Lang: lang})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	for range 20 {
+		c := issue("words", "en-US")
+		if c.Kind != domain.KindClickShape || c.Click.Prompt != "Click: click_shape" {
+			t.Fatalf("English page: %s %q", c.Kind, c.Click.Prompt)
+		}
+	}
+	if c := issue("only_words", "fr"); c.Kind != domain.KindSlider {
+		t.Fatalf("no readable kind left: %s", c.Kind)
+	}
+	if c := issue("only_words", "zh-HK"); c.Kind != domain.KindClickText || c.Click.Prompt != "請點擊：click_text" {
+		t.Fatalf("Traditional Chinese page: %s %q", c.Kind, c.Click.Prompt)
+	}
+	if c := issue("only_words", ""); c.Click.Prompt != "请依次点击：click_text" {
+		t.Fatalf("no language: %q", c.Click.Prompt)
 	}
 }

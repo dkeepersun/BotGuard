@@ -18,6 +18,7 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
 	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/mirror"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 	"github.com/dkeepersun/BotGuard/internal/service/qrcode"
 	"github.com/dkeepersun/BotGuard/internal/service/rotate"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
@@ -63,6 +64,7 @@ func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Pri
 	kind := r.URL.Query().Get("kind")
 	rnd := previewRand()
 	src := s.previewSource(r)
+	lang := prompt.Lang(r.URL.Query().Get("lang"))
 	out := map[string]any{"kind": kind, "name": kindNames[kind]}
 	switch kind {
 	case domain.KindSlider:
@@ -99,7 +101,7 @@ func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Pri
 			s.serverError(w, r, err)
 			return
 		}
-		out["click"] = map[string]any{"width": pz.Width, "height": pz.Height, "image": pz.Image, "prompt": pz.Prompt,
+		out["click"] = map[string]any{"width": pz.Width, "height": pz.Height, "image": pz.Image, "prompt": pz.Prompts.In(lang),
 			"prompt_image": pz.PromptImage, "targets": pz.Targets}
 	case domain.KindGridCount, domain.KindMirror:
 		generate := map[string]func(*rand.Rand, imagegen.Source) (grid.Puzzle, error){domain.KindGridCount: gridcount.Generate, domain.KindMirror: mirror.Generate}[kind]
@@ -108,7 +110,7 @@ func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Pri
 			s.serverError(w, r, err)
 			return
 		}
-		out["grid"] = map[string]any{"width": pz.Width, "height": pz.Height, "image": pz.Image, "prompt": pz.Prompt,
+		out["grid"] = map[string]any{"width": pz.Width, "height": pz.Height, "image": pz.Image, "prompt": pz.Prompts.In(lang),
 			"prompt_image": pz.PromptImage, "rows": pz.Rows, "cols": pz.Cols, "answer": pz.Answer}
 	default:
 		http.Error(w, "unknown kind", http.StatusBadRequest)

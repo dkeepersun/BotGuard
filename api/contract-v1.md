@@ -86,9 +86,15 @@ interactive 模式每次从列表随机选题；adaptive 模式中风险随机�
 
 gateway 托管浏览器组件：`load.js`（经典脚本，提供 `initBotGuard`，对应易盾的 `load.min.js`）、`botguard.js`、`signals.js`、`solver.js`、`worker.js`。这些是公开文件，返回 `Access-Control-Allow-Origin: *`，因为模块脚本和跨域 Worker 导入都要求 CORS；`Cache-Control: public, max-age=300`。不兼容的改动发布到新的路径版本（`/sdk/v2/`）。
 
+## GET /v1/ui?app_key=…（浏览器）
+
+返回应用在管理后台「外观与文案」里的设置，组件加载时读取：`lang`（`zh-CN`、`zh-TW`、`en`、`auto`）、`theme`（`light`、`dark`、`auto`）、`accent`（`#rrggbb`）、`radius`（像素）、`texts`（按组件文案键替换文案，如 `{"idle": "点击开始验证"}`；组件只在语言与 `lang` 相同时使用，`lang` 为空或 `auto` 时按简体中文）。都是可选字段，没有设置时 data 为 `{}`。页面自己设置的选项优先于这里的值。
+
+和签发一样按应用的允许来源校验 Origin，只对允许来源返回 CORS 头；不允许的来源 403 `ORIGIN_NOT_ALLOWED`，未知或停用的应用 403 `APP_FORBIDDEN`。内容不是秘密，响应带 `Cache-Control: public, max-age=60`，修改后约 1 分钟内生效。
+
 ## POST /v1/challenges（浏览器）
 
-请求：`app_key`、`action`，可选 `signals`（风险信号对象，字段见 `docs/challenge-types.md` §5，缺失计为 `NO_SIGNALS`）、`fallback`（布尔，选择无障碍备用路径），以及 `kinds`（字符串数组）或 `levels`（字符串数组的数组），见上文“前端指定题型”，`widget`（字符串，浏览器组件的版本号，0.3.0 起由组件自动带上）。`widget` 只用于管理后台统计仍在使用的旧版组件（早于 0.3.0 的组件不能显示 `clock`、`mirror`、`grid_count`），不影响出题：脚本省略它和旧组件一样容易，所以 gateway 不会因为缺少它就换题型。服务端从请求读取 Origin，按应用的允许来源校验；缺失/`null` Origin 默认拒绝。允许来源有三种写法：精确来源 `https://shop.example.com`（协议、域名、端口都要一致）；子域名通配 `https://*.example.com`，匹配任意层子域名，协议和端口要一致，不含 `example.com` 本身，`*.com` 这类只有一级的写法会被拒绝；全部允许 `*`，任何来源都通过（包括 `app://`），等于放弃来源校验，任何网站都能用这个 app_key 拿到 token（例如把验证组件嵌到别的网站、诱导访客代做验证），只在域名多且经常变化时使用，并由业务端核对 verify 返回的 `origin`。原生 App（包括 uni-app App 端从逻辑层发出的请求）没有 Origin，可改用请求头 `X-BotGuard-Origin: app://包名`，白名单里登记同样的 `app://包名`；只有请求不带 Origin 时才读这个头，所以浏览器里的网页（POST 一定带 Origin，`null` 也算）无法冒充 App。App 来源的响应不带 CORS 头。和 Origin 一样，这个头能被脚本伪造，只用于区分应用的使用场景，不构成身份。仅为允许来源返回 CORS，`Vary: Origin`，不用跨站 cookie。预检请求不带 body、无法得知应用，因此对任何 Origin 都返回允许（`Access-Control-Max-Age: 600`）；真正的请求仍按应用白名单校验，且只对允许来源返回 CORS 头。
+请求：`app_key`、`action`，可选 `signals`（风险信号对象，字段见 `docs/challenge-types.md` §5，缺失计为 `NO_SIGNALS`）、`fallback`（布尔，选择无障碍备用路径），以及 `kinds`（字符串数组）或 `levels`（字符串数组的数组），见上文“前端指定题型”，`widget`（字符串，浏览器组件的版本号，0.3.0 起由组件自动带上）、`lang`（页面语言，BCP 47 标签，0.4.0 起由组件带上）。`lang` 决定 `click` / `grid` 的 `prompt` 用哪种语言：简体中文（缺省、`zh`、`zh-CN`、`zh-Hans`、`zh-SG`）、繁体中文（`zh-TW`、`zh-HK`、`zh-MO`、`zh-Hant`）、英文（其他一切）。非中文页面不出文字点选 `click_text` 和语序点选 `click_order`（要认读汉字），从 action 的其余题型中出；只剩这两种时出滑块。`widget` 只用于管理后台统计仍在使用的旧版组件（早于 0.3.0 的组件不能显示 `clock`、`mirror`、`grid_count`），不影响出题：脚本省略它和旧组件一样容易，所以 gateway 不会因为缺少它就换题型。服务端从请求读取 Origin，按应用的允许来源校验；缺失/`null` Origin 默认拒绝。允许来源有三种写法：精确来源 `https://shop.example.com`（协议、域名、端口都要一致）；子域名通配 `https://*.example.com`，匹配任意层子域名，协议和端口要一致，不含 `example.com` 本身，`*.com` 这类只有一级的写法会被拒绝；全部允许 `*`，任何来源都通过（包括 `app://`），等于放弃来源校验，任何网站都能用这个 app_key 拿到 token（例如把验证组件嵌到别的网站、诱导访客代做验证），只在域名多且经常变化时使用，并由业务端核对 verify 返回的 `origin`。原生 App（包括 uni-app App 端从逻辑层发出的请求）没有 Origin，可改用请求头 `X-BotGuard-Origin: app://包名`，白名单里登记同样的 `app://包名`；只有请求不带 Origin 时才读这个头，所以浏览器里的网页（POST 一定带 Origin，`null` 也算）无法冒充 App。App 来源的响应不带 CORS 头。和 Origin 一样，这个头能被脚本伪造，只用于区分应用的使用场景，不构成身份。仅为允许来源返回 CORS，`Vary: Origin`，不用跨站 cookie。预检请求不带 body、无法得知应用，因此对任何 Origin 都返回允许（`Access-Control-Max-Age: 600`）；真正的请求仍按应用白名单校验，且只对允许来源返回 CORS 头。
 
 签发前校验应用/action 启用并完成签发限流。签发是无状态的：不写入任何 per-challenge 的 Redis 记录，只更新有界的限流计数。
 

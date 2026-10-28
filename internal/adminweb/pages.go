@@ -186,6 +186,25 @@ type appDetailView struct {
 	Reveal *secretOnceView
 	// BuiltinPhotos and MaxBackgrounds describe the backgrounds tab.
 	BuiltinPhotos, MaxBackgrounds int
+	// The appearance tab's choices and texts.
+	UILangs, UIThemes []option
+	UITexts           []uiText
+}
+
+type option struct{ Value, Label string }
+
+type uiText struct{ Key, Label, Default, Value string }
+
+// uiTextLabels names the texts the console can change, with the widget's
+// Simplified Chinese default (packages/browser MESSAGES) as the placeholder.
+var uiTextLabels = map[string][2]string{
+	"idle":        {"入口标题", "点击进行人机验证"},
+	"idleSub":     {"入口副标题", "大多数情况下无需操作，必要时会出现拼图或点选题"},
+	"loading":     {"加载中", "正在获取验证…"},
+	"verified":    {"通过后", "验证通过"},
+	"sliderTitle": {"滑块标题", "请完成下方拼图"},
+	"sliderHint":  {"滑块轨道提示", "向右拖动，补全拼图"},
+	"clickTitle":  {"点选标题", "请按提示依次点击"},
 }
 
 func estimate(puzzles int, difficulty uint64) (uint64, string) {
@@ -229,7 +248,13 @@ func (s *Server) loadAppDetail(ctx context.Context, key string) (appDetailView, 
 		return appDetailView{}, err
 	}
 	v := appDetailView{App: d, Counts: perApp[d.ID], Trend: trend, Endpoint: s.PublicEndpoint, Apps: apps,
-		BuiltinPhotos: s.Photos.Len(), MaxBackgrounds: domain.MaxBackgroundUploads}
+		BuiltinPhotos: s.Photos.Len(), MaxBackgrounds: domain.MaxBackgroundUploads,
+		UILangs:  []option{{"", "简体中文（默认）"}, {"zh-TW", "繁體中文"}, {"en", "English"}, {"auto", "跟随浏览器"}},
+		UIThemes: []option{{"", "浅色（默认）"}, {"dark", "深色"}, {"auto", "跟随系统"}}}
+	for _, k := range domain.UITextKeys {
+		l := uiTextLabels[k]
+		v.UITexts = append(v.UITexts, uiText{Key: k, Label: l[0], Default: l[1], Value: d.UI.Texts[k]})
+	}
 	v.Kinds = v.Counts.Prefixed("issue", 0)
 	if v.Endpoint == "" {
 		v.Endpoint = "https://你的-gateway-地址"
@@ -829,4 +854,29 @@ func (s *Server) backgroundImage(w http.ResponseWriter, r *http.Request, p *logi
 	w.Header().Set("Cache-Control", "private, max-age=86400")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(img)
+}
+
+func (s *Server) uiSave(w http.ResponseWriter, r *http.Request, p *logic.Principal) (string, error) {
+	key := pathvar.Vars(r)["key"]
+	ui := domain.AppUI{Lang: r.PostFormValue("lang"), Theme: r.PostFormValue("theme"), Accent: strings.TrimSpace(r.PostFormValue("accent"))}
+	if v := strings.TrimSpace(r.PostFormValue("radius")); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			return "", fmt.Errorf("%w: 圆角须为整数", logic.ErrInvalid)
+		}
+		ui.Radius = &n
+	}
+	for _, k := range domain.UITextKeys {
+		if v := r.PostFormValue("text_" + k); v != "" {
+			if ui.Texts == nil {
+				ui.Texts = map[string]string{}
+			}
+			ui.Texts[k] = v
+		}
+	}
+	if err := s.Apps.SetUI(s.actor(r, p), key, ui); err != nil {
+		return "", err
+	}
+	s.setFlash(w, "ok", "外观与文案已保存，组件约 1 分钟内用上")
+	return "", errRedirect{appBack(key, "ui")}
 }

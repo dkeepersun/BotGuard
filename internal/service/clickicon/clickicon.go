@@ -16,6 +16,7 @@ import (
 
 	"github.com/dkeepersun/BotGuard/internal/service/click"
 	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 )
 
 const (
@@ -195,11 +196,12 @@ func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 		if err != nil {
 			return click.Puzzle{}, err
 		}
-		prompt, err := strip(kinds[:n])
+		strip, err := strip(kinds[:n])
 		if err != nil {
 			return click.Puzzle{}, err
 		}
-		return click.Puzzle{Image: url, Prompt: "请依次点击下列图标", PromptImage: prompt, Width: Width, Height: Height,
+		t := prompt.Text{prompt.ZhCN: "请依次点击下列图标", prompt.ZhTW: "請依次點擊下列圖示", prompt.En: "Click the icons below in order"}
+		return click.Puzzle{Image: url, Prompt: t[prompt.ZhCN], Prompts: t, PromptImage: strip, Width: Width, Height: Height,
 			Targets: targets[:n]}, nil
 	}
 	return click.Puzzle{}, fmt.Errorf("clickicon: no layout after 50 attempts")
