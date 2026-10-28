@@ -81,13 +81,18 @@ func TestBackgroundHidesTheDiscArea(t *testing.T) {
 
 func TestGenerateIsFastEnough(t *testing.T) {
 	r := rand.New(rand.NewPCG(9, 9))
-	start := time.Now()
-	for i := 0; i < 20; i++ {
-		if _, err := Generate(r); err != nil {
-			t.Fatal(err)
+	// The fastest of several batches: go test runs packages in parallel, and
+	// a CI runner busy with them once failed a single 20-puzzle average.
+	per := time.Duration(math.MaxInt64)
+	for range 5 {
+		start := time.Now()
+		for i := 0; i < 4; i++ {
+			if _, err := Generate(r); err != nil {
+				t.Fatal(err)
+			}
 		}
+		per = min(per, time.Since(start)/4)
 	}
-	per := time.Since(start) / 20
 	t.Logf("%v per puzzle", per)
 	if per > 40*time.Millisecond && !raceEnabled {
 		t.Fatalf("too slow: %v", per)
