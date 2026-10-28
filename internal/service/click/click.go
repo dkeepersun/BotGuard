@@ -75,6 +75,17 @@ func Check(targets []Target, clicks [][3]float64, movesBetween []int, input stri
 			return ReasonPosition
 		}
 	}
+	return Rhythm(clicks, movesBetween, input)
+}
+
+// Rhythm applies the timing and pointer-movement rules to a click sequence
+// (any kind answered with clicks): time to read the prompt, gaps between
+// clicks, total time, machine-regular gaps and, for a mouse, moves between
+// clicks.
+func Rhythm(clicks [][3]float64, movesBetween []int, input string) string {
+	if len(clicks) == 0 {
+		return ReasonCount
+	}
 	if clicks[0][0] < minFirstMs {
 		return ReasonTooSoon
 	}

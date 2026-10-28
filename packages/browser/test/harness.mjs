@@ -67,6 +67,7 @@ export const gateway = {
       rotate: { width: 320, height: 200, background: 'data:,', disc: 'data:,', cx: 160, cy: 100, radius: 68, track: 280 },
       jigsaw: { width: 320, height: 200, image: 'data:,', rows: 2, cols: 4 },
       click: { width: 320, height: 200, image: 'data:,', prompt: '请依次点击下列图标', prompt_image: 'data:image/png;base64,AA==', targets: 2 },
+      grid: { width: 320, height: 200, image: 'data:,', prompt: '请选出所有恰好有 3 个三角形的格子', rows: 3, cols: 3 },
     };
   },
   solution() {

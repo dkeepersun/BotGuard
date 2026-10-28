@@ -123,7 +123,7 @@
   const codeColors = {
     low: '#16a34a', medium: '#f59e0b', high: '#dc2626',
     invisible: '#94a3b8', slider: '#2563eb', rotate: '#7c3aed', jigsaw: '#0d9488', click_text: '#0891b2', click_order: '#ca8a04',
-    click_icon: '#ea580c', click_shape: '#db2777', clock: '#65a30d', spatial: '#4f46e5', fallback: '#64748b',
+    click_icon: '#ea580c', click_shape: '#db2777', clock: '#65a30d', grid_count: '#0284c7', mirror: '#c026d3', spatial: '#4f46e5', fallback: '#64748b',
   };
   const colorOf = (it, i) => codeColors[it.Code] || palette[i % palette.length];
   function donut(box) {
@@ -346,7 +346,8 @@
   const pv = $('[data-preview]');
   if (pv) {
     const kinds = [['slider', '滑块拼图'], ['rotate', '旋转对齐'], ['jigsaw', '推理拼图'], ['click_text', '文字点选'],
-      ['click_order', '语序点选'], ['click_icon', '图标点选'], ['click_shape', '图形点选'], ['clock', '时钟读数'], ['spatial', '空间推理']];
+      ['click_order', '语序点选'], ['click_icon', '图标点选'], ['mirror', '镜像辨别'], ['click_shape', '图形点选'], ['clock', '时钟读数'],
+      ['grid_count', '九宫格计数'], ['spatial', '空间推理']];
     const showAnswer = $('#pv-answer');
     pv.innerHTML = kinds.map(([k, n]) => `<div class="card"><div class="card-head"><h2>${n}<span class="hint mono">${k}</span></h2>
       <button class="btn sm" data-regen="${k}">换一张</button></div><div class="card-body" id="pv-${k}"><div class="empty">生成中…</div></div></div>`).join('');
@@ -413,6 +414,25 @@
           prompt.appendChild(strip);
         }
         meta.innerHTML = `<span>答案：按编号依次点击绿色圈内（半径 +4px 容差）</span><span>服务端生成 ${ms}ms</span>`;
+        box.replaceChildren(prompt, stage, meta);
+        return;
+      } else if (d.grid) {
+        const s = d.grid;
+        stage.style.aspectRatio = `${s.width} / ${s.height}`;
+        const cw = 100 / s.cols, ch = 100 / s.rows;
+        stage.innerHTML = `<img class="bg" src="${s.image}" alt="">` + s.answer.map((i) =>
+          `<div class="target" style="left:${(i % s.cols) * cw}%;top:${Math.floor(i / s.cols) * ch}%;width:${cw}%;height:${ch}%;border-radius:4px">✓</div>`).join('');
+        const prompt = document.createElement('div');
+        prompt.className = 'pv-prompt';
+        prompt.textContent = s.prompt;
+        if (s.prompt_image) {
+          const ref = document.createElement('img');
+          ref.src = s.prompt_image;
+          ref.alt = '示例图形';
+          ref.style.cssText = 'display:block;height:56px;margin-top:6px;border-radius:6px';
+          prompt.appendChild(ref);
+        }
+        meta.innerHTML = `<span>答案：选中绿色的 ${s.answer.length} 格（从左上角起按行编号 ${s.answer.map((i) => i + 1).join('、')}）</span><span>服务端生成 ${ms}ms</span>`;
         box.replaceChildren(prompt, stage, meta);
         return;
       }

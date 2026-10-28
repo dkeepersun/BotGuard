@@ -23,7 +23,10 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/clicktext"
 	"github.com/dkeepersun/BotGuard/internal/service/clientip"
 	"github.com/dkeepersun/BotGuard/internal/service/clock"
+	"github.com/dkeepersun/BotGuard/internal/service/grid"
+	"github.com/dkeepersun/BotGuard/internal/service/gridcount"
 	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
+	"github.com/dkeepersun/BotGuard/internal/service/mirror"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
 	"github.com/dkeepersun/BotGuard/internal/service/risk"
 	"github.com/dkeepersun/BotGuard/internal/service/rotate"
@@ -58,9 +61,11 @@ type sealedState struct {
 	X       int            `json:"x,omitempty"`
 	Targets []click.Target `json:"t,omitempty"`
 	// Swap is the jigsaw answer: the two swapped tiles.
-	Swap    []int    `json:"w,omitempty"`
-	Score   int      `json:"s"`
-	Reasons []string `json:"r,omitempty"`
+	Swap []int `json:"w,omitempty"`
+	// Grid is the grid kinds' geometry and the cells to select.
+	Grid    *gridState `json:"g,omitempty"`
+	Score   int        `json:"s"`
+	Reasons []string   `json:"r,omitempty"`
 	// Ladder is set when the page asked for a kind ladder: the solve then
 	// moves the client's rung.
 	Ladder bool `json:"l,omitempty"`
@@ -70,6 +75,14 @@ type sealedState struct {
 	Pointer  string `json:"p,omitempty"`
 	Prefix   string `json:"n,omitempty"`
 	IssuedMs int64  `json:"i,omitempty"`
+}
+
+type gridState struct {
+	Width  int   `json:"w"`
+	Height int   `json:"h"`
+	Rows   int   `json:"r"`
+	Cols   int   `json:"c"`
+	Cells  []int `json:"a"`
 }
 
 type IssueInput struct {
@@ -127,6 +140,20 @@ type IssueOutput struct {
 	Click       *ClickRender  `json:"click,omitempty"`
 	Rotate      *RotateRender `json:"rotate,omitempty"`
 	Jigsaw      *JigsawRender `json:"jigsaw,omitempty"`
+	Grid        *GridRender   `json:"grid,omitempty"`
+}
+
+// GridRender is a select-the-cells picture: the cells split the image
+// evenly into Rows × Cols.
+type GridRender struct {
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Image  string `json:"image"`
+	Prompt string `json:"prompt"`
+	// PromptImage is a reference picture (mirror).
+	PromptImage string `json:"prompt_image,omitempty"`
+	Rows        int    `json:"rows"`
+	Cols        int    `json:"cols"`
 }
 
 // JigsawRender is the swapped picture and its tile grid.
@@ -206,7 +233,7 @@ func cryptoRand() (*rand.Rand, error) {
 }
 
 // generate makes one puzzle of kind: a slider.Puzzle, rotate.Puzzle,
-// jigsaw.Puzzle or click.Puzzle. It takes no slot; callers bound it.
+// jigsaw.Puzzle, click.Puzzle or grid.Puzzle. It takes no slot; callers bound it.
 func (g *Gateway) generate(kind string) (any, error) {
 	switch {
 	case kind == domain.KindSlider && g.Puzzles != nil:
@@ -217,6 +244,8 @@ func (g *Gateway) generate(kind string) (any, error) {
 		return g.Jigsaws()
 	case domain.ClickKind(kind) && g.Clicks != nil:
 		return g.Clicks(kind)
+	case domain.GridKind(kind) && g.Grids != nil:
+		return g.Grids(kind)
 	}
 	r, err := cryptoRand()
 	if err != nil {
@@ -241,6 +270,10 @@ func (g *Gateway) generate(kind string) (any, error) {
 		return clickshape.Generate(r)
 	case domain.KindClock:
 		return clock.Generate(r)
+	case domain.KindGridCount:
+		return gridcount.Generate(r)
+	case domain.KindMirror:
+		return mirror.Generate(r)
 	default:
 		return nil, fmt.Errorf("no generator for kind %q", kind)
 	}
@@ -446,6 +479,7 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		rotateRender *RotateRender
 		jigsawRender *JigsawRender
 		clickRender  *ClickRender
+		gridRender   *GridRender
 	)
 	switch pz := puzzle.(type) {
 	case slider.Puzzle:
@@ -463,6 +497,10 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		state.Targets = pz.Targets
 		clickRender = &ClickRender{Width: pz.Width, Height: pz.Height, Image: pz.Image,
 			Prompt: pz.Prompt, PromptImage: pz.PromptImage, Targets: len(pz.Targets)}
+	case grid.Puzzle:
+		state.Grid = &gridState{Width: pz.Width, Height: pz.Height, Rows: pz.Rows, Cols: pz.Cols, Cells: pz.Answer}
+		gridRender = &GridRender{Width: pz.Width, Height: pz.Height, Image: pz.Image, Prompt: pz.Prompt,
+			PromptImage: pz.PromptImage, Rows: pz.Rows, Cols: pz.Cols}
 	}
 	private, err := json.Marshal(state)
 	if err != nil {
@@ -486,13 +524,15 @@ func (g *Gateway) Issue(ctx context.Context, in IssueInput) (out *IssueOutput, a
 		return nil, origin, errx.ErrUnavailable
 	}
 	return &IssueOutput{Kind: kind, Challenge: signed, ChallengeID: id, Algorithm: p.Algorithm, Params: params,
-		ExpiresAt: p.ExpiresAt, Slider: render, Click: clickRender, Rotate: rotateRender, Jigsaw: jigsawRender}, origin, nil
+		ExpiresAt: p.ExpiresAt, Slider: render, Click: clickRender, Rotate: rotateRender, Jigsaw: jigsawRender,
+		Grid: gridRender}, origin, nil
 }
 
 // SliderAnswer carries the interactive answer. For the slider: the final
 // piece position and the drag that produced it ([ms since pointer down, x, y]).
 // For click kinds: each click as [ms since the panel appeared, x, y] and the
-// pointer moves seen before each click.
+// pointer moves seen before each click. Grid kinds send their cell toggles
+// the same way; the selection is replayed from them.
 type SliderAnswer struct {
 	X            float64      `json:"x"`
 	Trajectory   [][3]float64 `json:"trajectory"`
@@ -616,6 +656,10 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 	var points []slider.Point
 	isClick := domain.ClickKind(p.Kind)
 	isJigsaw := p.Kind == domain.KindJigsaw
+	isGrid := domain.GridKind(p.Kind)
+	if isGrid && (in.Answer == nil || len(in.Answer.Clicks) > grid.MaxClicks || len(in.Answer.MovesBetween) > grid.MaxClicks) {
+		return nil, origin, errx.InvalidRequest("选格题需要 answer.clicks，且不超过 24 次点击")
+	}
 	if isJigsaw && (in.Answer == nil || len(in.Answer.Swap) != 2 || len(in.Answer.Trajectory) > jigsaw.MaxPoints) {
 		return nil, origin, errx.InvalidRequest("拼图题需要 answer.swap，且轨迹不超过 400 个点")
 	}
@@ -667,7 +711,7 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		input = risk.PointerMouse
 		observed = append(observed, risk.ReasonPointerMismatch)
 	}
-	if domain.DragKind(p.Kind) || isClick || isJigsaw {
+	if domain.DragKind(p.Kind) || isClick || isJigsaw || isGrid {
 		st.pointer = input
 	}
 	if isJigsaw {
@@ -708,12 +752,28 @@ func (g *Gateway) Solve(ctx context.Context, in SolveInput) (out *SolveOutput, a
 		}
 	}
 
+	if isGrid {
+		// Like click kinds, no keyboard path.
+		if input == risk.PointerKeyboard {
+			input = risk.PointerMouse
+		}
+		gs := state.Grid
+		if gs == nil {
+			return nil, origin, errx.ErrChallengeInvalid
+		}
+		pz := grid.Puzzle{Width: gs.Width, Height: gs.Height, Rows: gs.Rows, Cols: gs.Cols, Answer: gs.Cells}
+		if reason := grid.Check(pz, in.Answer.Clicks, in.Answer.MovesBetween, input); reason != "" {
+			logx.WithContext(ctx).Infof("%s rejected: %s (app %d, %s)", p.Kind, reason, app.ID, input)
+			return nil, origin, fail(errx.ErrAnswerInvalid)
+		}
+	}
+
 	// Behaviour during the interaction can only add risk, never remove it.
 	final := risk.Assessment{Score: state.Score, Reasons: state.Reasons}
 	if in.Signals != nil && in.Signals.UntrustedEvent {
 		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonUntrustedEvent], Reasons: []string{risk.ReasonUntrustedEvent}})
 	}
-	interactive := domain.DragKind(p.Kind) || isClick || isJigsaw
+	interactive := domain.DragKind(p.Kind) || isClick || isJigsaw || isGrid
 	if domain.DragKind(p.Kind) && input == risk.PointerKeyboard {
 		final = final.Add(risk.Assessment{Score: risk.Weights[risk.ReasonKeyboardInput], Reasons: []string{risk.ReasonKeyboardInput}})
 	}
