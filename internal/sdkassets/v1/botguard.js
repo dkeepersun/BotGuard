@@ -504,7 +504,7 @@ function adoptStyle(root, nonce) {
 const ElementBase = globalThis.HTMLElement ?? class {};
 
 export class BotGuardWidget extends ElementBase {
-  static observedAttributes = ['width', 'image-height', 'accent', 'radius', 'endpoint', 'app-key', 'action', 'field-name', 'lang'];
+  static observedAttributes = ['width', 'image-height', 'accent', 'radius', 'endpoint', 'app-key', 'action', 'field-name', 'lang', 'mode'];
 
   /** Optional replacement for fetch, see postJSON. */
   transport = null;
@@ -536,6 +536,10 @@ export class BotGuardWidget extends ElementBase {
       if (this.#root && old !== value) this.#retext();
       return;
     }
+    if (name === 'mode') {
+      if (this.#root && old !== value) this.#modeChanged();
+      return;
+    }
     if ((name === 'endpoint' || name === 'app-key') && this.#root && old !== value) this.#loadRemote();
     if (!this.#root || old === value) return;
     if (name === 'field-name') this.#input.name = value || 'botguard_token';
@@ -555,6 +559,7 @@ export class BotGuardWidget extends ElementBase {
   #floatShown = false; // float mode: the pointer or focus is on the widget
   #floatTimer = 0;
   #outsideDown = null; // float mode: closes the panel on a tap elsewhere
+  #outsideKey = null; // float mode: closes the panel on Esc
   #visibleWait = null; // inline mode: stops waiting for the widget to be seen
   #returnFocus = null; // popup mode: where focus goes back to when the dialog closes
   #token = '';
@@ -633,6 +638,7 @@ export class BotGuardWidget extends ElementBase {
     this.#panel.addEventListener('keydown', (e) => this.#dialogKey(e));
     this.#listenFloat();
     document.addEventListener('pointerdown', this.#outsideDown, true);
+    document.addEventListener('keydown', this.#outsideKey);
     // The hidden field lives in light DOM so the surrounding form submits it.
     this.#input = document.createElement('input');
     this.#input.type = 'hidden';
@@ -657,12 +663,13 @@ export class BotGuardWidget extends ElementBase {
     this.#visibleWait?.();
     this.#visibleWait = null;
     if (this.#mode() !== 'inline') {
-      if (this.hasAttribute('auto')) this.start({ auto: true });
+      // The auto attribute is judged as before, like a click at load time.
+      if (this.hasAttribute('auto')) this.start();
       return;
     }
     let seen = !globalThis.IntersectionObserver;
     const go = () => {
-      if (!seen || document.visibilityState === 'hidden') return;
+      if (!seen || document.visibilityState === 'hidden' || this.#mode() !== 'inline') return;
       this.#visibleWait?.();
       this.#visibleWait = null;
       this.start({ auto: true });
@@ -693,12 +700,14 @@ export class BotGuardWidget extends ElementBase {
         this.#floatShown = true;
         this.#render();
       }
-      if (e) this.start({ trigger: e });
+      // Only from idle: passing over the box after an error (rate limited,
+      // origin not allowed) should not send the request again.
+      if (e && this.#box.dataset.state === 'idle') this.start({ trigger: e });
     };
     const hide = (delay) => {
       clearTimeout(this.#floatTimer);
       this.#floatTimer = setTimeout(() => {
-        if (this.#root.querySelector('.dragging, .lifted')) return hide(delay);
+        if (this.#root.querySelector('.dragging, .lifted')) return hide(Math.max(delay, 100));
         this.#floatShown = false;
         this.#render();
       }, delay);
@@ -713,14 +722,31 @@ export class BotGuardWidget extends ElementBase {
     this.#outsideDown = (e) => {
       if (float() && this.#floatShown && !e.composedPath().includes(this)) hide(0);
     };
+    // Esc with focus elsewhere on the page, e.g. after showing it by hovering.
+    this.#outsideKey = (e) => {
+      if (float() && this.#floatShown && e.key === 'Escape' && !e.composedPath().includes(this)) hide(0);
+    };
     this.#floatHide = () => hide(0);
   }
 
   #floatHide = () => {};
 
+  // The mode attribute changed at run time: the panel follows it, an attempt
+  // under way carries on, and an idle inline widget loads its puzzle.
+  #modeChanged() {
+    this.#visibleWait?.();
+    this.#visibleWait = null;
+    this.#floatShown = false;
+    // Popup mode shows the dialog for the whole attempt.
+    this.#dialogOpen = this.#mode() === 'popup' && ['loading', 'solving', 'puzzle'].includes(this.#box.dataset.state);
+    this.#render();
+    if (this.#mode() === 'inline' && this.isConnected && this.#box.dataset.state === 'idle' && !this.#token) this.#autoStart();
+  }
+
   // Inserted again after a removal, which abandoned any attempt in progress.
   #reconnected() {
     document.addEventListener('pointerdown', this.#outsideDown, true);
+    document.addEventListener('keydown', this.#outsideKey);
     if (this.#token) return this.#armExpiry();
     const left = this.#cooldownUntil - performance.now();
     if (left > 0) return this.#startCooldown(left);
@@ -742,6 +768,8 @@ export class BotGuardWidget extends ElementBase {
     this.#visibleWait?.();
     this.#visibleWait = null;
     document.removeEventListener('pointerdown', this.#outsideDown, true);
+    document.removeEventListener('keydown', this.#outsideKey);
+    this.#floatShown = false;
     const state = this.#box.dataset.state;
     if (state === 'verified' || state === 'cooldown') this.#render();
     else this.#idle();
@@ -786,9 +814,12 @@ export class BotGuardWidget extends ElementBase {
     if (!this.#root) return Promise.reject(errorWith(this.#t('notConnected'), 'NOT_CONNECTED'));
     // Float mode: a bound button or the page's own code asked, so show the
     // panel even if the pointer is elsewhere.
-    if (this.#mode() === 'float' && !this.#floatShown) {
-      this.#floatShown = true;
-      this.#render();
+    if (this.#mode() === 'float') {
+      clearTimeout(this.#floatTimer);
+      if (!this.#floatShown) {
+        this.#floatShown = true;
+        this.#render();
+      }
     }
     if (!this.#pending) {
       const pending = {};
@@ -862,6 +893,12 @@ export class BotGuardWidget extends ElementBase {
       if (!interactive) this.#view = null;
       const work = this.#solve(round, ch, perPuzzle, interactive);
       work.catch(() => {});
+      // Inline and float modes load a puzzle the user may not get to for a
+      // while: swap in a fresh one shortly before this one expires.
+      if (interactive && (this.#mode() === 'inline' || this.#mode() === 'float')) {
+        const left = Math.min(ch.expires_at * 1000 - Date.now(), MAX_TTL_S * 1000) - 10_000;
+        round.after(Math.max(left, 10_000), () => this.#box.dataset.state === 'puzzle' && this.#begin({ auto: true }));
+      }
       let answer;
       let drag = {};
       if (slider) {
@@ -954,6 +991,7 @@ export class BotGuardWidget extends ElementBase {
       this.#failures = 0;
       this.#dialogOpen = false;
       this.#idle();
+      if (this.#mode() === 'inline') this.#autoStart();
     }, ms);
   }
 
@@ -1628,6 +1666,9 @@ export class BotGuardWidget extends ElementBase {
       this.#setToken('');
       this.#show('idle', this.#t('expired'), '');
       this.#emit('botguard:expired', {});
+      // Inline mode keeps a puzzle on the page (unless the page's handler
+      // already started one).
+      if (this.#mode() === 'inline' && this.#box.dataset.state === 'idle' && !this.#token) this.#autoStart();
     }, Math.max(0, this.#tokenDeadline - performance.now()));
   }
 
@@ -1650,7 +1691,11 @@ export class BotGuardWidget extends ElementBase {
     this.#panel.dataset.view = this.#view || 'status';
     if (popup) this.#panel.setAttribute('aria-modal', 'true');
     else this.#panel.removeAttribute('aria-modal');
-    if (open === !this.#panel.hidden) return;
+    if (open === !this.#panel.hidden) {
+      // A retry can swap in a taller puzzle.
+      if (open && mode === 'float') this.#place();
+      return;
+    }
     const focusInside = this.#panel.contains(this.#root.activeElement);
     this.#panel.hidden = !open;
     if (open && mode === 'float') this.#place();
