@@ -255,3 +255,38 @@ func TestOneClickUpgradeStalled(t *testing.T) {
 		t.Fatalf("request not replaced: %v", err)
 	}
 }
+
+// Right after an upgrade restarts everything, a gateway's latest summary is
+// still the replaced process's: it waits for a report instead of raising the
+// version notice, and is compared again once it reports.
+func TestGatewayAwaitingReport(t *testing.T) {
+	e := newEnv(t)
+	now := time.Now()
+	e.web.Version = "v0.6.0 (401fba6)"
+	e.web.Started = now
+	before := now.Truncate(time.Minute).Add(-time.Minute).Unix()
+	if err := e.health.Put(context.Background(), repository.HealthMinute{At: before, Instance: "gw-1:8090"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	owner := e.signIn("root", logic.RoleOwner)
+	if _, body := owner.get("/console"); strings.Contains(body, "版本不一致") {
+		t.Fatal("version notice for a gateway that has not reported since the restart")
+	}
+	if _, body := owner.get("/system"); !strings.Contains(body, "等待上报") || !strings.Contains(body, "gw-1:8090") || strings.Contains(body, "与管理后台不同") {
+		t.Fatalf("system page: %.3000s", body)
+	}
+	if _, body := owner.get("/health"); !strings.Contains(body, "等待上报") {
+		t.Fatal("health page lacks the pending badge")
+	}
+
+	// Its first report since the start is compared as usual.
+	if err := e.health.Put(context.Background(), repository.HealthMinute{At: now.Truncate(time.Minute).Unix(), Instance: "gw-1:8090", Version: "v0.5.0 (d1fbb28)"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, body := owner.get("/console"); !strings.Contains(body, "版本不一致") {
+		t.Fatal("no notice once the gateway reported another version")
+	}
+	if _, body := owner.get("/system"); strings.Contains(body, "等待上报") || !strings.Contains(body, "与管理后台不同") {
+		t.Fatal("system page after the report")
+	}
+}

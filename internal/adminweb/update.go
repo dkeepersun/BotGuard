@@ -31,6 +31,9 @@ type updateView struct {
 	Gateways []gatewayVersion
 	// Mixed: the live gateways do not all run this console's version.
 	Mixed bool
+	// Pending lists live gateways that have not reported since this console
+	// started; they count for neither Same nor Mixed.
+	Pending []string
 	// Upgrade is the one-click updater's progress; nil where it is not
 	// installed (source and Docker installs, macOS).
 	Upgrade *update.Progress
@@ -70,6 +73,10 @@ func (s *Server) versions(ctx context.Context) (updateView, error) {
 	}
 	byVersion := map[string]*gatewayVersion{}
 	for _, in := range instances {
+		if s.awaitingReport(in.LastSeen) {
+			v.Pending = append(v.Pending, in.Name)
+			continue
+		}
 		ver := ""
 		if last, err := s.Health.Recent(ctx, in.Name, 1); err != nil {
 			return v, err
@@ -91,7 +98,17 @@ func (s *Server) versions(ctx context.Context) (updateView, error) {
 		}
 	}
 	sort.Slice(v.Gateways, func(i, j int) bool { return v.Gateways[i].Version > v.Gateways[j].Version })
+	sort.Strings(v.Pending)
 	return v, nil
+}
+
+// awaitingReport reports whether a gateway's latest summary, for the
+// minute starting at lastSeen, ended before this console started: it may
+// come from the process an upgrade just replaced, and the version it carries
+// says nothing about what runs now. Gateways report once a minute, so this
+// clears within a minute or two of a restart.
+func (s *Server) awaitingReport(lastSeen time.Time) bool {
+	return !s.Started.IsZero() && !lastSeen.Add(time.Minute).After(s.Started)
 }
 
 // updateCheck looks for a release now instead of waiting for the next
