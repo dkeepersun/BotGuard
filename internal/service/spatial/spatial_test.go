@@ -3,6 +3,7 @@ package spatial
 import (
 	"encoding/base64"
 	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 	"math/rand/v2"
 	"os"
 	"strings"
@@ -25,16 +26,16 @@ func TestQuestionsAreUnambiguous(t *testing.T) {
 		for _, q := range questions(objs) {
 			a, b := objs[q.anchor], objs[q.target]
 			if b.col-a.col != q.dir.dc || b.row-a.row != q.dir.dr {
-				t.Fatalf("seed %d: %s is not %s of %s", seed, b.name(), q.dir.name, a.name())
+				t.Fatalf("seed %d: %s is not %s of %s", seed, b.name(prompt.ZhCN), q.dir.name[prompt.ZhCN], a.name(prompt.ZhCN))
 			}
 			n := 0
 			for _, o := range objs {
-				if o.name() == a.name() {
+				if o.name(prompt.ZhCN) == a.name(prompt.ZhCN) {
 					n++
 				}
 			}
 			if n != 1 {
-				t.Fatalf("seed %d: %s is not unique", seed, a.name())
+				t.Fatalf("seed %d: %s is not unique", seed, a.name(prompt.ZhCN))
 			}
 		}
 	}

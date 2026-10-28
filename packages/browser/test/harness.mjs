@@ -58,6 +58,7 @@ export const liveWorkers = () => workers.filter((w) => !w.terminated && w.job);
 // a failure response.
 export const gateway = {
   calls: [],
+  uiCalls: [], // GET /v1/ui, kept apart so call counts stay as they were
   kind: 'invisible',
   challenge() {
     return {
@@ -70,15 +71,24 @@ export const gateway = {
       grid: { width: 320, height: 200, image: 'data:,', prompt: '请选出所有恰好有 3 个三角形的格子', rows: 3, cols: 3 },
     };
   },
+  ui() {
+    return {};
+  },
   solution() {
     return { token: `tok${gateway.calls.length}`, expires_at: Math.floor(Date.now() / 1000) + 120, expires_in: 120 };
   },
 };
-const defaults = { challenge: gateway.challenge, solution: gateway.solution };
+const defaults = { challenge: gateway.challenge, solution: gateway.solution, ui: gateway.ui };
 export const solutions = () => gateway.calls.filter((c) => c.url.endsWith('/v1/solutions'));
 export const challenges = () => gateway.calls.filter((c) => c.url.endsWith('/v1/challenges'));
 
 globalThis.fetch = async (url, opts) => {
+  if (String(url).includes('/v1/ui?')) {
+    gateway.uiCalls.push(url);
+    const ui = gateway.ui();
+    if (ui.error) return { ok: false, status: 403, json: async () => ({ code: ui.error }) };
+    return { ok: true, status: 200, json: async () => ({ code: 'OK', data: ui }) };
+  }
   const body = JSON.parse(opts.body);
   gateway.calls.push({ url, body });
   const res = url.endsWith('/v1/challenges') ? gateway.challenge(body) : gateway.solution(body);
@@ -114,6 +124,7 @@ export function setup() {
   workers.length = 0;
   globalThis.Worker.silent = false;
   gateway.calls.length = 0;
+  gateway.uiCalls.length = 0;
   gateway.kind = 'invisible';
   Object.assign(gateway, defaults);
   layout.stageWidth = 320;

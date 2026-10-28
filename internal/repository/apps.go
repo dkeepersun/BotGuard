@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -48,13 +49,14 @@ func NewSQLApps(conn *store.DB, s *sealer.Sealer) *SQLApps {
 }
 
 type appRow struct {
-	ID            int64  `db:"id"`
-	AppKey        string `db:"app_key"`
-	Status        int    `db:"status"`
-	PolicyVersion int64  `db:"active_policy_version"`
-	BgMode        string `db:"background_mode"`
-	BgBuiltin     bool   `db:"background_builtin"`
-	BgVersion     int64  `db:"background_version"`
+	ID            int64          `db:"id"`
+	AppKey        string         `db:"app_key"`
+	Status        int            `db:"status"`
+	PolicyVersion int64          `db:"active_policy_version"`
+	BgMode        string         `db:"background_mode"`
+	BgBuiltin     bool           `db:"background_builtin"`
+	BgVersion     int64          `db:"background_version"`
+	UI            sql.NullString `db:"ui_config"`
 }
 
 type actionRow struct {
@@ -81,7 +83,7 @@ const secretColumns = "secret_id, app_id, secret_ciphertext, kek_id, status, exp
 func (r *SQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, error) {
 	var row appRow
 	err := r.conn.QueryRowCtx(ctx, &row,
-		"SELECT id, app_key, status, active_policy_version, background_mode, background_builtin, background_version FROM botguard_app WHERE app_key = ?", appKey)
+		"SELECT id, app_key, status, active_policy_version, background_mode, background_builtin, background_version, ui_config FROM botguard_app WHERE app_key = ?", appKey)
 	if errors.Is(err, sqlx.ErrNotFound) {
 		return nil, domain.ErrNotFound
 	}
@@ -108,6 +110,12 @@ func (r *SQLApps) AppByKey(ctx context.Context, appKey string) (*domain.App, err
 		PolicyVersion: row.PolicyVersion,
 		Actions:       make(map[string]domain.ActionPolicy, len(actions)),
 		Background:    domain.Background{Mode: row.BgMode, NoBuiltin: !row.BgBuiltin, Uploads: uploads, Version: row.BgVersion},
+	}
+	if row.UI.Valid && row.UI.String != "" {
+		if err := json.Unmarshal([]byte(row.UI.String), &app.UI); err != nil {
+			logx.WithContext(ctx).Errorf("app %d has invalid ui_config, ignored: %v", row.ID, err)
+			app.UI = domain.AppUI{}
+		}
 	}
 	if !domain.ValidBackgroundMode(row.BgMode) {
 		logx.WithContext(ctx).Errorf("app %d has unknown background mode %q, using mixed", row.ID, row.BgMode)

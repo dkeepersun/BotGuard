@@ -11,7 +11,8 @@
 //
 // Attributes: endpoint, app-key, action, field-name (default botguard_token),
 // mode ("embed" or "popup"), auto (start without a click), width,
-// image-height, size ("compact"), accent, nonce (for a CSP without
+// image-height, size ("compact"), accent, radius, theme ("light", "dark",
+// "auto"), lang ("zh-CN", "zh-TW", "en", "auto"), nonce (for a CSP without
 // constructable stylesheets), kinds / levels (the kinds the page asks for,
 // see selection() below). Events (bubbling): botguard:challenge,
 // botguard:verified, botguard:expired, botguard:error, botguard:cancel,
@@ -39,7 +40,7 @@ const MAX_TTL_S = 600;
 const MAX_FAILURES = 3;
 // VERSION travels with every challenge request so the console can count
 // widgets too old for the newest kinds; keep it equal to package.json.
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 const COOLDOWN_MS = 10_000;
 const MAX_POINTS = 400; // the gateway's slider.MaxPoints
 const MAX_GRID_CLICKS = 24; // the gateway's grid.MaxClicks
@@ -49,6 +50,94 @@ const CLICK_KINDS = ['click_text', 'click_order', 'click_icon', 'click_shape', '
 const GRID_KINDS = ['grid_count', 'mirror'];
 const SAMPLE_MS = 8; // minimum spacing of trajectory samples
 const PROGRESS_MS = 100; // minimum spacing of progress repaints
+
+// Built-in texts by language; {name} takes an argument. Pages override any
+// key with the texts option (see init()). Server messages for errors are in
+// Simplified Chinese, so other languages translate the codes they know.
+export const MESSAGES = {
+  'zh-CN': {
+    dialog: '人机验证', close: '关闭', retry: '重试', confirm: '确认', clear: '重置', refresh: '换一张', fallback: '无法完成验证？',
+    bgAlt: '拼图背景', pieceAlt: '拼图块', discAlt: '需要转正的圆盘', iconsAlt: '按顺序要点击的图标', clickAlt: '点选图片', refAlt: '示例图形',
+    jigsawAria: '拖动一块拼图到另一块上交换位置',
+    idle: '点击进行人机验证', idleSub: '大多数情况下无需操作，必要时会出现拼图或点选题', expired: '验证已过期，点击重新验证',
+    loading: '正在获取验证…', loadingFallback: '正在准备无障碍验证…', checking: '正在校验…', fallbackSolving: '正在进行无障碍验证，需要几秒…',
+    progress: '正在验证 {done}/{total}', verified: '验证通过', verifiedSub: '{how}，用时 {s} 秒',
+    doneRotate: '旋转对齐完成', doneJigsaw: '拼图复原完成', doneSlider: '拼图完成', doneClick: '点选完成', doneGrid: '选择完成',
+    doneFallback: '无障碍验证完成', doneWork: '本机计算 {n} 次',
+    sliderTitle: '请完成下方拼图', sliderSub: '拖动滑块，使拼图块与缺口对齐', sliderHint: '向右拖动，补全拼图',
+    sliderAria: '拖动滑块完成拼图，也可以用左右方向键移动、回车确认',
+    rotateTitle: '请转正中间的圆盘', rotateSub: '拖动滑块，让圆盘里的线条和外圈接上', rotateHint: '向右拖动，转正圆盘',
+    rotateAria: '拖动滑块转动圆盘，也可以用左右方向键转动、回车确认', degrees: '{n} 度',
+    clickTitle: '请按提示依次点击', clickSub: '共 {n} 处', gridTitle: '请按提示选出所有符合的格子', gridSub: '选好后点“确认”',
+    jigsawTitle: '请把错位的两块交换回来', jigsawSub: '拖动其中一块，放到另一块上', jigsawDrop: '请把这一块拖到另一块上',
+    dragBroken: '拖动被打断，请重新拖动滑块', jigsawBroken: '拖动被打断，请重新拖动',
+    wrongSlider: '没有对准，请再试一次', wrongJigsaw: '交换的两块不对，请再试一次', wrongGrid: '选择不正确，请再试一次',
+    wrongClick: '点击位置或顺序不正确，请再试一次', tooMany: '失败次数过多，请 {s} 秒后重试',
+    errorRetry: '{msg}，点击重试', cancelled: '已取消验证', notConnected: '组件尚未插入页面', insecure: '需要在 HTTPS 或 localhost 页面中使用',
+    network: '无法连接验证服务（网络错误，或当前来源未被允许）', http: '验证服务返回 HTTP {status}', timeout: '验证计算超时', worker: 'Worker 出错',
+  },
+  'zh-TW': {
+    dialog: '人機驗證', close: '關閉', retry: '重試', confirm: '確認', clear: '重置', refresh: '換一張', fallback: '無法完成驗證？',
+    bgAlt: '拼圖背景', pieceAlt: '拼圖塊', discAlt: '需要轉正的圓盤', iconsAlt: '按順序要點擊的圖示', clickAlt: '點選圖片', refAlt: '示例圖形',
+    jigsawAria: '拖動一塊拼圖到另一塊上交換位置',
+    idle: '點擊進行人機驗證', idleSub: '大多數情況下無需操作，必要時會出現拼圖或點選題', expired: '驗證已過期，點擊重新驗證',
+    loading: '正在取得驗證…', loadingFallback: '正在準備無障礙驗證…', checking: '正在校驗…', fallbackSolving: '正在進行無障礙驗證，需要幾秒…',
+    progress: '正在驗證 {done}/{total}', verified: '驗證通過', verifiedSub: '{how}，用時 {s} 秒',
+    doneRotate: '旋轉對齊完成', doneJigsaw: '拼圖復原完成', doneSlider: '拼圖完成', doneClick: '點選完成', doneGrid: '選擇完成',
+    doneFallback: '無障礙驗證完成', doneWork: '本機計算 {n} 次',
+    sliderTitle: '請完成下方拼圖', sliderSub: '拖動滑塊，使拼圖塊與缺口對齊', sliderHint: '向右拖動，補全拼圖',
+    sliderAria: '拖動滑塊完成拼圖，也可以用左右方向鍵移動、Enter 確認',
+    rotateTitle: '請轉正中間的圓盤', rotateSub: '拖動滑塊，讓圓盤裡的線條和外圈接上', rotateHint: '向右拖動，轉正圓盤',
+    rotateAria: '拖動滑塊轉動圓盤，也可以用左右方向鍵轉動、Enter 確認', degrees: '{n} 度',
+    clickTitle: '請按提示依次點擊', clickSub: '共 {n} 處', gridTitle: '請按提示選出所有符合的格子', gridSub: '選好後點「確認」',
+    jigsawTitle: '請把錯位的兩塊交換回來', jigsawSub: '拖動其中一塊，放到另一塊上', jigsawDrop: '請把這一塊拖到另一塊上',
+    dragBroken: '拖動被打斷，請重新拖動滑塊', jigsawBroken: '拖動被打斷，請重新拖動',
+    wrongSlider: '沒有對準，請再試一次', wrongJigsaw: '交換的兩塊不對，請再試一次', wrongGrid: '選擇不正確，請再試一次',
+    wrongClick: '點擊位置或順序不正確，請再試一次', tooMany: '失敗次數過多，請 {s} 秒後重試',
+    errorRetry: '{msg}，點擊重試', cancelled: '已取消驗證', notConnected: '元件尚未插入頁面', insecure: '需要在 HTTPS 或 localhost 頁面中使用',
+    network: '無法連線驗證服務（網路錯誤，或目前來源未被允許）', http: '驗證服務回傳 HTTP {status}', timeout: '驗證計算逾時', worker: 'Worker 出錯',
+    RATE_LIMITED: '請求過於頻繁，請稍後再試', CHALLENGE_EXPIRED: '驗證已過期，請重試', CHALLENGE_INVALID: '驗證資料無效，請重試',
+    CHALLENGE_USED: '驗證已提交，請重試', PROOF_INVALID: '驗證計算結果無效，請重試', ORIGIN_NOT_ALLOWED: '目前來源未被允許',
+    APP_FORBIDDEN: '應用程式不可用', ACTION_FORBIDDEN: '此操作未啟用驗證', UNAVAILABLE: '驗證服務暫時無法使用，請稍後再試',
+  },
+  en: {
+    dialog: 'Human verification', close: 'Close', retry: 'Retry', confirm: 'Confirm', clear: 'Reset', refresh: 'New puzzle', fallback: 'Can’t complete it?',
+    bgAlt: 'Puzzle background', pieceAlt: 'Puzzle piece', discAlt: 'Disc to turn upright', iconsAlt: 'Icons to click in order', clickAlt: 'Picture to click on', refAlt: 'Example shape',
+    jigsawAria: 'Drag one tile onto another to swap them',
+    idle: 'Click to verify you are human', idleSub: 'Usually nothing to do; a puzzle appears only when needed', expired: 'Verification expired, click to verify again',
+    loading: 'Loading…', loadingFallback: 'Preparing the accessible check…', checking: 'Checking…', fallbackSolving: 'Running the accessible check, a few seconds…',
+    progress: 'Verifying {done}/{total}', verified: 'Verified', verifiedSub: '{how} in {s} s',
+    doneRotate: 'Disc turned', doneJigsaw: 'Picture restored', doneSlider: 'Puzzle solved', doneClick: 'Clicks done', doneGrid: 'Selection done',
+    doneFallback: 'Accessible check done', doneWork: '{n} hashes computed',
+    sliderTitle: 'Complete the puzzle', sliderSub: 'Drag the slider so the piece fills the gap', sliderHint: 'Drag right to fill the gap',
+    sliderAria: 'Drag to complete the puzzle; or use the arrow keys and press Enter',
+    rotateTitle: 'Turn the disc upright', rotateSub: 'Drag the slider until the lines in the disc meet the ones outside', rotateHint: 'Drag right to turn',
+    rotateAria: 'Drag to turn the disc; or use the arrow keys and press Enter', degrees: '{n} degrees',
+    clickTitle: 'Click as the prompt says', clickSub: '{n} to click', gridTitle: 'Select every matching cell', gridSub: 'Then press Confirm',
+    jigsawTitle: 'Swap the two misplaced tiles back', jigsawSub: 'Drag one onto the other', jigsawDrop: 'Drop this tile onto another one',
+    dragBroken: 'The drag was interrupted, please drag again', jigsawBroken: 'The drag was interrupted, please drag again',
+    wrongSlider: 'Not lined up, please try again', wrongJigsaw: 'Those are not the two tiles, please try again', wrongGrid: 'Not the right cells, please try again',
+    wrongClick: 'Wrong place or order, please try again', tooMany: 'Too many attempts, try again in {s} s',
+    errorRetry: '{msg}. Click to retry', cancelled: 'Verification cancelled', notConnected: 'The widget is not on the page', insecure: 'Needs an HTTPS or localhost page',
+    network: 'Cannot reach the verification service (network error, or this site is not allowed)', http: 'The verification service returned HTTP {status}',
+    timeout: 'Verification timed out', worker: 'Worker failed',
+    RATE_LIMITED: 'Too many requests, please try again later', CHALLENGE_EXPIRED: 'The puzzle expired, please try again', CHALLENGE_INVALID: 'Invalid puzzle data, please try again',
+    CHALLENGE_USED: 'Already submitted, please try again', PROOF_INVALID: 'Invalid computation result, please try again', ORIGIN_NOT_ALLOWED: 'This site is not allowed',
+    APP_FORBIDDEN: 'This application is unavailable', ACTION_FORBIDDEN: 'Verification is not enabled for this action', UNAVAILABLE: 'The verification service is unavailable, please try again later',
+  },
+};
+
+/** The supported language nearest to a BCP 47 tag; empty means Simplified Chinese, "auto" the browser's language. */
+export function language(tag) {
+  let t = String(tag || '').trim().toLowerCase();
+  if (t === 'auto') t = String(globalThis.navigator?.language || '').toLowerCase();
+  if (!t || t === 'zh' || /^zh-(cn|sg|hans)/.test(t)) return 'zh-CN';
+  if (/^zh-(tw|hk|mo|hant)/.test(t)) return 'zh-TW';
+  if (t.startsWith('zh')) return 'zh-CN';
+  return 'en';
+}
+
+const format = (text, vars) => String(text).replace(/\{(\w+)\}/g, (m, k) => (vars && k in vars ? String(vars[k]) : m));
 
 // Pointer activity is tracked from page load; environment signals are read at
 // activation, when the page is certainly visible.
@@ -61,34 +150,40 @@ const interaction = globalThis.document ? trackInteraction() : null;
 //                            100px so puzzles stay readable); images keep
 //                            their aspect ratio and narrow to fit
 //   --botguard-accent        accent colour (#0969da)
+//   --botguard-radius        corner radius of the box and panel (8px);
+//                            pictures get half of it
 // The width / image-height / accent attributes set the same properties, and
 // size="compact" tightens spacing for H5 pages and app WebViews.
 const STYLE = `
 :host { --bg-accent: var(--botguard-accent, #0969da); --bg-img-h: max(100px, var(--botguard-image-height, 9999px));
+  --bg-radius: var(--botguard-radius, 8px);
+  --bg-surface: #f6f8fa; --bg-panel: #fff; --bg-line: #d0d7de; --bg-text: #1f2328; --bg-muted: #656d76; --bg-faint: #8c959f;
+  --bg-track: #eaeef2; --bg-ok: #1a7f37; --bg-ok-soft: #f0fff4; --bg-bad: #cf222e; --bg-bad-soft: #fff5f5;
+  color: var(--bg-text);
   display: block; width: 100%; max-width: var(--botguard-width, 360px); box-sizing: border-box;
   font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; }
 *, *::before, *::after { box-sizing: border-box; }
-.box { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border: 1px solid #d0d7de;
-  border-radius: 8px; background: #f6f8fa; cursor: pointer; user-select: none; min-height: 44px; }
+.box { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border: 1px solid var(--bg-line);
+  border-radius: var(--bg-radius); background: var(--bg-surface); cursor: pointer; user-select: none; min-height: 44px; }
 .box[data-state="solving"], .box[data-state="loading"] { cursor: progress; }
 .box[data-state="puzzle"], .box[data-state="cooldown"] { cursor: default; }
-.box[data-state="verified"] { cursor: default; border-color: #1a7f37; background: #f0fff4; }
-.box[data-state="error"], .box[data-state="cooldown"] { border-color: #cf222e; background: #fff5f5; }
-.mark { width: 22px; height: 22px; flex: none; border: 2px solid #8c959f; border-radius: 50%; display: grid; place-items: center; }
+.box[data-state="verified"] { cursor: default; border-color: var(--bg-ok); background: var(--bg-ok-soft); }
+.box[data-state="error"], .box[data-state="cooldown"] { border-color: var(--bg-bad); background: var(--bg-bad-soft); }
+.mark { width: 22px; height: 22px; flex: none; border: 2px solid var(--bg-faint); border-radius: 50%; display: grid; place-items: center; }
 [data-state="loading"] .mark, [data-state="solving"] .mark { border-color: var(--bg-accent); border-top-color: transparent; animation: spin .8s linear infinite; }
 [data-state="puzzle"] .mark { border-color: var(--bg-accent); }
-[data-state="verified"] .mark { border-color: #1a7f37; background: #1a7f37; color: #fff; }
+[data-state="verified"] .mark { border-color: var(--bg-ok); background: var(--bg-ok); color: #fff; }
 [data-state="verified"] .mark::after { content: "✓"; font-size: 14px; font-weight: 700; }
-[data-state="error"] .mark, [data-state="cooldown"] .mark { border-color: #cf222e; color: #cf222e; }
+[data-state="error"] .mark, [data-state="cooldown"] .mark { border-color: var(--bg-bad); color: var(--bg-bad); }
 [data-state="error"] .mark::after, [data-state="cooldown"] .mark::after { content: "!"; font-weight: 700; }
 .text { flex: 1; min-width: 0; }
-.title { color: #1f2328; }
-.sub { color: #656d76; font-size: 12px; line-height: 1.4; }
-.bar { height: 4px; margin-top: 6px; border-radius: 2px; background: #d0d7de; overflow: hidden; display: none; }
+.title { color: var(--bg-text); }
+.sub { color: var(--bg-muted); font-size: 12px; line-height: 1.4; }
+.bar { height: 4px; margin-top: 6px; border-radius: 2px; background: var(--bg-line); overflow: hidden; display: none; }
 [data-state="solving"] .bar { display: block; }
 .bar > i { display: block; height: 100%; width: 0; background: var(--bg-accent); transition: width .15s; }
-.brand { font-size: 11px; color: #8c959f; flex: none; }
-.panel { position: relative; margin-top: 6px; padding: 8px; border: 1px solid #d0d7de; border-radius: 8px; background: #fff; }
+.brand { font-size: 11px; color: var(--bg-faint); flex: none; }
+.panel { position: relative; margin-top: 6px; padding: 8px; border: 1px solid var(--bg-line); border-radius: var(--bg-radius); background: var(--bg-panel); }
 .panel:focus { outline: none; }
 .panel.shake { animation: shake .4s; }
 /* The panel header repeats the status line; only popup mode, which hides the box, shows it. */
@@ -100,7 +195,7 @@ const STYLE = `
 .panel[data-state="error"] .retry { display: block; }
 /* Images keep their aspect ratio: capping the height narrows them instead. */
 .stage, .track { width: min(100%, calc(var(--bg-img-h) * 2)); margin-left: auto; margin-right: auto; }
-.stage { position: relative; aspect-ratio: 2 / 1; overflow: hidden; border-radius: 4px; background: #eaeef2; touch-action: none; }
+.stage { position: relative; aspect-ratio: 2 / 1; overflow: hidden; border-radius: calc(var(--bg-radius) / 2); background: var(--bg-track); touch-action: none; }
 .stage img { position: absolute; display: block; user-select: none; -webkit-user-drag: none; pointer-events: none; }
 .stage .bg { top: 0; left: 0; width: 100%; height: 100%; }
 .stage .piece { left: 0; filter: drop-shadow(0 0 2px rgba(0,0,0,.6)); }
@@ -108,9 +203,9 @@ const STYLE = `
 .stage[data-kind="rotate"], .track[data-kind="rotate"] { width: min(100%, calc(var(--bg-img-h) * 1.6)); }
 .stage[data-kind="rotate"] { aspect-ratio: 8 / 5; }
 .stage .disc { border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.85), 0 3px 10px rgba(0,0,0,.35); will-change: transform; }
-.track { position: relative; height: 34px; margin-top: 8px; border-radius: 17px; background: #eaeef2; touch-action: none; }
+.track { position: relative; height: 34px; margin-top: 8px; border-radius: 17px; background: var(--bg-track); touch-action: none; }
 .track .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 17px; background: var(--bg-accent); opacity: .15; }
-.track .hint { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: grid; place-items: center; color: #656d76; font-size: 13px;
+.track .hint { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: grid; place-items: center; color: var(--bg-muted); font-size: 13px;
   pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-left: 36px; }
 .track .handle { position: absolute; top: 0; left: 0; height: 100%; min-width: 36px; border-radius: 17px; background: var(--bg-accent); color: #fff;
   display: grid; place-items: center; cursor: grab; touch-action: none; box-shadow: 0 1px 3px rgba(0,0,0,.3); }
@@ -119,11 +214,11 @@ const STYLE = `
 .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; font-size: 12px; }
 .foot button { border: 0; background: none; color: var(--bg-accent); cursor: pointer; padding: 3px 0; font: inherit; }
 /* No reserved line: an error appears with a shake, so the shift is expected. */
-.msg { font-size: 12px; line-height: 1.4; color: #cf222e; margin-top: 4px; }
+.msg { font-size: 12px; line-height: 1.4; color: var(--bg-bad); margin-top: 4px; }
 .msg:empty { display: none; }
-.prompt { font-size: 14px; color: #1f2328; margin-bottom: 8px; font-weight: 600; }
+.prompt { font-size: 14px; color: var(--bg-text); margin-bottom: 8px; font-weight: 600; }
 .cstage { position: relative; width: min(100%, calc(var(--bg-img-h) * 1.6)); margin: 0 auto; aspect-ratio: 8 / 5; overflow: hidden;
-  border-radius: 4px; background: #eaeef2; cursor: crosshair; touch-action: manipulation; }
+  border-radius: calc(var(--bg-radius) / 2); background: var(--bg-track); cursor: crosshair; touch-action: manipulation; }
 .cstage img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; user-select: none; -webkit-user-drag: none; pointer-events: none; }
 .cstage .mark-dot { position: absolute; width: 24px; height: 24px; margin: -12px 0 0 -12px; border-radius: 50%; background: var(--bg-accent);
   color: #fff; font: 600 13px/24px sans-serif; text-align: center; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
@@ -141,7 +236,7 @@ const STYLE = `
 .confirm:disabled { opacity: .45; cursor: default; }
 /* Jigsaw: tiles cut from one image; the dragged one follows the pointer. */
 .jstage { position: relative; width: min(100%, calc(var(--bg-img-h) * 1.6)); margin: 0 auto; aspect-ratio: 8 / 5; overflow: hidden;
-  border-radius: 4px; background: #eaeef2; touch-action: none; user-select: none; display: grid; }
+  border-radius: calc(var(--bg-radius) / 2); background: var(--bg-track); touch-action: none; user-select: none; display: grid; }
 .jstage .tile { background-repeat: no-repeat; cursor: grab; box-shadow: inset 0 0 0 .5px rgba(255,255,255,.55); touch-action: none; }
 .jstage .tile.lifted { position: relative; z-index: 2; cursor: grabbing; box-shadow: 0 6px 18px rgba(0,0,0,.35), 0 0 0 2px #fff; transition: none; }
 .jstage .tile.over { box-shadow: inset 0 0 0 3px var(--bg-accent); }
@@ -156,8 +251,8 @@ const STYLE = `
   .jstage { height: calc(min(100vw, var(--bg-img-h) * 1.6) * .625); }
 }
 @supports (background: color-mix(in srgb, red 50%, white)) {
-  .track .fill { background: color-mix(in srgb, var(--bg-accent) 15%, white); opacity: 1; }
-  .track .handle:focus-visible { outline-color: color-mix(in srgb, var(--bg-accent) 50%, white); outline-offset: 0; }
+  .track .fill { background: color-mix(in srgb, var(--bg-accent) 15%, var(--bg-panel)); opacity: 1; }
+  .track .handle:focus-visible { outline-color: color-mix(in srgb, var(--bg-accent) 50%, var(--bg-panel)); outline-offset: 0; }
 }
 
 /* Compact: for H5 pages and app WebViews where vertical space is tight. */
@@ -185,8 +280,15 @@ const STYLE = `
 :host([mode="popup"]) .panel:not([hidden]) + .backdrop { display: block; position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 2147483000;
   background: rgba(0,0,0,.35); }
 .close { display: none; position: absolute; right: 6px; top: 2px; border: 0; background: none; font-size: 20px; line-height: 24px;
-  padding: 2px 6px; color: #656d76; cursor: pointer; }
+  padding: 2px 6px; color: var(--bg-muted); cursor: pointer; }
 :host([mode="popup"]) .close { display: block; }
+/* Dark theme: theme="dark", or theme="auto" when the system is dark. */
+:host([theme="dark"]) { --bg-surface: #161b22; --bg-panel: #0d1117; --bg-line: #30363d; --bg-text: #e6edf3; --bg-muted: #9198a1;
+  --bg-faint: #6e7681; --bg-track: #21262d; --bg-ok: #3fb950; --bg-ok-soft: #12261e; --bg-bad: #f85149; --bg-bad-soft: #2d1517; }
+@media (prefers-color-scheme: dark) {
+  :host([theme="auto"]) { --bg-surface: #161b22; --bg-panel: #0d1117; --bg-line: #30363d; --bg-text: #e6edf3; --bg-muted: #9198a1;
+    --bg-faint: #6e7681; --bg-track: #21262d; --bg-ok: #3fb950; --bg-ok-soft: #12261e; --bg-bad: #f85149; --bg-bad-soft: #2d1517; }
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes shake { 0%, 100% { transform: none; } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
 `;
@@ -197,29 +299,29 @@ const TEMPLATE = `
     <span class="text"><div class="title"></div><div class="sub"></div><div class="bar"><i></i></div></span>
     <span class="brand">BotGuard</span>
   </div>
-  <div class="panel" part="panel" hidden role="dialog" aria-label="人机验证" tabindex="-1" data-view="status">
-    <button type="button" class="close" aria-label="关闭">×</button>
+  <div class="panel" part="panel" hidden role="dialog" data-t-aria="dialog" tabindex="-1" data-view="status">
+    <button type="button" class="close" data-t-aria="close">×</button>
     <div class="head"><span class="mark"></span>
       <span class="text"><div class="title" aria-live="polite"></div><div class="sub"></div><div class="bar"><i></i></div></span>
-      <button type="button" class="retry">重试</button></div>
+      <button type="button" class="retry" data-t="retry"></button></div>
     <div class="body">
       <div class="slider-ui">
-        <div class="stage"><img class="bg" alt="拼图背景"><img class="piece" alt="拼图块"><img class="disc" alt="需要转正的圆盘" hidden></div>
-        <div class="track"><div class="fill"></div><div class="hint">向右拖动，补全拼图</div>
-          <div class="handle" role="slider" tabindex="0" aria-label="拖动滑块完成拼图，也可以用左右方向键移动、回车确认" aria-valuemin="0">➜</div></div>
+        <div class="stage"><img class="bg" data-t-alt="bgAlt"><img class="piece" data-t-alt="pieceAlt"><img class="disc" data-t-alt="discAlt" hidden></div>
+        <div class="track"><div class="fill"></div><div class="hint" data-t="sliderHint"></div>
+          <div class="handle" role="slider" tabindex="0" data-t-aria="sliderAria" aria-valuemin="0">➜</div></div>
       </div>
       <div class="click-ui" hidden>
         <div class="prompt" aria-live="polite"></div>
-        <img class="prompt-img" alt="按顺序要点击的图标" hidden>
-        <div class="cstage"><img class="cimg" alt="点选图片"><div class="marks"></div><div class="cells" hidden></div></div>
-        <button type="button" class="confirm" hidden disabled>确认</button>
+        <img class="prompt-img" data-t-alt="iconsAlt" hidden>
+        <div class="cstage"><img class="cimg" data-t-alt="clickAlt"><div class="marks"></div><div class="cells" hidden></div></div>
+        <button type="button" class="confirm" data-t="confirm" hidden disabled></button>
       </div>
       <div class="jigsaw-ui" hidden>
-        <div class="jstage" role="application" aria-label="拖动一块拼图到另一块上交换位置"></div>
+        <div class="jstage" role="application" data-t-aria="jigsawAria"></div>
       </div>
       <div class="msg" aria-live="polite"></div>
-      <div class="foot"><span class="left"><button type="button" class="clear" hidden>重置</button><button type="button" class="refresh">换一张</button></span>
-        <button type="button" class="fallback">无法完成验证？</button></div>
+      <div class="foot"><span class="left"><button type="button" class="clear" data-t="clear" hidden></button><button type="button" class="refresh" data-t="refresh"></button></span>
+        <button type="button" class="fallback" data-t="fallback"></button></div>
     </div>
   </div>
   <div class="backdrop"></div>`;
@@ -258,6 +360,20 @@ async function postJSON(url, body, transport) {
     throw Object.assign(new Error((json && json.message) || `验证服务返回 HTTP ${status}`), { code: (json && json.code) || `HTTP_${status}`, status });
   }
   return json.data;
+}
+
+// The app's appearance set in the console (GET /v1/ui), fetched once per
+// gateway and app however many widgets the page has. A failure means none.
+const remoteUI = new Map();
+
+function fetchUI(endpoint, appKey) {
+  const key = `${endpoint}\n${appKey}`;
+  if (!remoteUI.has(key)) {
+    remoteUI.set(key, fetch(`${endpoint}/v1/ui?app_key=${encodeURIComponent(appKey)}`, { credentials: 'omit' })
+      .then((r) => r.json()).then((j) => (j && j.code === 'OK' && j.data && typeof j.data === 'object' ? j.data : null))
+      .catch(() => null));
+  }
+  return remoteUI.get(key);
 }
 
 // Milliseconds the token stays usable. The relative expires_in does not
@@ -370,18 +486,39 @@ function adoptStyle(root, nonce) {
 const ElementBase = globalThis.HTMLElement ?? class {};
 
 export class BotGuardWidget extends ElementBase {
-  static observedAttributes = ['width', 'image-height', 'accent', 'endpoint', 'app-key', 'action', 'field-name'];
+  static observedAttributes = ['width', 'image-height', 'accent', 'radius', 'endpoint', 'app-key', 'action', 'field-name', 'lang'];
 
   /** Optional replacement for fetch, see postJSON. */
   transport = null;
 
+  #texts = null;
+  #remote = null; // the console's appearance for this app, once fetched
+
+  /**
+   * Texts replacing the built-in ones, by key (see MESSAGES), either for
+   * every language ({ idle: '…' }) or per language ({ en: { idle: '…' } }).
+   */
+  get texts() {
+    return this.#texts;
+  }
+
+  set texts(v) {
+    this.#texts = v && typeof v === 'object' ? v : null;
+    if (this.#root) this.#retext();
+  }
+
   attributeChangedCallback(name, old, value) {
-    const prop = { width: '--botguard-width', 'image-height': '--botguard-image-height', accent: '--botguard-accent' }[name];
+    const prop = { width: '--botguard-width', 'image-height': '--botguard-image-height', accent: '--botguard-accent', radius: '--botguard-radius' }[name];
     if (prop) {
       if (value) this.style.setProperty(prop, name === 'accent' ? value : cssLength(value));
       else this.style.removeProperty(prop);
       return;
     }
+    if (name === 'lang') {
+      if (this.#root && old !== value) this.#retext();
+      return;
+    }
+    if ((name === 'endpoint' || name === 'app-key') && this.#root && old !== value) this.#loadRemote();
     if (!this.#root || old === value) return;
     if (name === 'field-name') this.#input.name = value || 'botguard_token';
     // A token, or an attempt under way, belongs to the old endpoint, app or
@@ -405,6 +542,56 @@ export class BotGuardWidget extends ElementBase {
   #cooldownUntil = 0; // performance.now() when the cooldown ends; 0 = none
   #cooldownTimer = 0;
 
+  // The language for this widget: its lang attribute ("auto" for the
+  // browser's language), else the console's, else Simplified Chinese.
+  #lang() {
+    return language(this.getAttribute('lang') ?? this.#remote?.lang);
+  }
+
+  // The page's text for key, else the console's, else the built-in one.
+  #text(key) {
+    const lang = this.#lang();
+    const own = this.#texts;
+    // The console's texts are written in its language (Simplified Chinese
+    // when it has none or follows the browser), so other languages skip them.
+    const rl = this.#remote?.lang;
+    const remote = language(rl && rl !== 'auto' ? rl : '') === lang ? this.#remote?.texts : null;
+    const v = (own && ((own[lang] && typeof own[lang] === 'object' ? own[lang][key] : undefined) ?? (typeof own[key] === 'string' ? own[key] : undefined)))
+      ?? (remote && typeof remote[key] === 'string' ? remote[key] : undefined);
+    return v ?? MESSAGES[lang]?.[key] ?? MESSAGES['zh-CN'][key] ?? '';
+  }
+
+  // Fetches the console's appearance (unless remote-ui="off", or a custom
+  // transport, which only sends challenge requests) and applies what the
+  // page has not set itself.
+  async #loadRemote() {
+    const endpoint = (this.getAttribute('endpoint') || '').replace(/\/+$/, '');
+    const appKey = this.getAttribute('app-key') || '';
+    if (!endpoint || !appKey || this.getAttribute('remote-ui') === 'off' || this.transport || !globalThis.fetch) return;
+    const ui = await fetchUI(endpoint, appKey);
+    if (!ui || !this.#root || (this.getAttribute('endpoint') || '').replace(/\/+$/, '') !== endpoint || this.getAttribute('app-key') !== appKey) return;
+    this.#remote = ui;
+    if (ui.theme && !this.hasAttribute('theme')) this.setAttribute('theme', ui.theme);
+    if (ui.accent && !this.hasAttribute('accent') && !this.style.getPropertyValue('--botguard-accent')) this.style.setProperty('--botguard-accent', ui.accent);
+    if (ui.radius != null && !this.hasAttribute('radius') && !this.style.getPropertyValue('--botguard-radius')) {
+      this.style.setProperty('--botguard-radius', `${Number(ui.radius)}px`);
+    }
+    this.#retext();
+  }
+
+  #t(key, vars) {
+    return format(this.#text(key), vars);
+  }
+
+  // Applies the language to the fixed parts of the panel, and to the status
+  // line when it is one that does not depend on an attempt.
+  #retext() {
+    for (const el of this.#root.querySelectorAll('[data-t]')) el.textContent = this.#t(el.dataset.t);
+    for (const el of this.#root.querySelectorAll('[data-t-aria]')) el.setAttribute('aria-label', this.#t(el.dataset.tAria));
+    for (const el of this.#root.querySelectorAll('[data-t-alt]')) el.alt = this.#t(el.dataset.tAlt);
+    if (this.#box.dataset.state === 'idle' && !this.#token) this.#idle();
+  }
+
   connectedCallback() {
     if (this.#root) return this.#reconnected();
     this.#root = this.attachShadow({ mode: 'open' });
@@ -427,7 +614,9 @@ export class BotGuardWidget extends ElementBase {
     this.#input.type = 'hidden';
     this.#input.name = this.getAttribute('field-name') || 'botguard_token';
     this.appendChild(this.#input);
+    this.#retext();
     this.#idle();
+    this.#loadRemote();
     if (this.hasAttribute('auto')) this.start();
   }
 
@@ -489,7 +678,7 @@ export class BotGuardWidget extends ElementBase {
   verify() {
     if (this.#token) return Promise.resolve(this.#token);
     if (this.#cooldownUntil > performance.now()) return Promise.reject(this.#tooMany());
-    if (!this.#root) return Promise.reject(errorWith('组件尚未插入页面', 'NOT_CONNECTED'));
+    if (!this.#root) return Promise.reject(errorWith(this.#t('notConnected'), 'NOT_CONNECTED'));
     if (!this.#pending) {
       const pending = {};
       pending.promise = new Promise((resolve, reject) => Object.assign(pending, { resolve, reject }));
@@ -534,15 +723,15 @@ export class BotGuardWidget extends ElementBase {
     const action = this.getAttribute('action') || '';
     if (this.getAttribute('mode') === 'popup') this.#dialogOpen = true;
     if (!globalThis.isSecureContext || !globalThis.crypto?.subtle) {
-      return this.#fail(round, errorWith('需要在 HTTPS 或 localhost 页面中使用', 'INSECURE_CONTEXT'));
+      return this.#fail(round, errorWith(this.#t('insecure'), 'INSECURE_CONTEXT'));
     }
     try {
-      this.#show('loading', fallback ? '正在准备无障碍验证…' : '正在获取验证…', '');
+      this.#show('loading', this.#t(fallback ? 'loadingFallback' : 'loading'), '');
       const env = await collectEnvironment().catch(() => null);
       if (!round.live) return;
       const signals = { ...(env || {}), ...(interaction ? interaction.snapshot(trigger) : {}) };
       const t0 = performance.now();
-      const ch = await postJSON(`${endpoint}/v1/challenges`, { app_key: appKey, action, signals, fallback, widget: VERSION, ...selection(this) }, this.transport);
+      const ch = await postJSON(`${endpoint}/v1/challenges`, { app_key: appKey, action, signals, fallback, widget: VERSION, lang: this.#lang(), ...selection(this) }, this.transport);
       if (!round.live) return;
       const perPuzzle = expectedAttempts(ch.params.target);
       this.#emit('botguard:challenge', { kind: ch.kind });
@@ -567,27 +756,27 @@ export class BotGuardWidget extends ElementBase {
         if (!result || !round.live) return;
         ({ answer, drag } = result);
         this.#trace('drag', { points: answer.trajectory.length, ms: Math.round(answer.trajectory.at(-1)[0]), x: answer.x, pointer_type: drag.pointer_type });
-        this.#show('loading', '正在校验…', '');
+        this.#show('loading', this.#t('checking'), '');
       } else if (swapping) {
         const result = await this.#jigsaw(round, ch.jigsaw);
         if (!result || !round.live) return;
         ({ answer, drag } = result);
         this.#trace('drag', { points: answer.trajectory.length, ms: Math.round(answer.trajectory.at(-1)[0]), swap: answer.swap, pointer_type: drag.pointer_type });
-        this.#show('loading', '正在校验…', '');
+        this.#show('loading', this.#t('checking'), '');
       } else if (clicking) {
         const result = await this.#clicks(round, ch.click);
         if (!result || !round.live) return;
         ({ answer, drag } = result);
         this.#trace('clicks', { count: answer.clicks.length, ms: Math.round(answer.clicks.at(-1)[0]), moves_between: answer.moves_between, pointer_type: drag.pointer_type });
-        this.#show('loading', '正在校验…', '');
+        this.#show('loading', this.#t('checking'), '');
       } else if (selecting) {
         const result = await this.#grid(round, ch.grid);
         if (!result || !round.live) return;
         ({ answer, drag } = result);
         this.#trace('cells', { clicks: answer.clicks.length, ms: Math.round(answer.clicks.at(-1)[0]), moves_between: answer.moves_between, pointer_type: drag.pointer_type });
-        this.#show('loading', '正在校验…', '');
+        this.#show('loading', this.#t('checking'), '');
       } else if (ch.kind === 'fallback') {
-        this.#show('solving', '正在进行无障碍验证，需要几秒…', '');
+        this.#show('solving', this.#t('fallbackSolving'), '');
       }
       const { nonces, attempts, workers, ms: solveMs } = await work;
       if (!round.live) return;
@@ -605,10 +794,11 @@ export class BotGuardWidget extends ElementBase {
       this.#view = null;
       this.#dialogOpen = false;
       this.#setToken(sol.token, tokenTTL(sol));
-      const how = ch.kind === 'rotate' ? '旋转对齐完成' : swapping ? '拼图复原完成' : slider ? '拼图完成' : clicking ? '点选完成'
-        : selecting ? '选择完成' : ch.kind === 'fallback' ? '无障碍验证完成' : `本机计算 ${attempts.toLocaleString()} 次`;
+      const how = ch.kind === 'rotate' ? this.#t('doneRotate') : swapping ? this.#t('doneJigsaw') : slider ? this.#t('doneSlider')
+        : clicking ? this.#t('doneClick') : selecting ? this.#t('doneGrid') : ch.kind === 'fallback' ? this.#t('doneFallback')
+          : this.#t('doneWork', { n: attempts.toLocaleString() });
       const took = interactive ? performance.now() - t1 : solveMs;
-      this.#show('verified', '验证通过', `${how}，用时 ${(took / 1000).toFixed(2)} 秒`);
+      this.#show('verified', this.#t('verified'), this.#t('verifiedSub', { how, s: (took / 1000).toFixed(2) }));
       this.#emit('botguard:verified', { token: sol.token, expiresAt: sol.expires_at, expiresIn: sol.expires_in, kind: ch.kind, attempts, solveMs });
       this.#settle(null, sol.token);
     } catch (err) {
@@ -635,16 +825,16 @@ export class BotGuardWidget extends ElementBase {
       this.#settle(tooMany);
       return;
     }
-    this.#root.querySelector('.msg').textContent = !this.#root.querySelector('.jigsaw-ui').hidden ? '交换的两块不对，请再试一次'
-      : this.#root.querySelector('.click-ui').hidden ? '没有对准，请再试一次'
-        : !this.#root.querySelector('.cells').hidden ? '选择不正确，请再试一次' : '点击位置或顺序不正确，请再试一次';
+    this.#root.querySelector('.msg').textContent = this.#t(!this.#root.querySelector('.jigsaw-ui').hidden ? 'wrongJigsaw'
+      : this.#root.querySelector('.click-ui').hidden ? 'wrongSlider'
+        : !this.#root.querySelector('.cells').hidden ? 'wrongGrid' : 'wrongClick');
     // The next puzzle replaces this one in place; the panel stays up meanwhile.
     round.after(900, () => this.#begin({}));
   }
 
   #startCooldown(ms) {
     this.#cooldownUntil = performance.now() + ms;
-    this.#show('cooldown', `失败次数过多，请 ${Math.ceil(ms / 1000)} 秒后重试`, '');
+    this.#show('cooldown', this.#t('tooMany', { s: Math.ceil(ms / 1000) }), '');
     clearTimeout(this.#cooldownTimer);
     this.#cooldownTimer = setTimeout(() => {
       this.#cooldownUntil = 0;
@@ -656,7 +846,7 @@ export class BotGuardWidget extends ElementBase {
 
   #tooMany() {
     const s = Math.max(1, Math.ceil((this.#cooldownUntil - performance.now()) / 1000));
-    return errorWith(`失败次数过多，请 ${s} 秒后重试`, 'TOO_MANY_FAILURES');
+    return errorWith(this.#t('tooMany', { s }), 'TOO_MANY_FAILURES');
   }
 
   // Shows a drag puzzle (the jigsaw slider, or the rotate disc) and resolves
@@ -680,17 +870,18 @@ export class BotGuardWidget extends ElementBase {
     else piece.src = s.piece;
     msg.textContent = '';
     // Short enough for a 190 px track in compact mode on a phone.
-    this.#root.querySelector('.hint').textContent = turning ? '向右拖动，转正圆盘' : '向右拖动，补全拼图';
-    handle.setAttribute('aria-label', turning
-      ? '拖动滑块转动圆盘，也可以用左右方向键转动、回车确认'
-      : '拖动滑块完成拼图，也可以用左右方向键移动、回车确认');
+    const hint = this.#root.querySelector('.hint');
+    hint.dataset.t = turning ? 'rotateHint' : 'sliderHint';
+    hint.textContent = this.#t(hint.dataset.t);
+    handle.dataset.tAria = turning ? 'rotateAria' : 'sliderAria';
+    handle.setAttribute('aria-label', this.#t(handle.dataset.tAria));
     this.#root.querySelector('.slider-ui').hidden = false;
     this.#root.querySelector('.click-ui').hidden = true;
     this.#root.querySelector('.jigsaw-ui').hidden = true;
     this.#root.querySelector('.clear').hidden = true;
     this.#view = 'puzzle';
-    if (turning) this.#show('puzzle', '请转正中间的圆盘', '拖动滑块，让圆盘里的线条和外圈接上');
-    else this.#show('puzzle', '请完成下方拼图', '拖动滑块，使拼图块与缺口对齐');
+    if (turning) this.#show('puzzle', this.#t('rotateTitle'), this.#t('rotateSub'));
+    else this.#show('puzzle', this.#t('sliderTitle'), this.#t('sliderSub'));
 
     // The handle is as wide as the piece (slider) or the rest of the image
     // beyond the track (rotate), so it reaches the end exactly at maxX.
@@ -727,7 +918,7 @@ export class BotGuardWidget extends ElementBase {
         if (turning) {
           const deg = (x / maxX) * 360;
           disc.style.transform = `rotate(${deg.toFixed(2)}deg)`;
-          handle.setAttribute('aria-valuetext', `${Math.round(deg)} 度`);
+          handle.setAttribute('aria-valuetext', this.#t('degrees', { n: Math.round(deg) }));
         } else {
           piece.style.left = `${x * scale}px`;
         }
@@ -807,7 +998,7 @@ export class BotGuardWidget extends ElementBase {
         drag = null;
         handle.classList.remove('dragging');
         startOver();
-        msg.textContent = '拖动被打断，请重新拖动滑块';
+        msg.textContent = this.#t('dragBroken');
       };
       const key = (e) => {
         if (drag) return;
@@ -866,7 +1057,7 @@ export class BotGuardWidget extends ElementBase {
     this.#root.querySelector('.prompt').textContent = c.prompt;
     const promptImg = this.#root.querySelector('.prompt-img');
     promptImg.classList.remove('ref');
-    promptImg.alt = '按顺序要点击的图标';
+    promptImg.alt = this.#t('iconsAlt');
     promptImg.hidden = !c.prompt_image;
     if (c.prompt_image) promptImg.src = c.prompt_image;
     this.#root.querySelector('.msg').textContent = '';
@@ -874,7 +1065,7 @@ export class BotGuardWidget extends ElementBase {
     img.src = c.image;
     marks.replaceChildren();
     this.#view = 'puzzle';
-    this.#show('puzzle', '请按提示依次点击', `共 ${c.targets} 处`);
+    this.#show('puzzle', this.#t('clickTitle'), this.#t('clickSub', { n: c.targets }));
     const shownAt = performance.now();
 
     return new Promise((resolve) => {
@@ -952,7 +1143,7 @@ export class BotGuardWidget extends ElementBase {
     this.#root.querySelector('.prompt').textContent = g.prompt;
     const promptImg = this.#root.querySelector('.prompt-img');
     promptImg.classList.add('ref');
-    promptImg.alt = '示例图形';
+    promptImg.alt = this.#t('refAlt');
     promptImg.hidden = !g.prompt_image;
     if (g.prompt_image) promptImg.src = g.prompt_image;
     this.#root.querySelector('.cimg').src = g.image;
@@ -972,7 +1163,7 @@ export class BotGuardWidget extends ElementBase {
       cellsEl.appendChild(el);
     }
     this.#view = 'puzzle';
-    this.#show('puzzle', '请按提示选出所有符合的格子', '选好后点“确认”');
+    this.#show('puzzle', this.#t('gridTitle'), this.#t('gridSub'));
     const shownAt = performance.now();
 
     return new Promise((resolve) => {
@@ -1044,7 +1235,7 @@ export class BotGuardWidget extends ElementBase {
     this.#root.querySelector('.clear').hidden = true;
     msg.textContent = '';
     this.#view = 'puzzle';
-    this.#show('puzzle', '请把错位的两块交换回来', '拖动其中一块，放到另一块上');
+    this.#show('puzzle', this.#t('jigsawTitle'), this.#t('jigsawSub'));
     stage.style.gridTemplateColumns = `repeat(${s.cols}, 1fr)`;
     stage.style.gridTemplateRows = `repeat(${s.rows}, 1fr)`;
     const tiles = [];
@@ -1144,7 +1335,7 @@ export class BotGuardWidget extends ElementBase {
         if (p) record(e.timeStamp - drag.t0, p, true);
         settle();
         if (!p || p.tile < 0 || p.tile === from) {
-          msg.textContent = '请把这一块拖到另一块上';
+          msg.textContent = this.#t('jigsawDrop');
           return;
         }
         // Show the swap before checking, like the real puzzle would.
@@ -1156,7 +1347,7 @@ export class BotGuardWidget extends ElementBase {
       const cancel = (e) => {
         if (!drag || e.pointerId !== drag.id) return;
         settle();
-        msg.textContent = '拖动被打断，请重新拖动';
+        msg.textContent = this.#t('jigsawBroken');
       };
       const cleanup = () => {
         stage.removeEventListener('pointerdown', down);
@@ -1196,7 +1387,7 @@ export class BotGuardWidget extends ElementBase {
       paintedAt = now;
       this.#progress(solved, k, Math.min(1, (solved / k + attempts / expected) / 2));
     };
-    if (!quiet) this.#show('solving', `正在验证 0/${k}`, '');
+    if (!quiet) this.#show('solving', this.#t('progress', { done: 0, total: k }), '');
     progress(true);
 
     return new Promise((resolve, reject) => {
@@ -1223,8 +1414,8 @@ export class BotGuardWidget extends ElementBase {
       };
       const fail = (message, code) => finish(() => reject(errorWith(message, code)));
       const done = (workers) => finish(() => resolve({ nonces, attempts, workers, ms: Math.round(performance.now() - t0) }));
-      stops.push(round.defer(() => fail('已取消', 'CANCELLED')));
-      stops.push(round.after(SOLVE_TIMEOUT_MS, () => fail('验证计算超时', 'TIMEOUT')));
+      stops.push(round.defer(() => fail(this.#t('cancelled'), 'CANCELLED')));
+      stops.push(round.after(SOLVE_TIMEOUT_MS, () => fail(this.#t('timeout'), 'TIMEOUT')));
 
       const inline = () => {
         // Workers unavailable (e.g. a CSP without blob: for a cross-origin
@@ -1276,7 +1467,7 @@ export class BotGuardWidget extends ElementBase {
           if (over || mainThread) return;
           e?.preventDefault?.();
           if (solved === 0 && attempts === 0) inline();
-          else fail('Worker 出错', 'SOLVER');
+          else fail(this.#t('worker'), 'SOLVER');
         };
         const indices = [];
         for (let i = w; i < k; i += count) indices.push(i);
@@ -1294,14 +1485,20 @@ export class BotGuardWidget extends ElementBase {
     this.#view = null;
     this.#setToken('');
     const code = err.code || 'ERROR';
-    this.#show('error', `${err.message}，点击重试`, code);
+    // Server messages are Simplified Chinese; other languages use their own
+    // text for the codes they know.
+    const known = code === 'NETWORK' ? this.#t('network') : /^HTTP_\d+$/.test(code) ? this.#t('http', { status: code.slice(5) })
+      : this.#lang() !== 'zh-CN' && this.#text(code);
+    const message = known || err.message;
+    err = Object.assign(err, { message });
+    this.#show('error', this.#t('errorRetry', { msg: message }), code);
     this.#trace('error', { code, message: err.message, status: err.status });
     this.#emit('botguard:error', { code, message: err.message, status: err.status });
     this.#settle(errorWith(err.message, code, { status: err.status }));
   }
 
   #idle() {
-    this.#show('idle', '点击进行人机验证', '大多数情况下无需操作，必要时会出现拼图或点选题');
+    this.#show('idle', this.#t('idle'), this.#t('idleSub'));
   }
 
   #setToken(token, ttl = 0) {
@@ -1316,7 +1513,7 @@ export class BotGuardWidget extends ElementBase {
     clearTimeout(this.#expiryTimer);
     this.#expiryTimer = setTimeout(() => {
       this.#setToken('');
-      this.#show('idle', '验证已过期，点击重新验证', '');
+      this.#show('idle', this.#t('expired'), '');
       this.#emit('botguard:expired', {});
     }, Math.max(0, this.#tokenDeadline - performance.now()));
   }
@@ -1377,7 +1574,7 @@ export class BotGuardWidget extends ElementBase {
   }
 
   #progress(solved, k, fraction) {
-    const title = `正在验证 ${solved}/${k}`;
+    const title = this.#t('progress', { done: solved, total: k });
     for (const el of this.#root.querySelectorAll('.title')) if (el.textContent !== title) el.textContent = title;
     for (const el of this.#root.querySelectorAll('.bar > i')) el.style.width = `${Math.round(fraction * 100)}%`;
   }
@@ -1421,6 +1618,16 @@ function resolveElement(target, option) {
  *   imageHeight max puzzle image height in px; images narrow to keep ratio
  *   size        "compact" for H5 pages and app WebViews
  *   accent      accent colour
+ *   radius      corner radius, e.g. 4 or "12px" (default 8px)
+ *   theme       "light" (default), "dark", or "auto" to follow the system
+ *   lang        "zh-CN" (default), "zh-TW", "en", or "auto" for the
+ *               browser's language; prompts from the gateway follow it
+ *   texts       replacements for built-in texts by key (see MESSAGES), for
+ *               every language ({ idle: '…' }) or per language
+ *               ({ en: { idle: '…' } })
+ *   remoteUI    false to ignore the appearance set in the console (the
+ *               widget otherwise fetches it from GET /v1/ui on load; what
+ *               the page sets itself always wins)
  *   nonce       CSP nonce for the widget's <style>, needed only by browsers
  *               without constructable stylesheets
  *   kinds       kinds to ask for: ['slider'] fixed, ['slider', 'rotate'] at
@@ -1451,6 +1658,11 @@ export function init(config) {
   if (config.imageHeight != null) w.setAttribute('image-height', String(config.imageHeight));
   if (config.size) w.setAttribute('size', config.size);
   if (config.accent) w.setAttribute('accent', config.accent);
+  if (config.radius != null) w.setAttribute('radius', String(config.radius));
+  if (config.theme) w.setAttribute('theme', config.theme);
+  if (config.lang) w.setAttribute('lang', config.lang);
+  if (config.texts) w.texts = config.texts;
+  if (config.remoteUI === false) w.setAttribute('remote-ui', 'off');
   if (config.nonce) w.setAttribute('nonce', config.nonce);
   if (config.kinds != null) w.setAttribute('kinds', kindsAttr(config.kinds));
   if (config.levels != null) w.setAttribute('levels', levelsAttr(config.levels));

@@ -134,6 +134,7 @@ type App struct {
 	Origins    []string
 	Actions    map[string]ActionPolicy
 	Background Background
+	UI         AppUI
 }
 
 // Background modes: where an app's challenge pictures come from.

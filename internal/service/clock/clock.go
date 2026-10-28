@@ -18,10 +18,10 @@ import (
 	"image/color"
 	"math"
 	"math/rand/v2"
-	"strings"
 
 	"github.com/dkeepersun/BotGuard/internal/service/click"
 	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 )
 
 const (
@@ -234,12 +234,19 @@ func generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, []face, error) {
 			return click.Puzzle{}, nil, err
 		}
 		var targets []click.Target
-		var parts []string
+		var cn, tw, en []string
 		for _, f := range faces[:Targets] {
 			targets = append(targets, click.Target{X: f.x, Y: f.y, R: f.r * 0.85})
-			parts = append(parts, "显示 "+f.t.String()+" 的时钟")
+			cn = append(cn, "显示 "+f.t.String()+" 的时钟")
+			tw = append(tw, "顯示 "+f.t.String()+" 的時鐘")
+			en = append(en, "the clock showing "+f.t.String())
 		}
-		return click.Puzzle{Image: url, Prompt: "请依次点击：" + strings.Join(parts, "、"), Width: Width, Height: Height, Targets: targets}, faces, nil
+		t := prompt.Text{
+			prompt.ZhCN: "请依次点击：" + prompt.Join(prompt.ZhCN, cn),
+			prompt.ZhTW: "請依次點擊：" + prompt.Join(prompt.ZhTW, tw),
+			prompt.En:   "Click in order: " + prompt.Join(prompt.En, en),
+		}
+		return click.Puzzle{Image: url, Prompt: t[prompt.ZhCN], Prompts: t, Width: Width, Height: Height, Targets: targets}, faces, nil
 	}
 	return click.Puzzle{}, nil, fmt.Errorf("clock: no layout after 50 attempts")
 }

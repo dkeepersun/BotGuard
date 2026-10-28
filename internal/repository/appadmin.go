@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -339,6 +340,7 @@ type AppDetail struct {
 	Secrets     []SecretDetail
 	Background  BackgroundSetting
 	Backgrounds []BackgroundPhoto
+	UI          domain.AppUI
 }
 
 // BackgroundSetting is where the app's pictures come from (domain.Background
@@ -377,10 +379,42 @@ func (r *AppAdmin) AppDetail(ctx context.Context, appKey string) (*AppDetail, er
 	if err := r.conn.QueryRowCtx(ctx, &d.Background, "SELECT background_mode, background_builtin FROM botguard_app WHERE id = ?", id); err != nil {
 		return nil, err
 	}
+	var ui struct {
+		Config sql.NullString `db:"ui_config"`
+	}
+	if err := r.conn.QueryRowCtx(ctx, &ui, "SELECT ui_config FROM botguard_app WHERE id = ?", id); err != nil {
+		return nil, err
+	}
+	if ui.Config.Valid && ui.Config.String != "" {
+		// A broken value shows as empty and is replaced on the next save.
+		_ = json.Unmarshal([]byte(ui.Config.String), &d.UI)
+	}
 	backgrounds, err := r.Backgrounds(ctx, appKey)
 	if err != nil {
 		return nil, err
 	}
 	d.Backgrounds = backgrounds
 	return &d, nil
+}
+
+// SetUI stores how the app's widgets look; an empty setting clears it.
+// Widgets read it when they load, so issued challenges are unaffected.
+func (r *AppAdmin) SetUI(ctx context.Context, appKey string, ui domain.AppUI) error {
+	var value any
+	if !ui.Empty() {
+		b, err := json.Marshal(ui)
+		if err != nil {
+			return err
+		}
+		value = string(b)
+	}
+	return r.conn.TransactCtx(ctx, func(ctx context.Context, s sqlx.Session) error {
+		if _, err := r.appIDForUpdate(ctx, s, appKey); err != nil {
+			return err
+		}
+		if _, err := s.ExecCtx(ctx, "UPDATE botguard_app SET ui_config = ? WHERE app_key = ?", value, appKey); err != nil {
+			return err
+		}
+		return writeAudit(ctx, s, appKey)
+	})
 }

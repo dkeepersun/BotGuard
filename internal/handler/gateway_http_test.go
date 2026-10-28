@@ -32,7 +32,8 @@ func (apps) AppByKey(_ context.Context, k string) (*domain.App, error) {
 		return nil, domain.ErrNotFound
 	}
 	return &domain.App{ID: 1, AppKey: k, Enabled: true, Origins: []string{"https://a.example", "app://com.example.shop"},
-		Actions: map[string]domain.ActionPolicy{"login": {Enabled: true, Mode: domain.ModeInvisible, Puzzles: 2, Difficulty: 8}}}, nil
+		Actions: map[string]domain.ActionPolicy{"login": {Enabled: true, Mode: domain.ModeInvisible, Puzzles: 2, Difficulty: 8}},
+		UI:      domain.AppUI{Lang: "en", Theme: "dark", Texts: map[string]string{"idle": "Prove you are human"}}}, nil
 }
 
 func (apps) SecretPair(_ context.Context, id string) (*domain.SecretPair, error) {
@@ -256,5 +257,21 @@ func TestAppOriginFlow(t *testing.T) {
 	b, _ := json.Marshal(map[string]string{"app_key": "app_public", "token": sol.Token, "action": "login", "request_id": "app1"})
 	if w, env := call(t, h, http.MethodPost, "/v1/verify", "application/json", "", "s3cret", string(b)); w.Code != 200 || !strings.Contains(string(env.Data), `"success":true`) {
 		t.Fatalf("verify app token: %d %+v", w.Code, env)
+	}
+}
+
+// GET /v1/ui serves the app's widget appearance to its own origins only.
+func TestUIEndpoint(t *testing.T) {
+	h := newServer(t, 10)
+	w, env := call(t, h, http.MethodGet, "/v1/ui?app_key=app_public", "", "https://a.example", "", "")
+	if w.Code != 200 || string(env.Data) != `{"lang":"en","theme":"dark","texts":{"idle":"Prove you are human"}}` ||
+		w.Header().Get("Access-Control-Allow-Origin") != "https://a.example" || w.Header().Get("Cache-Control") != "public, max-age=60" {
+		t.Fatalf("ui: %d %s %v", w.Code, env.Data, w.Header())
+	}
+	if w, env := call(t, h, http.MethodGet, "/v1/ui?app_key=app_public", "", "https://evil.example", "", ""); w.Code != 403 || env.Code != "ORIGIN_NOT_ALLOWED" {
+		t.Fatalf("other origin: %d %+v", w.Code, env)
+	}
+	if w, env := call(t, h, http.MethodGet, "/v1/ui?app_key=nope", "", "https://a.example", "", ""); w.Code != 403 || env.Code != "APP_FORBIDDEN" {
+		t.Fatalf("unknown app: %d %+v", w.Code, env)
 	}
 }

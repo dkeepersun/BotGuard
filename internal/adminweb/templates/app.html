@@ -26,6 +26,7 @@
     <button data-tab="actions" role="tab">验证策略<span class="count">{{len $d.Actions}}</span></button>
     <button data-tab="secrets" role="tab">密钥对<span class="count">{{len $d.Secrets}}</span></button>
     <button data-tab="backgrounds" role="tab">背景图<span class="count">{{len $a.Backgrounds}}</span></button>
+    <button data-tab="ui" role="tab">外观与文案</button>
   </div>
 
   <section id="tab-overview" role="tabpanel">
@@ -171,6 +172,28 @@ $request-&gt;validate(['botguard_token' =&gt; 'botguard:login']);</pre></div></d
           <figcaption><span class="cell-sub">{{time .CreatedAt}} · {{kb .Size}}</span>{{if $manage}}<form class="inline" method="post" action="/apps/{{$a.AppKey}}/backgrounds/delete" data-confirm="删除这张背景图？" data-danger data-ok-text="删除">{{template "csrf" $.CSRF}}<input type="hidden" name="id" value="{{.ID}}"><button class="btn sm danger">删除</button></form>{{end}}</figcaption></figure>
         {{else}}<div class="empty">还没有上传照片</div>{{end}}</div>
       </div></div>
+  </section>
+
+  <section id="tab-ui" role="tabpanel">{{$ui := $a.UI}}
+    <div class="card"><div class="card-head"><h2>外观与文案<span class="hint">组件加载时从 gateway 读取，约 1 分钟内生效；页面代码里自己设置的选项优先</span></h2></div><div class="card-body">
+      <form method="post" action="/apps/{{$a.AppKey}}/ui">{{template "csrf" .CSRF}}<fieldset {{if not $manage}}disabled{{end}} style="border:0;padding:0;margin:0">
+        <div class="grid g-4">
+          <div class="form-row"><label for="ui-lang">语言</label><select class="input" id="ui-lang" name="lang">
+            {{range $d.UILangs}}<option value="{{.Value}}" {{if eq .Value $ui.Lang}}selected{{end}}>{{.Label}}</option>{{end}}</select>
+            <div class="help">“跟随浏览器”：中文浏览器显示简体或繁体，其他显示英文。英文页面不出文字点选和语序点选。</div></div>
+          <div class="form-row"><label for="ui-theme">主题</label><select class="input" id="ui-theme" name="theme">
+            {{range $d.UIThemes}}<option value="{{.Value}}" {{if eq .Value $ui.Theme}}selected{{end}}>{{.Label}}</option>{{end}}</select></div>
+          <div class="form-row"><label for="ui-accent">主色</label><input class="input mono" id="ui-accent" name="accent" value="{{$ui.Accent}}" placeholder="#0969da" pattern="#[0-9a-fA-F]{6}">
+            <div class="help">按钮、滑块等的颜色，#rrggbb；留空用默认蓝色</div></div>
+          <div class="form-row"><label for="ui-radius">圆角（像素）</label><input class="input" id="ui-radius" name="radius" type="number" min="0" max="24" value="{{with $ui.Radius}}{{.}}{{end}}" placeholder="8"></div>
+        </div>
+        <h3 class="mt">文案</h3>
+        <div class="help" style="margin-bottom:8px">留空用组件自带的文案。文案只在上面设置的语言下显示（默认或跟随浏览器时按简体中文），其他语言的页面仍用组件自带的文案；每条最多 60 个字符。</div>
+        <div class="grid g-2">{{range $d.UITexts}}
+          <div class="form-row"><label for="ui-t-{{.Key}}">{{.Label}}</label><input class="input" id="ui-t-{{.Key}}" name="text_{{.Key}}" maxlength="60" value="{{.Value}}" placeholder="{{.Default}}"></div>{{end}}
+        </div>
+        {{if $manage}}<button class="btn primary">保存</button>{{end}}
+      </fieldset></form></div></div>
   </section>
 </div>
 

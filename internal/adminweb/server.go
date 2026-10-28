@@ -166,7 +166,7 @@ func (s *Server) funcs() template.FuncMap {
 	}
 }
 
-var opGroups = map[string]string{"app.": "应用", "origin.": "允许来源", "action.": "验证策略", "secret.": "密钥对", "background.": "背景图", "admin.": "管理员", "auth.": "登录", "system.": "系统"}
+var opGroups = map[string]string{"app.": "应用", "origin.": "允许来源", "action.": "验证策略", "secret.": "密钥对", "background.": "背景图", "ui.": "外观与文案", "admin.": "管理员", "auth.": "登录", "system.": "系统"}
 
 var opNames = map[string]string{
 	"app.create": "创建应用", "app.update": "修改应用", "app.enable": "启用应用", "app.disable": "停用应用",
@@ -178,6 +178,7 @@ var opNames = map[string]string{
 	"auth.login": "登录", "auth.logout": "退出", "auth.login_failed": "登录失败",
 	"system.upgrade": "一键升级",
 	"background.set": "修改背景来源", "background.add": "上传背景图", "background.delete": "删除背景图",
+	"ui.set": "修改外观与文案",
 }
 
 func opName(op string) string {
@@ -299,6 +300,7 @@ func (s *Server) Register(srv *rest.Server) error {
 		post("/apps/:key/secrets/rotate", s.action(logic.PermManageSecrets, s.secretRotate)),
 		post("/apps/:key/secrets/revoke", s.action(logic.PermManageSecrets, s.secretRevoke)),
 		post("/apps/:key/backgrounds/mode", s.action(logic.PermManageApps, s.backgroundMode)),
+		post("/apps/:key/ui", s.action(logic.PermManageApps, s.uiSave)),
 		post("/apps/:key/backgrounds/delete", s.action(logic.PermManageApps, s.backgroundDelete)),
 		get("/apps/:key/backgrounds/:id", s.page(logic.PermView, s.backgroundImage)),
 

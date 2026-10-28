@@ -9,6 +9,7 @@
 package grid
 
 import (
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 	"image"
 	"image/color"
 	"math"
@@ -24,11 +25,13 @@ type Puzzle struct {
 	Image string // data URL
 	// PromptImage, when set, shows a reference picture (mirror).
 	PromptImage string
-	Prompt      string
-	Width       int
-	Height      int
-	Rows        int
-	Cols        int
+	Prompt      string // in Simplified Chinese; Prompts has every language
+	// Prompts is the prompt in each language of package prompt.
+	Prompts prompt.Text
+	Width   int
+	Height  int
+	Rows    int
+	Cols    int
 	// Answer lists the cells to select, row by row from 0, ascending.
 	Answer []int
 }

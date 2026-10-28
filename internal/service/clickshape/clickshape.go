@@ -11,10 +11,10 @@ import (
 	"image/color"
 	"math"
 	"math/rand/v2"
-	"strings"
 
 	"github.com/dkeepersun/BotGuard/internal/service/click"
 	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 )
 
 const (
@@ -33,20 +33,26 @@ const (
 	dice
 )
 
-var kindNames = map[kind]string{triangle: "三角形", pentagon: "五边形", hexagon: "六边形", circle: "圆", star: "五角星"}
+var kindNames = map[kind]prompt.Text{
+	triangle: {prompt.ZhCN: "三角形", prompt.ZhTW: "三角形", prompt.En: "triangle"},
+	pentagon: {prompt.ZhCN: "五边形", prompt.ZhTW: "五邊形", prompt.En: "pentagon"},
+	hexagon:  {prompt.ZhCN: "六边形", prompt.ZhTW: "六邊形", prompt.En: "hexagon"},
+	circle:   {prompt.ZhCN: "圆", prompt.ZhTW: "圓", prompt.En: "circle"},
+	star:     {prompt.ZhCN: "五角星", prompt.ZhTW: "五角星", prompt.En: "star"},
+}
 
 type namedColor struct {
-	name string
+	name prompt.Text
 	c    color.RGBA
 }
 
 // Five colours people can name without hesitation.
 var palette = []namedColor{
-	{"红色", color.RGBA{220, 50, 55, 255}},
-	{"蓝色", color.RGBA{45, 95, 215, 255}},
-	{"绿色", color.RGBA{35, 150, 85, 255}},
-	{"黄色", color.RGBA{240, 190, 0, 255}},
-	{"紫色", color.RGBA{135, 70, 190, 255}},
+	{prompt.Text{prompt.ZhCN: "红色", prompt.ZhTW: "紅色", prompt.En: "red"}, color.RGBA{220, 50, 55, 255}},
+	{prompt.Text{prompt.ZhCN: "蓝色", prompt.ZhTW: "藍色", prompt.En: "blue"}, color.RGBA{45, 95, 215, 255}},
+	{prompt.Text{prompt.ZhCN: "绿色", prompt.ZhTW: "綠色", prompt.En: "green"}, color.RGBA{35, 150, 85, 255}},
+	{prompt.Text{prompt.ZhCN: "黄色", prompt.ZhTW: "黃色", prompt.En: "yellow"}, color.RGBA{240, 190, 0, 255}},
+	{prompt.Text{prompt.ZhCN: "紫色", prompt.ZhTW: "紫色", prompt.En: "purple"}, color.RGBA{135, 70, 190, 255}},
 }
 
 type object struct {
@@ -59,20 +65,32 @@ type object struct {
 	rot   float64
 }
 
-func (o object) desc() []string {
+// desc lists the ways to name o, shortest first, in every language.
+func (o object) desc() []prompt.Text {
 	if o.kind == dice {
-		return []string{fmt.Sprintf("有 %d 个点的方块", o.dots)}
+		dots := fmt.Sprintf("the square with %d dots", o.dots)
+		if o.dots == 1 {
+			dots = "the square with 1 dot"
+		}
+		return []prompt.Text{{prompt.ZhCN: fmt.Sprintf("有 %d 个点的方块", o.dots), prompt.ZhTW: fmt.Sprintf("有 %d 個點的方塊", o.dots), prompt.En: dots}}
 	}
-	size := "小"
+	k := kindNames[o.kind]
+	size := prompt.Text{prompt.ZhCN: "小", prompt.ZhTW: "小", prompt.En: "small"}
 	if o.big {
-		size = "大"
+		size = prompt.Text{prompt.ZhCN: "大", prompt.ZhTW: "大", prompt.En: "large"}
 	}
-	return []string{kindNames[o.kind], o.color.name + "的" + kindNames[o.kind], size + "的" + kindNames[o.kind]}
+	of := func(adj prompt.Text) prompt.Text {
+		return prompt.Text{prompt.ZhCN: adj[prompt.ZhCN] + "的" + k[prompt.ZhCN], prompt.ZhTW: adj[prompt.ZhTW] + "的" + k[prompt.ZhTW],
+			prompt.En: "the " + adj[prompt.En] + " " + k[prompt.En]}
+	}
+	bare := prompt.Text{prompt.ZhCN: k[prompt.ZhCN], prompt.ZhTW: k[prompt.ZhTW], prompt.En: "the " + k[prompt.En]}
+	return []prompt.Text{bare, of(o.color.name), of(size)}
 }
 
-// unique returns the descriptions of objs[i] that match no other object.
-func unique(objs []object, i int) []string {
-	var out []string
+// unique returns the descriptions of objs[i] that match no other object
+// (compared in Simplified Chinese, which tells every description apart).
+func unique(objs []object, i int) []prompt.Text {
+	var out []prompt.Text
 	for _, d := range objs[i].desc() {
 		clash := false
 		for j, o := range objs {
@@ -80,7 +98,7 @@ func unique(objs []object, i int) []string {
 				continue
 			}
 			for _, e := range o.desc() {
-				if e == d {
+				if e[prompt.ZhCN] == d[prompt.ZhCN] {
 					clash = true
 				}
 			}
@@ -232,7 +250,7 @@ func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 			continue
 		}
 		var candidates []int
-		descs := map[int][]string{}
+		descs := map[int][]prompt.Text{}
 		for i := range objs {
 			if u := unique(objs, i); len(u) > 0 {
 				candidates = append(candidates, i)
@@ -248,14 +266,15 @@ func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 		}
 		r.Shuffle(len(candidates), func(i, j int) { candidates[i], candidates[j] = candidates[j], candidates[i] })
 		var targets []click.Target
-		var words []string
+		words := map[string][]string{}
 		for _, i := range candidates[:n] {
 			o := objs[i]
 			targets = append(targets, click.Target{X: o.x, Y: o.y, R: o.r})
 			// Prefer the shortest description: a bare count ("五边形",
 			// "有 4 个点的方块") makes the user, and a model, count.
-			d := descs[i][0]
-			words = append(words, d)
+			for _, lang := range prompt.Langs {
+				words[lang] = append(words[lang], descs[i][0][lang])
+			}
 		}
 
 		bg, _ := src.Background(r, Width, Height)
@@ -275,7 +294,12 @@ func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 		if err != nil {
 			return click.Puzzle{}, err
 		}
-		return click.Puzzle{Image: url, Prompt: "请依次点击：" + strings.Join(words, "、"), Width: Width, Height: Height, Targets: targets}, nil
+		t := prompt.Text{
+			prompt.ZhCN: "请依次点击：" + prompt.Join(prompt.ZhCN, words[prompt.ZhCN]),
+			prompt.ZhTW: "請依次點擊：" + prompt.Join(prompt.ZhTW, words[prompt.ZhTW]),
+			prompt.En:   "Click in order: " + prompt.Join(prompt.En, words[prompt.En]),
+		}
+		return click.Puzzle{Image: url, Prompt: t[prompt.ZhCN], Prompts: t, Width: Width, Height: Height, Targets: targets}, nil
 	}
 	return click.Puzzle{}, fmt.Errorf("clickshape: no valid layout after 50 attempts")
 }

@@ -171,6 +171,25 @@ init({ element: '#captcha', endpoint, appKey, action: 'login',
 - `invisible`（无感）只在 action 为自适应模式、风险为低时有效；action 为无感模式时前端指定被忽略；
 - 档位数、升降规则和有效期见 [API 文档](../../api/contract-v1.md)“前端指定题型”。
 
+## 语言、主题与文案（0.4.0 起）
+
+| 设置 | 属性 / `init()` 选项 | 说明 |
+|---|---|---|
+| 语言 | `lang="en"` / `lang: 'en'` | `zh-CN`（默认）、`zh-TW`、`en`，或 `auto` 跟随浏览器语言。组件的全部文字和 gateway 返回的题目提示都跟着变；英文页面不出文字点选和语序点选（要认读汉字） |
+| 主题 | `theme="dark"` / `theme: 'dark'` | `light`（默认）、`dark`，或 `auto` 跟随系统深浅色 |
+| 圆角 | `radius="12"` / `radius: 12` / `--botguard-radius` | 入口框和面板的圆角，图片取一半；默认 8px |
+| 文案 | `el.texts = {…}` / `texts: {…}` | 按键替换组件自带的文案，对所有语言生效：`{ idle: '点我开始验证' }`；或按语言：`{ en: { idle: 'Tap to verify' } }`。键名见源码中的 `MESSAGES`，也可以 `import { MESSAGES } from '@botguard/browser'` 查看 |
+| 后台设置 | `remote-ui="off"` / `remoteUI: false` | 组件加载时会读取管理后台「外观与文案」里的设置（`GET /v1/ui`，同一页面同一应用只请求一次）；关掉后只用页面自己的设置 |
+
+优先级：页面自己设置的属性和选项 > 管理后台的设置 > 组件默认值。
+
+```js
+init({ element: '#captcha', endpoint, appKey, action: 'login', lang: 'auto', theme: 'auto',
+  texts: { idle: '点击完成安全验证', en: { idle: 'Click to verify' } } });
+```
+
+服务端返回的错误信息是简体中文；繁体和英文界面下，组件对已知的错误码（限流、来源不允许、服务不可用等）显示本语言的文字，未知错误码仍显示服务端信息。
+
 ## 尺寸与外观（H5 / App WebView）
 
 组件默认宽度为 100%，最宽 360px；图片高度随宽度按比例变化。宽、高和主色都可以定制。

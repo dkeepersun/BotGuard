@@ -18,6 +18,7 @@ import (
 
 	"github.com/dkeepersun/BotGuard/internal/service/click"
 	"github.com/dkeepersun/BotGuard/internal/service/imagegen"
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
 )
 
 const (
@@ -28,19 +29,26 @@ const (
 )
 
 type namedColor struct {
-	name string
+	name prompt.Text
 	c    color.RGBA
 }
 
 var palette = []namedColor{
-	{"红色", color.RGBA{220, 50, 55, 255}},
-	{"蓝色", color.RGBA{45, 95, 215, 255}},
-	{"绿色", color.RGBA{35, 150, 85, 255}},
-	{"黄色", color.RGBA{240, 185, 0, 255}},
-	{"紫色", color.RGBA{135, 70, 190, 255}},
+	{prompt.Text{prompt.ZhCN: "红色", prompt.ZhTW: "紅色", prompt.En: "red"}, color.RGBA{220, 50, 55, 255}},
+	{prompt.Text{prompt.ZhCN: "蓝色", prompt.ZhTW: "藍色", prompt.En: "blue"}, color.RGBA{45, 95, 215, 255}},
+	{prompt.Text{prompt.ZhCN: "绿色", prompt.ZhTW: "綠色", prompt.En: "green"}, color.RGBA{35, 150, 85, 255}},
+	{prompt.Text{prompt.ZhCN: "黄色", prompt.ZhTW: "黃色", prompt.En: "yellow"}, color.RGBA{240, 185, 0, 255}},
+	{prompt.Text{prompt.ZhCN: "紫色", prompt.ZhTW: "紫色", prompt.En: "purple"}, color.RGBA{135, 70, 190, 255}},
 }
 
-var shapeNames = []string{"圆形", "正方形", "三角形", "五角星", "菱形", "六边形"}
+var shapeNames = []prompt.Text{
+	{prompt.ZhCN: "圆形", prompt.ZhTW: "圓形", prompt.En: "circle"},
+	{prompt.ZhCN: "正方形", prompt.ZhTW: "正方形", prompt.En: "square"},
+	{prompt.ZhCN: "三角形", prompt.ZhTW: "三角形", prompt.En: "triangle"},
+	{prompt.ZhCN: "五角星", prompt.ZhTW: "五角星", prompt.En: "star"},
+	{prompt.ZhCN: "菱形", prompt.ZhTW: "菱形", prompt.En: "diamond"},
+	{prompt.ZhCN: "六边形", prompt.ZhTW: "六邊形", prompt.En: "hexagon"},
+}
 
 type object struct {
 	col, row int
@@ -49,7 +57,13 @@ type object struct {
 	color    int
 }
 
-func (o object) name() string { return palette[o.color].name + shapeNames[o.shape] }
+// name is the object's colour and shape in lang ("红色圆形", "red circle").
+func (o object) name(lang string) string {
+	if lang == prompt.En {
+		return palette[o.color].name[lang] + " " + shapeNames[o.shape][lang]
+	}
+	return palette[o.color].name[lang] + shapeNames[o.shape][lang]
+}
 
 func (o object) inside(x, y float64) bool {
 	dx, dy := (x-o.x)/o.r, (y-o.y)/o.r
@@ -84,11 +98,16 @@ func (o object) inside(x, y float64) bool {
 }
 
 type direction struct {
-	name   string
+	name   prompt.Text // "右边", "to the right of"
 	dc, dr int
 }
 
-var directions = []direction{{"右边", 1, 0}, {"左边", -1, 0}, {"上方", 0, -1}, {"下方", 0, 1}}
+var directions = []direction{
+	{prompt.Text{prompt.ZhCN: "右边", prompt.ZhTW: "右邊", prompt.En: "to the right of"}, 1, 0},
+	{prompt.Text{prompt.ZhCN: "左边", prompt.ZhTW: "左邊", prompt.En: "to the left of"}, -1, 0},
+	{prompt.Text{prompt.ZhCN: "上方", prompt.ZhTW: "上方", prompt.En: "above"}, 0, -1},
+	{prompt.Text{prompt.ZhCN: "下方", prompt.ZhTW: "下方", prompt.En: "below"}, 0, 1},
+}
 
 type question struct {
 	anchor, target int
@@ -115,11 +134,11 @@ func questions(objs []object) []question {
 	names := map[string]int{}
 	for i, o := range objs {
 		at[[2]int{o.col, o.row}] = i
-		names[o.name()]++
+		names[o.name(prompt.ZhCN)]++
 	}
 	var out []question
 	for i, o := range objs {
-		if names[o.name()] != 1 {
+		if names[o.name(prompt.ZhCN)] != 1 {
 			continue
 		}
 		for _, d := range directions {
@@ -168,14 +187,23 @@ func Generate(r *rand.Rand, src imagegen.Source) (click.Puzzle, error) {
 		if err != nil {
 			return click.Puzzle{}, err
 		}
-		var parts []string
+		var cn, tw, en []string
 		var targets []click.Target
 		for n, q := range []question{first, *second} {
-			parts = append(parts, fmt.Sprintf("%s%s%s紧挨着的图形", []string{"①", "②"}[n], objs[q.anchor].name(), q.dir.name))
+			num := []string{"①", "②"}[n]
+			a := objs[q.anchor]
+			cn = append(cn, fmt.Sprintf("%s%s%s紧挨着的图形", num, a.name(prompt.ZhCN), q.dir.name[prompt.ZhCN]))
+			tw = append(tw, fmt.Sprintf("%s%s%s緊挨著的圖形", num, a.name(prompt.ZhTW), q.dir.name[prompt.ZhTW]))
+			en = append(en, fmt.Sprintf("%s the shape directly %s the %s", num, q.dir.name[prompt.En], a.name(prompt.En)))
 			t := objs[q.target]
 			targets = append(targets, click.Target{X: t.x, Y: t.y, R: t.r})
 		}
-		return click.Puzzle{Image: url, Prompt: "依次点击：" + strings.Join(parts, "，"), Width: Width, Height: Height, Targets: targets}, nil
+		t := prompt.Text{
+			prompt.ZhCN: "依次点击：" + strings.Join(cn, "，"),
+			prompt.ZhTW: "依次點擊：" + strings.Join(tw, "，"),
+			prompt.En:   "Click in order: " + strings.Join(en, "; "),
+		}
+		return click.Puzzle{Image: url, Prompt: t[prompt.ZhCN], Prompts: t, Width: Width, Height: Height, Targets: targets}, nil
 	}
 	return click.Puzzle{}, fmt.Errorf("spatial: no unambiguous layout after 100 attempts")
 }

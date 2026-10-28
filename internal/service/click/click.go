@@ -8,7 +8,11 @@
 // so answers also have to look like a hand made them.
 package click
 
-import "math"
+import (
+	"math"
+
+	"github.com/dkeepersun/BotGuard/internal/service/prompt"
+)
 
 // Target is a circle in image pixels. The puzzle's answer is the ordered list
 // of targets; it never reaches the browser except sealed in the challenge.
@@ -21,7 +25,9 @@ type Target struct {
 // Puzzle is one generated challenge.
 type Puzzle struct {
 	Image  string // data URL
-	Prompt string
+	Prompt string // in Simplified Chinese; Prompts has every language
+	// Prompts is the prompt in each language of package prompt.
+	Prompts prompt.Text
 	// PromptImage, when set, shows the targets as pictures (icon kinds).
 	PromptImage string
 	Width       int

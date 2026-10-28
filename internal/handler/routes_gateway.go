@@ -42,6 +42,7 @@ const (
 	routeChallenges = "challenges"
 	routeSolutions  = "solutions"
 	routeVerify     = "verify"
+	routeUI         = "ui"
 )
 
 type Gateway struct {
@@ -62,6 +63,7 @@ func (g *Gateway) Register(s *rest.Server) {
 		{Method: http.MethodPost, Path: "/v1/solutions", Handler: g.solutions},
 		{Method: http.MethodOptions, Path: "/v1/solutions", Handler: preflight},
 		{Method: http.MethodPost, Path: "/v1/verify", Handler: g.verify},
+		{Method: http.MethodGet, Path: "/v1/ui", Handler: g.ui},
 	})
 	for _, name := range sdkassets.Files() {
 		s.AddRoute(rest.Route{Method: http.MethodGet, Path: "/sdk/v1/" + name, Handler: sdkassets.Handler(name)})
@@ -187,6 +189,8 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 		// Widget is the browser widget's version, for the console's count
 		// of outdated widgets; it changes nothing about the challenge.
 		Widget string `json:"widget"`
+		// Lang is the page's language tag for the prompt text.
+		Lang string `json:"lang"`
 	}
 	if err := decode(w, r, &body); err != nil {
 		g.fail(w, routeChallenges, err, rid)
@@ -195,7 +199,7 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 	out, origin, err := g.Logic.Issue(r.Context(), logic.IssueInput{
 		AppKey: body.AppKey, Action: body.Action, Origin: requestOrigin(r), ClientIP: g.IPs.Resolve(r),
 		HeaderUA: r.UserAgent(), Signals: body.Signals, Fallback: body.Fallback,
-		Select: logic.Selection{Kinds: body.Kinds, Levels: body.Levels}, Widget: body.Widget,
+		Select: logic.Selection{Kinds: body.Kinds, Levels: body.Levels}, Widget: body.Widget, Lang: body.Lang,
 	})
 	cors(w, origin)
 	if err != nil {
@@ -203,6 +207,19 @@ func (g *Gateway) challenges(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response.OK(w, out, rid)
+}
+
+// ui serves the app's widget appearance (logic.Gateway.UI). Widgets fetch it
+// on every page load, so browsers may keep it for a minute.
+func (g *Gateway) ui(w http.ResponseWriter, r *http.Request) {
+	rid := newRequestID()
+	out, origin, err := g.Logic.UI(r.Context(), r.URL.Query().Get("app_key"), requestOrigin(r))
+	cors(w, origin)
+	if err != nil {
+		g.fail(w, routeUI, err, rid)
+		return
+	}
+	response.OKCached(w, out, rid, 60)
 }
 
 func (g *Gateway) solutions(w http.ResponseWriter, r *http.Request) {

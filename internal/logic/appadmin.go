@@ -291,3 +291,19 @@ func (a *AppAdmin) DeleteBackground(ctx context.Context, appKey string, id int64
 func (a *AppAdmin) BackgroundImage(ctx context.Context, appKey string, id int64) ([]byte, error) {
 	return a.Repo.BackgroundImage(ctx, appKey, id)
 }
+
+// SetUI sets how the app's widgets look and what they say.
+func (a *AppAdmin) SetUI(ctx context.Context, appKey string, ui domain.AppUI) error {
+	for k, v := range ui.Texts {
+		if v = strings.TrimSpace(v); v == "" {
+			delete(ui.Texts, k)
+		} else {
+			ui.Texts[k] = v
+		}
+	}
+	if err := ui.Validate(); err != nil {
+		return invalid("%v", err)
+	}
+	ctx = repository.Audited(ctx, "ui.set", appKey, map[string]any{"lang": ui.Lang, "theme": ui.Theme, "accent": ui.Accent, "radius": ui.Radius, "texts": ui.Texts})
+	return a.Repo.SetUI(ctx, appKey, ui)
+}
