@@ -20,14 +20,14 @@
 
 另外，不想用 npm 的页面可以直接引用 gateway 托管的脚本，和易盾的 `load.min.js` 一样：`<script src="https://你的gateway/sdk/v1/load.js">`。
 
-## 当前状态（2026-10-28）
+## 当前状态（2026-10-29）
 
 许可证均为 MIT。
 
 | 内容 | 最新版本 | 说明 |
 |---|---|---|
-| 服务端 | v0.6.1 | GitHub Releases、GHCR 镜像、APT/YUM 软件源都已发布（用 `publish` 工作流发版，标签在 `0accc16` 上）。修复升级后控制台误报“gateway 版本不一致”：管理后台启动后还没上报的 gateway 显示为“等待上报”（#36）；测速测试改为取多批中最快一批，避免 CI 偶发失败（#37）。没有新迁移。v0.6.0（标签在 `401fba6` 上）：管理后台新版本提示与一键升级（#27–#29）；背景图改为多层随机组合，点选题加干扰笔画与成图扰动（#30）；新题型时钟读数 `clock`、九宫格计数 `grid_count`、镜像辨别 `mirror`（#31、#32）；新建 action 默认不勾这三种题型，后台统计并提醒仍在使用的 0.3.0 之前的浏览器组件（#33）。没有新迁移。v0.5.0：安全修复第二批：风险评分加入服务端观察（签发与解题的网络、时间、指针类型，按网段计数）、按网段限流与连续失败封禁、滑块同形状干扰缺口、管理后台会话记录签名、Redis 密码（`BOTGUARD_REDIS_PASSWORD`），`SOLVE_TOO_FAST` 不再把副本间的时钟偏差算进去。没有新迁移。v0.4.0：安全修复第一批（管理后台 XSS、登录跳转与锁定、高风险不给 fallback、图片题按 IP 段限额与降级工作量下限、页面指定题型改为 action 开关，默认关闭，迁移 0007）、运行监控页和 Prometheus 指标 |
-| `@botguard/browser` | 0.3.0 | 支持 `clock`、`grid_count`、`mirror`，签发请求带 `widget` 版本号。2026-10-28 由 release-browser 工作流暂存、在本机批准后公开，带 provenance；npm 与 GitHub Release 的 tgz shasum 一致（`5cdc6d81…`），GitHub Release 以 `--latest=false` 发布。npm 安装的旧组件不能显示这三种新题型，见 `docs/challenge-catalog.md` §7.5。0.2.1 起都走这套流程；0.1.0、0.2.0 是在本机手动发布的，没有 provenance |
+| 服务端 | v0.7.0 | GitHub Releases、GHCR 镜像（`0.7.0`、`0.7`、`latest` 指向同一摘要）、APT/YUM 软件源都已发布（用 `publish` 工作流发版，标签在 `2815013` 上），构建来源证明可用 `gh attestation verify` 核对。改动：照片背景与按应用上传（#39，迁移 0008）；题面样式：毛玻璃缺口、立体/空心文字、半透明图标（#40）；多语言、`GET /v1/ui` 与后台「外观与文案」（#41，迁移 0009）；风险信号 `CDP`、`NATIVE_TAMPERED`、`TRAJECTORY_SMOOTH` 和应用级被刷模式（#42）；组件加固评估文档（#43）。Release 说明里补了升级注意事项。v0.6.1（标签在 `0accc16` 上）：修复升级后控制台误报“gateway 版本不一致”：管理后台启动后还没上报的 gateway 显示为“等待上报”（#36）；测速测试改为取多批中最快一批，避免 CI 偶发失败（#37）。没有新迁移。v0.6.0（标签在 `401fba6` 上）：管理后台新版本提示与一键升级（#27–#29）；背景图改为多层随机组合，点选题加干扰笔画与成图扰动（#30）；新题型时钟读数 `clock`、九宫格计数 `grid_count`、镜像辨别 `mirror`（#31、#32）；新建 action 默认不勾这三种题型，后台统计并提醒仍在使用的 0.3.0 之前的浏览器组件（#33）。没有新迁移。v0.5.0：安全修复第二批：风险评分加入服务端观察（签发与解题的网络、时间、指针类型，按网段计数）、按网段限流与连续失败封禁、滑块同形状干扰缺口、管理后台会话记录签名、Redis 密码（`BOTGUARD_REDIS_PASSWORD`），`SOLVE_TOO_FAST` 不再把副本间的时钟偏差算进去。没有新迁移。v0.4.0：安全修复第一批（管理后台 XSS、登录跳转与锁定、高风险不给 fallback、图片题按 IP 段限额与降级工作量下限、页面指定题型改为 action 开关，默认关闭，迁移 0007）、运行监控页和 Prometheus 指标 |
+| `@botguard/browser` | 0.4.0 | 新增 `lang`、`theme`、`radius`、`texts`，加载时读取后台外观；风险信号新增 `cdp`、`native_tampered`。2026-10-29 由 release-browser 工作流暂存，在 npmjs.com 的 Staged Packages 页面批准（需要安全密钥二次验证）后公开，带 provenance；npm 与 GitHub Release 的 tgz shasum 一致（`3e8dc6fc…`），GitHub Release 以 `--latest=false` 发布。0.3.0：支持 `clock`、`grid_count`、`mirror`，签发请求带 `widget` 版本号。npm 安装的旧组件不能显示这三种新题型，见 `docs/challenge-catalog.md` §7.5。0.2.1 起都走这套流程；0.1.0、0.2.0 是在本机手动发布的，没有 provenance |
 | `botguard/php-sdk` | 0.1.1 | `VerifyResult` 新增 `origin`。v0.6.0 新增的题型只是新的 `challengeKind` 取值，不需要发新版 |
 | `botguard/laravel` | 0.3.0 | 新增来源白名单 `botguard.origins`（应用的允许来源用了通配或 `*` 时，只放行自己页面上拿到的 token）；依赖提到 `botguard/php-sdk: ^0.1.1`（`origin` 字段从 0.1.1 开始才有）。0.2.0：默认拒绝需要额外验证的 token（fallback、容量降级、高风险），可用 `accept` 配置放开 |
 | Go SDK 核心包 | v0.3.0 | 标签在 `d1fbb28` 上。新增 `WithAllowedOrigins` 来源白名单。干净目录 `go get` 并编译验证通过，sum.golang.org 已有记录 |
