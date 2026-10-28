@@ -12,6 +12,7 @@ import (
 
 	"github.com/dkeepersun/BotGuard/internal/domain"
 	"github.com/dkeepersun/BotGuard/internal/service/click"
+	"github.com/dkeepersun/BotGuard/internal/service/grid"
 	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
 	"github.com/dkeepersun/BotGuard/internal/service/pow"
 	"github.com/dkeepersun/BotGuard/internal/service/risk"
@@ -59,6 +60,13 @@ func withPuzzle(h *harness) {
 	}
 	h.g.Jigsaws = func() (jigsaw.Puzzle, error) {
 		return jigsaw.Puzzle{Image: "data:image/jpeg;base64,AA==", A: 1, B: 6}, nil
+	}
+	h.g.Grids = func(kind string) (grid.Puzzle, error) {
+		p := grid.Puzzle{Image: "data:image/jpeg;base64,AA==", Prompt: "请选出：" + kind, Width: 320, Height: 200, Rows: 3, Cols: 3, Answer: []int{0, 4, 8}}
+		if kind == domain.KindMirror {
+			p.Rows, p.Cols, p.Answer, p.PromptImage = 2, 4, []int{1, 6}, "data:image/png;base64,AA=="
+		}
+		return p, nil
 	}
 }
 
@@ -401,5 +409,47 @@ func TestPhaseThreeKinds(t *testing.T) {
 		if v, _ := h.verify(out.Token, action, "r-"+action); !v.Success || v.ChallengeKind != kind {
 			t.Fatalf("%s verify: %+v", kind, v)
 		}
+	}
+}
+
+func TestGridKinds(t *testing.T) {
+	h := newHarness(t)
+	withPuzzle(h)
+	// Cell centres: 3×3 cells are about 107×67, 2×4 cells 80×100.
+	answers := map[string]*SliderAnswer{
+		"count": {Clicks: [][3]float64{{1600, 53, 33}, {2450, 160, 100}, {3100, 266, 166}}, MovesBetween: []int{4, 11, 8}},
+		"flip":  {Clicks: [][3]float64{{1700, 120, 50}, {2350, 200, 140}, {3300, 210, 150}, {4050, 200, 150}}, MovesBetween: []int{6, 9, 3, 5}},
+	}
+	for action, kind := range map[string]string{"count": domain.KindGridCount, "flip": domain.KindMirror} {
+		c := h.issueFor(t, action, clean(), false)
+		if c.Kind != kind || c.Grid == nil || c.Click != nil {
+			t.Fatalf("%s issue: %+v", kind, c)
+		}
+		if (kind == domain.KindMirror) != (c.Grid.PromptImage != "") || c.Grid.Rows*c.Grid.Cols != map[string]int{"count": 9, "flip": 8}[action] {
+			t.Fatalf("%s render: %+v", kind, c.Grid)
+		}
+		body, _ := base64.RawURLEncoding.DecodeString(strings.Split(c.Challenge, ".")[2])
+		if strings.Contains(string(body), `"a"`) || strings.Contains(string(body), `"g"`) {
+			t.Fatalf("%s answer visible: %s", kind, body)
+		}
+		out, err := h.solveWith(c, answers[action], clean())
+		if err != nil {
+			t.Fatalf("%s solve: %v", kind, err)
+		}
+		if v, _ := h.verify(out.Token, action, "r-"+action); !v.Success || v.ChallengeKind != kind {
+			t.Fatalf("%s verify: %+v", kind, v)
+		}
+	}
+	// One cell short of the answer.
+	short := &SliderAnswer{Clicks: [][3]float64{{1600, 53, 33}, {2450, 160, 100}}, MovesBetween: []int{4, 11}}
+	if _, err := h.solveWith(h.issueFor(t, "count", clean(), false), short, clean()); code(err) != "ANSWER_INVALID" {
+		t.Fatalf("short selection: %v", err)
+	}
+	if _, err := h.solveWith(h.issueFor(t, "count", clean(), false), &SliderAnswer{}, clean()); code(err) != "ANSWER_INVALID" {
+		t.Fatalf("empty selection: %v", err)
+	}
+	many := &SliderAnswer{Clicks: make([][3]float64, 25)}
+	if _, err := h.solveWith(h.issueFor(t, "count", clean(), false), many, clean()); code(err) != "INVALID_REQUEST" {
+		t.Fatalf("too many clicks: %v", err)
 	}
 }

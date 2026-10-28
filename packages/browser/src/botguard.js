@@ -39,8 +39,11 @@ const MAX_TTL_S = 600;
 const MAX_FAILURES = 3;
 const COOLDOWN_MS = 10_000;
 const MAX_POINTS = 400; // the gateway's slider.MaxPoints
+const MAX_GRID_CLICKS = 24; // the gateway's grid.MaxClicks
 // Kinds answered with ordered clicks on the picture.
 const CLICK_KINDS = ['click_text', 'click_order', 'click_icon', 'click_shape', 'clock', 'spatial'];
+// Kinds answered by selecting cells of a grid, then confirming.
+const GRID_KINDS = ['grid_count', 'mirror'];
 const SAMPLE_MS = 8; // minimum spacing of trajectory samples
 const PROGRESS_MS = 100; // minimum spacing of progress repaints
 
@@ -123,6 +126,16 @@ const STYLE = `
   color: #fff; font: 600 13px/24px sans-serif; text-align: center; box-shadow: 0 0 0 2px #fff; pointer-events: none; }
 .foot .left button { margin-right: 12px; }
 .prompt-img { display: block; height: 30px; margin: -2px 0 8px; border-radius: 6px; }
+.prompt-img.ref { height: 56px; }
+/* Grid kinds: cells over the picture toggle on click; Confirm submits. */
+.cstage .cells { position: absolute; top: 0; right: 0; bottom: 0; left: 0; display: grid; }
+.cstage .cell { position: relative; border-radius: 3px; }
+.cstage .cell.on { box-shadow: inset 0 0 0 3px var(--bg-accent); background: rgba(9, 105, 218, .16); }
+.cstage .cell.on::after { content: "✓"; position: absolute; top: 3px; right: 3px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--bg-accent); color: #fff; font: 700 12px/18px sans-serif; text-align: center; box-shadow: 0 0 0 2px #fff; }
+.confirm { display: block; width: min(100%, calc(var(--bg-img-h) * 1.6)); margin: 8px auto 0; padding: 7px 0; border: 0; border-radius: 6px;
+  background: var(--bg-accent); color: #fff; font: inherit; cursor: pointer; }
+.confirm:disabled { opacity: .45; cursor: default; }
 /* Jigsaw: tiles cut from one image; the dragged one follows the pointer. */
 .jstage { position: relative; width: min(100%, calc(var(--bg-img-h) * 1.6)); margin: 0 auto; aspect-ratio: 8 / 5; overflow: hidden;
   border-radius: 4px; background: #eaeef2; touch-action: none; user-select: none; display: grid; }
@@ -195,7 +208,8 @@ const TEMPLATE = `
       <div class="click-ui" hidden>
         <div class="prompt" aria-live="polite"></div>
         <img class="prompt-img" alt="按顺序要点击的图标" hidden>
-        <div class="cstage"><img class="cimg" alt="点选图片"><div class="marks"></div></div>
+        <div class="cstage"><img class="cimg" alt="点选图片"><div class="marks"></div><div class="cells" hidden></div></div>
+        <button type="button" class="confirm" hidden disabled>确认</button>
       </div>
       <div class="jigsaw-ui" hidden>
         <div class="jstage" role="application" aria-label="拖动一块拼图到另一块上交换位置"></div>
@@ -538,8 +552,10 @@ export class BotGuardWidget extends ElementBase {
       const slider = ch.kind === 'slider' || ch.kind === 'rotate';
       const clicking = CLICK_KINDS.includes(ch.kind);
       const swapping = ch.kind === 'jigsaw';
-      if (!slider && !clicking && !swapping) this.#view = null;
-      const work = this.#solve(round, ch, perPuzzle, slider || clicking || swapping);
+      const selecting = GRID_KINDS.includes(ch.kind);
+      const interactive = slider || clicking || swapping || selecting;
+      if (!interactive) this.#view = null;
+      const work = this.#solve(round, ch, perPuzzle, interactive);
       work.catch(() => {});
       let answer;
       let drag = {};
@@ -561,6 +577,12 @@ export class BotGuardWidget extends ElementBase {
         ({ answer, drag } = result);
         this.#trace('clicks', { count: answer.clicks.length, ms: Math.round(answer.clicks.at(-1)[0]), moves_between: answer.moves_between, pointer_type: drag.pointer_type });
         this.#show('loading', '正在校验…', '');
+      } else if (selecting) {
+        const result = await this.#grid(round, ch.grid);
+        if (!result || !round.live) return;
+        ({ answer, drag } = result);
+        this.#trace('cells', { clicks: answer.clicks.length, ms: Math.round(answer.clicks.at(-1)[0]), moves_between: answer.moves_between, pointer_type: drag.pointer_type });
+        this.#show('loading', '正在校验…', '');
       } else if (ch.kind === 'fallback') {
         this.#show('solving', '正在进行无障碍验证，需要几秒…', '');
       }
@@ -580,8 +602,9 @@ export class BotGuardWidget extends ElementBase {
       this.#view = null;
       this.#dialogOpen = false;
       this.#setToken(sol.token, tokenTTL(sol));
-      const how = ch.kind === 'rotate' ? '旋转对齐完成' : swapping ? '拼图复原完成' : slider ? '拼图完成' : clicking ? '点选完成' : ch.kind === 'fallback' ? '无障碍验证完成' : `本机计算 ${attempts.toLocaleString()} 次`;
-      const took = slider || clicking || swapping ? performance.now() - t1 : solveMs;
+      const how = ch.kind === 'rotate' ? '旋转对齐完成' : swapping ? '拼图复原完成' : slider ? '拼图完成' : clicking ? '点选完成'
+        : selecting ? '选择完成' : ch.kind === 'fallback' ? '无障碍验证完成' : `本机计算 ${attempts.toLocaleString()} 次`;
+      const took = interactive ? performance.now() - t1 : solveMs;
       this.#show('verified', '验证通过', `${how}，用时 ${(took / 1000).toFixed(2)} 秒`);
       this.#emit('botguard:verified', { token: sol.token, expiresAt: sol.expires_at, expiresIn: sol.expires_in, kind: ch.kind, attempts, solveMs });
       this.#settle(null, sol.token);
@@ -610,7 +633,8 @@ export class BotGuardWidget extends ElementBase {
       return;
     }
     this.#root.querySelector('.msg').textContent = !this.#root.querySelector('.jigsaw-ui').hidden ? '交换的两块不对，请再试一次'
-      : this.#root.querySelector('.click-ui').hidden ? '没有对准，请再试一次' : '点击位置或顺序不正确，请再试一次';
+      : this.#root.querySelector('.click-ui').hidden ? '没有对准，请再试一次'
+        : !this.#root.querySelector('.cells').hidden ? '选择不正确，请再试一次' : '点击位置或顺序不正确，请再试一次';
     // The next puzzle replaces this one in place; the panel stays up meanwhile.
     round.after(900, () => this.#begin({}));
   }
@@ -834,8 +858,12 @@ export class BotGuardWidget extends ElementBase {
     this.#root.querySelector('.slider-ui').hidden = true;
     this.#root.querySelector('.jigsaw-ui').hidden = true;
     this.#root.querySelector('.click-ui').hidden = false;
+    this.#root.querySelector('.cells').hidden = true;
+    this.#root.querySelector('.confirm').hidden = true;
     this.#root.querySelector('.prompt').textContent = c.prompt;
     const promptImg = this.#root.querySelector('.prompt-img');
+    promptImg.classList.remove('ref');
+    promptImg.alt = '按顺序要点击的图标';
     promptImg.hidden = !c.prompt_image;
     if (c.prompt_image) promptImg.src = c.prompt_image;
     this.#root.querySelector('.msg').textContent = '';
@@ -898,6 +926,102 @@ export class BotGuardWidget extends ElementBase {
       stage.addEventListener('pointermove', move);
       stage.addEventListener('pointerdown', down);
       clear.addEventListener('click', reset);
+      round.defer(() => {
+        cleanup();
+        resolve(null);
+      });
+    });
+  }
+
+  // Shows a select-the-cells puzzle and resolves when the user confirms a
+  // selection; resolves null if the round ends first. The answer is every
+  // toggle as a click ([ms since shown, x, y] in image coordinates) plus the
+  // pointer moves before each: the gateway replays the toggles.
+  #grid(round, g) {
+    const stage = this.#root.querySelector('.cstage');
+    const cellsEl = this.#root.querySelector('.cells');
+    const confirm = this.#root.querySelector('.confirm');
+    const clear = this.#root.querySelector('.clear');
+    this.#root.querySelector('.slider-ui').hidden = true;
+    this.#root.querySelector('.jigsaw-ui').hidden = true;
+    this.#root.querySelector('.click-ui').hidden = false;
+    this.#root.querySelector('.marks').replaceChildren();
+    this.#root.querySelector('.prompt').textContent = g.prompt;
+    const promptImg = this.#root.querySelector('.prompt-img');
+    promptImg.classList.add('ref');
+    promptImg.alt = '示例图形';
+    promptImg.hidden = !g.prompt_image;
+    if (g.prompt_image) promptImg.src = g.prompt_image;
+    this.#root.querySelector('.cimg').src = g.image;
+    this.#root.querySelector('.msg').textContent = '';
+    clear.hidden = false;
+    cellsEl.hidden = false;
+    confirm.hidden = false;
+    confirm.disabled = true;
+    cellsEl.style.gridTemplateColumns = `repeat(${g.cols}, 1fr)`;
+    cellsEl.style.gridTemplateRows = `repeat(${g.rows}, 1fr)`;
+    const cells = [];
+    cellsEl.replaceChildren();
+    for (let i = 0; i < g.rows * g.cols; i++) {
+      const el = document.createElement('div');
+      el.className = 'cell';
+      cells.push(el);
+      cellsEl.appendChild(el);
+    }
+    this.#view = 'puzzle';
+    this.#show('puzzle', '请按提示选出所有符合的格子', '选好后点“确认”');
+    const shownAt = performance.now();
+
+    return new Promise((resolve) => {
+      let clicks = [];
+      let movesBetween = [];
+      let moves = 0;
+      let pointerType = '';
+      let untrusted = false;
+      const selected = () => cells.filter((el) => el.classList.contains('on')).length;
+      const reset = () => {
+        clicks = [];
+        movesBetween = [];
+        cells.forEach((el) => el.classList.remove('on'));
+        confirm.disabled = true;
+      };
+      const move = (e) => {
+        untrusted ||= !e.isTrusted;
+        moves++;
+      };
+      const down = (e) => {
+        if (e.button > 0 || e.isPrimary === false || clicks.length >= MAX_GRID_CLICKS) return;
+        const rect = stage.getBoundingClientRect();
+        const scale = rect.width / g.width;
+        if (!(scale > 0)) return;
+        const x = (e.clientX - rect.left) / scale, y = (e.clientY - rect.top) / scale;
+        if (!(x >= 0 && y >= 0 && x < g.width && y < g.height)) return;
+        e.preventDefault();
+        untrusted ||= !e.isTrusted;
+        pointerType ||= e.pointerType || 'mouse';
+        clicks.push([round1(e.timeStamp - shownAt), round1(x), round1(y)]);
+        movesBetween.push(moves);
+        moves = 0;
+        const i = Math.floor((y * g.rows) / g.height) * g.cols + Math.floor((x * g.cols) / g.width);
+        cells[i].classList.toggle('on');
+        confirm.disabled = selected() === 0;
+      };
+      const submit = () => {
+        if (!selected()) return;
+        cleanup();
+        resolve({ answer: { clicks, moves_between: movesBetween }, drag: { pointer_type: pointerType || 'mouse', untrusted_event: untrusted } });
+      };
+      const cleanup = () => {
+        stage.removeEventListener('pointermove', move);
+        stage.removeEventListener('pointerdown', down);
+        clear.removeEventListener('click', reset);
+        confirm.removeEventListener('click', submit);
+        confirm.disabled = true;
+      };
+      stage.addEventListener('pointermove', move);
+      stage.addEventListener('pointerdown', down);
+      clear.addEventListener('click', reset);
+      confirm.addEventListener('click', submit);
       round.defer(() => {
         cleanup();
         resolve(null);

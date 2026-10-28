@@ -13,7 +13,10 @@ import (
 	"github.com/dkeepersun/BotGuard/internal/service/clickshape"
 	"github.com/dkeepersun/BotGuard/internal/service/clicktext"
 	"github.com/dkeepersun/BotGuard/internal/service/clock"
+	"github.com/dkeepersun/BotGuard/internal/service/grid"
+	"github.com/dkeepersun/BotGuard/internal/service/gridcount"
 	"github.com/dkeepersun/BotGuard/internal/service/jigsaw"
+	"github.com/dkeepersun/BotGuard/internal/service/mirror"
 	"github.com/dkeepersun/BotGuard/internal/service/qrcode"
 	"github.com/dkeepersun/BotGuard/internal/service/rotate"
 	"github.com/dkeepersun/BotGuard/internal/service/slider"
@@ -83,6 +86,15 @@ func (s *Server) previewAPI(w http.ResponseWriter, r *http.Request, p *logic.Pri
 		}
 		out["click"] = map[string]any{"width": pz.Width, "height": pz.Height, "image": pz.Image, "prompt": pz.Prompt,
 			"prompt_image": pz.PromptImage, "targets": pz.Targets}
+	case domain.KindGridCount, domain.KindMirror:
+		generate := map[string]func(*rand.Rand) (grid.Puzzle, error){domain.KindGridCount: gridcount.Generate, domain.KindMirror: mirror.Generate}[kind]
+		pz, err := generate(rnd)
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
+		out["grid"] = map[string]any{"width": pz.Width, "height": pz.Height, "image": pz.Image, "prompt": pz.Prompt,
+			"prompt_image": pz.PromptImage, "rows": pz.Rows, "cols": pz.Cols, "answer": pz.Answer}
 	default:
 		http.Error(w, "unknown kind", http.StatusBadRequest)
 		return

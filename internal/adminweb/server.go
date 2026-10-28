@@ -70,7 +70,7 @@ func itoa(n int) string { return strconv.Itoa(n) }
 var kindNames = map[string]string{
 	domain.KindInvisible: "无感", domain.KindSlider: "滑块拼图", domain.KindRotate: "旋转对齐", domain.KindJigsaw: "推理拼图",
 	domain.KindClickText: "文字点选", domain.KindClickOrder: "语序点选", domain.KindClickIcon: "图标点选",
-	domain.KindClickShape: "图形点选", domain.KindClock: "时钟读数", domain.KindSpatial: "空间推理", domain.KindFallback: "无障碍备用",
+	domain.KindClickShape: "图形点选", domain.KindClock: "时钟读数", domain.KindGridCount: "九宫格计数", domain.KindMirror: "镜像辨别", domain.KindSpatial: "空间推理", domain.KindFallback: "无障碍备用",
 }
 
 var modeNames = map[string]string{

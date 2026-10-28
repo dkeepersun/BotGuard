@@ -168,7 +168,7 @@ switch ($scenario) {
             json_out(['scenario' => $scenario, 'error' => "签发失败 HTTP $status（可能刚运行过「刷签发接口」，等一分钟再试）", 'calls' => $rec->calls]);
         }
         $work = fn(array $c) => number_format($c['data']['params']['puzzles'] * round(2 ** 48 / max(1, hexdec(substr($c['data']['params']['target'], 0, 12)))));
-        $kinds = ['invisible' => '无感', 'slider' => '滑块', 'rotate' => '旋转对齐', 'jigsaw' => '推理拼图', 'click_order' => '语序点选', 'click_icon' => '图标点选', 'spatial' => '空间推理', 'click_text' => '文字点选', 'click_shape' => '图形点选', 'clock' => '时钟读数', 'fallback' => '备用'];
+        $kinds = ['invisible' => '无感', 'slider' => '滑块', 'rotate' => '旋转对齐', 'jigsaw' => '推理拼图', 'click_order' => '语序点选', 'click_icon' => '图标点选', 'spatial' => '空间推理', 'click_text' => '文字点选', 'click_shape' => '图形点选', 'clock' => '时钟读数', 'grid_count' => '九宫格计数', 'mirror' => '镜像辨别', 'fallback' => '备用'];
         $r = $scenario === 'no_signals'
             ? ['title' => '脚本直接调签发接口，不带任何浏览器信号', 'expect' => '正常浏览器：无感；脚本：随机一种交互题',
                 'explain' => '没有信号本身就是信号（NO_SIGNALS +40）：真实浏览器里的组件一定会上报。中等风险从题型列表里随机出题，攻击者没法只针对一种题优化。风险分不会返回给浏览器。']

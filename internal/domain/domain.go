@@ -45,6 +45,8 @@ const (
 	KindClickIcon  = "click_icon"
 	KindClickShape = "click_shape"
 	KindClock      = "clock"
+	KindGridCount  = "grid_count"
+	KindMirror     = "mirror"
 	KindSpatial    = "spatial"
 	KindFallback   = "fallback"
 )
@@ -53,7 +55,8 @@ func ValidMode(m string) bool { return m == ModeInvisible || m == ModeInteractiv
 
 // InteractiveKinds lists the kinds an action may offer, easiest first: the
 // order is the hardness ranking adaptive mode uses at high risk.
-var InteractiveKinds = []string{KindSlider, KindRotate, KindJigsaw, KindClickText, KindClickOrder, KindClickIcon, KindClickShape, KindClock, KindSpatial}
+var InteractiveKinds = []string{KindSlider, KindRotate, KindJigsaw, KindClickText, KindClickOrder, KindClickIcon, KindMirror, KindClickShape,
+	KindClock, KindGridCount, KindSpatial}
 
 // DragKind kinds are answered with a one-dimensional drag (end position plus
 // trajectory); the jigsaw drag is two-dimensional and checked on its own.
@@ -63,6 +66,9 @@ func DragKind(k string) bool { return k == KindSlider || k == KindRotate }
 func ClickKind(k string) bool {
 	return k == KindClickText || k == KindClickOrder || k == KindClickIcon || k == KindClickShape || k == KindClock || k == KindSpatial
 }
+
+// GridKind kinds are answered by selecting cells of a grid.
+func GridKind(k string) bool { return k == KindGridCount || k == KindMirror }
 
 func ValidInteractiveKind(k string) bool {
 	for _, v := range InteractiveKinds {
